@@ -21,6 +21,18 @@ importers:
         specifier: ^1.18.11
         version: 1.18.11
 
+  packages/gibson-client:
+    dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.2.0
+        version: 2.13.0
+      '@connectrpc/connect':
+        specifier: ^2.0.0
+        version: 2.1.2(@bufbuild/protobuf@2.13.0)
+      '@connectrpc/connect-node':
+        specifier: ^2.0.0
+        version: 2.1.2(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0))
+
   packages/gibson-plugin:
     devDependencies:
       '@opencode-ai/plugin':
@@ -32,6 +44,21 @@ packages:
   '@ai-sdk/provider@3.0.8':
     resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
     engines: {node: '>=18'}
+
+  '@bufbuild/protobuf@2.13.0':
+    resolution: {integrity: sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g==}
+
+  '@connectrpc/connect-node@2.1.2':
+    resolution: {integrity: sha512-+i/aAOpsI8sIx1mbYp6d99zvxaUSF6t/jP9Ux9maAmjsZPgmIQ3JuIeYi0zJIP9zlCnBlJjkpPosshCgdRuThQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
+      '@connectrpc/connect': 2.1.2
+
+  '@connectrpc/connect@2.1.2':
+    resolution: {integrity: sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     resolution: {integrity: sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==}
@@ -249,6 +276,17 @@ snapshots:
   '@ai-sdk/provider@3.0.8':
     dependencies:
       json-schema: 0.4.0
+
+  '@bufbuild/protobuf@2.13.0': {}
+
+  '@connectrpc/connect-node@2.1.2(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0))':
+    dependencies:
+      '@bufbuild/protobuf': 2.13.0
+      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.13.0)
+
+  '@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0)':
+    dependencies:
+      '@bufbuild/protobuf': 2.13.0
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     optional: true
