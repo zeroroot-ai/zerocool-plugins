@@ -61,13 +61,14 @@ three things hold; hiding the origin is the only thing that would make it so.
 **License:** `zerocool` is **MIT** (inherit opencode's; add our copyright). Keep a
 `NOTICE`/`LICENSE` preserving opencode's copyright when its code lands.
 
-**Fork depth is a live decision (plugin-first vs hard-fork).** opencode has a
-plugin/extension system. Doing the Gibson integration as **plugins + a curated,
-branded distribution** — hard-forking only what we can't do as a plugin — is both
-more respectful (uses supported extension points; easier to contribute back) and
-lighter to maintain (a heavy source fork means perpetual merge churn against a
-fast 178K★ project). **Default posture: plugin-first; hard-fork only where
-necessary.** Revisit as integration needs become concrete.
+**Fork depth — firm constraint: opencode-native plugins.** opencode has a
+plugin/extension system. **The Gibson integration ships as opencode-native
+plugins/extensions** (plus a curated, branded distribution); we **source-fork
+opencode only for what a plugin provably cannot express.** Every Gibson-integration
+work item is delivered as a plugin unless it demonstrably can't be. This is both
+more respectful (uses supported extension points; easy to contribute back) and far
+lighter to maintain (a heavy source fork means perpetual merge churn against a fast
+178K★ project). This keeps the delta to opencode as small as possible.
 
 ## Consequences
 

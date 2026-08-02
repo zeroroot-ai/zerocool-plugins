@@ -43,11 +43,17 @@ the AI SDK / models.dev provider layer). Chosen over the Rust option (VTCode)
 because the priorities are superiority + extensibility + curated-flagship;
 Rust-consistency is a preference, not a constraint.
 
-**Flagship ↔ Gibson integration is TypeScript**, reusing the platform's **proven
-dashboard pattern** — ConnectRPC over SPIFFE mTLS — and generating **connect-es**
-bindings for `ComponentService` / `HarnessCallbackService` from BSR
-(`buf.build/zeroroot-ai/sdk`). This is *not* a from-scratch SDK; it reuses the
-dashboard's transport/identity path (ADR-0004).
+**Flagship ↔ Gibson integration is TypeScript** (ADR-0004): auth via the
+**Capability Grant Protocol** (a port of `sdk/capabilitygrant` — bootstrap **API
+key** → Ed25519 **host key** → per-RPC **`agent+jwt`** Bearer over TLS to the Envoy
+edge; the off-cluster path, **not** SPIFFE mTLS), plus **connect-es** bindings for
+`ComponentService` / `HarnessCallbackService` from BSR (`buf.build/zeroroot-ai/sdk`).
+Protocol-only, no server work — already proven in the Go SDK.
+
+**Delivery constraint (firm, ADR-0001): the Gibson integration ships as
+opencode-native plugins/extensions.** Source-fork opencode only for what a plugin
+provably cannot express. Keep the delta to opencode minimal; every integration
+work item is a plugin unless it demonstrably can't be.
 
 **No dedicated Rust SDK.** `sdk-rs` was considered and **dropped** (ADR-0003):
 the flagship is TS, and produced components are polyglot via Gibson's
@@ -106,8 +112,9 @@ _Avoid_: artifact.
 ## Platform integration — two depths (sequenced)
 
 **Depth 1 — "to start": register + LLM-through-Gibson.** The agent checks in as a
-component (`RegisterComponent` + SPIFFE + capability grant, over ConnectRPC) and
-routes LLM through `ComponentService.Complete` (harness-proxied: slots, budget,
+component via the **Capability Grant Protocol** (bootstrap API key → Ed25519 host
+key → `RegisterComponent`; per-RPC `agent+jwt` Bearer) and routes LLM through
+`ComponentService.Complete` (harness-proxied: slots, budget,
 per-tenant creds, tracing). The agent keeps its own CLI loop — a *client of the
 daemon* for LLM. This is the **Model seam** only.
 
