@@ -10,7 +10,7 @@
     "dist"
   ],
   "scripts": {
-    "generate": "buf generate buf.build/zeroroot-ai-platform/sdk && buf generate buf.build/bufbuild/protovalidate",
+    "generate": "buf generate buf.build/zeroroot-ai/sdk && buf generate buf.build/bufbuild/protovalidate",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
