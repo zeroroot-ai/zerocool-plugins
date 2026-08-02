@@ -1,0 +1,8 @@
+zerocool
+Copyright (c) 2026 ZeroRoot
+
+This product is a curated distribution of opencode
+(https://github.com/sst/opencode), Copyright (c) SST, licensed under the MIT
+License. opencode is incorporated as the `opencode-ai` npm dependency; its
+copyright and license are retained by that package. zerocool is not affiliated
+with or endorsed by opencode or SST.
