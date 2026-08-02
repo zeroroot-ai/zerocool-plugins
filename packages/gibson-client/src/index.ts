@@ -23,3 +23,6 @@ export function createGibsonClients(transport: Transport): GibsonClients {
     harness: createClient(HarnessCallbackService, transport),
   }
 }
+
+// Capability Grant auth (zerocool#3).
+export * from "./auth/index.js"
