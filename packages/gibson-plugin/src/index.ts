@@ -1,28 +1,42 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import { connectGibson, type GibsonSession } from "@zerocool/gibson-client"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 /**
- * zerocool's Gibson integration, delivered as an opencode plugin (ADR-0001,
- * plugin-first). Standalone (no Gibson key) is a no-op — zerocool behaves
- * exactly like opencode. The integration activates when a Gibson bootstrap
- * key (GIBSON_BOOTSTRAP_TOKEN) is present.
- *
- * Behaviour lands incrementally per the tracked issues:
- *   - #2  connect-es bindings for the daemon RPCs
- *   - #3  Capability Grant Protocol client (auth)
- *   - #4  register as a Gibson component
- *   - #5/#6  LLM + tools + streaming via the Gibson harness (Model seam)
- *   - #7/#8  emit findings / read the knowledge graph
- *   - #9  Gibson tools as opencode tools
- *   - #12  execution in the setec Devbox (Executor seam)
- *   - #13  checkpoint local context to the daemon session store (Store seam)
+ * zerocool's Gibson integration (ADR-0001, plugin-first). Standalone (no Gibson
+ * key) is a no-op — zerocool behaves exactly like opencode. With a Gibson
+ * bootstrap key it checks in as a Gibson component (Capability Grant Protocol +
+ * RegisterComponent + heartbeat, zerocool#4). LLM/tools/findings/knowledge wire
+ * on top per #5-#14.
  */
 export const GibsonPlugin: Plugin = async (_ctx) => {
-  const platformEnabled = Boolean(process.env.GIBSON_BOOTSTRAP_TOKEN)
-  if (!platformEnabled) {
-    // Standalone: no hooks. zerocool === opencode.
+  const bootstrapToken = process.env.GIBSON_BOOTSTRAP_TOKEN
+  const platformURL = process.env.GIBSON_PLATFORM_URL
+  if (!bootstrapToken || !platformURL) return {} // standalone: zerocool === opencode
+
+  let session: GibsonSession | undefined
+  try {
+    session = await connectGibson({
+      platformURL,
+      daemonURL: process.env.GIBSON_DAEMON_URL,
+      bootstrapToken,
+      hostKeyPath: process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key"),
+      agentName: "zerocool",
+      agentMode: process.env.GIBSON_AGENT_MODE ?? "autonomous",
+      agent: { name: "zerocool", version: "0.0.0", capabilities: ["code"] },
+    })
+    console.error(`[zerocool] registered with Gibson (component_scope=${session.componentScope})`)
+    const stop = () => session?.stop()
+    process.once("exit", stop)
+    process.once("SIGINT", stop)
+    process.once("SIGTERM", stop)
+  } catch (e) {
+    // Fail open to standalone: a coding agent must still work if the platform is unreachable.
+    console.error(`[zerocool] Gibson connect failed; continuing standalone: ${(e as Error).message}`)
     return {}
   }
-  // Platform hooks are registered here as the integration issues land.
+
   return {}
 }
 
