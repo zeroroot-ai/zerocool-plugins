@@ -1,5 +1,6 @@
 import type { Hooks, Plugin, ToolDefinition } from "@opencode-ai/plugin"
 import { connectGibson, startCompletionsShim, type GibsonSession, type RunningShim } from "@zerocool/sdk"
+import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { componentizeTool, enrollComponentTool } from "./componentize.js"
@@ -16,9 +17,21 @@ import {
 /**
  * @zerocool/opencode-gibson — the main Gibson plugin.
  *
- * Standalone (no Gibson key), opencode is almost unchanged: the agent gets a
- * local findings log and a componentize tool, and nothing else. With a Gibson
- * bootstrap key it also:
+ * ENROLLMENT — check in once, then run unattended. A human enrolls this host
+ * one time:
+ *
+ *   gibson login                                  # device flow, in a browser
+ *   gibson agent enroll                           # prints a ONE-TIME token
+ *   GIBSON_BOOTSTRAP_TOKEN=<token> opencode       # first start only
+ *
+ * That first start completes the Capability Grant handshake and persists a host
+ * key. Every later start re-registers with that key and needs no token and no
+ * human. This is the platform's design (ADR-0045), not a limitation to work
+ * around: a coding agent joins a tenant's fleet on a person's authority, once.
+ *
+ * Standalone (never enrolled), opencode is almost unchanged: the agent gets a
+ * local findings log and a componentize tool, and nothing else. Enrolled, it
+ * also:
  *   - checks in as a Gibson component (Capability Grant + RegisterComponent + heartbeat),
  *   - starts a local OpenAI-compatible shim over the harness,
  *   - auto-registers a zero-config `gibson` provider via the `config` hook (#6),
@@ -33,9 +46,24 @@ import {
  * degrades to the standalone behaviour instead of refusing to start.
  */
 export const GibsonPlugin: Plugin = async () => {
-  const bootstrapToken = process.env.GIBSON_BOOTSTRAP_TOKEN
   const platformURL = process.env.GIBSON_PLATFORM_URL
+  const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const context: SessionContext = {}
+
+  // Check in once, then run unattended — the platform's enrollment model
+  // (ADR-0045). A human runs `gibson login` and `gibson agent enroll` once and
+  // hands over the resulting ONE-TIME bootstrap token. That token completes the
+  // first Capability Grant handshake and the host key it registers is persisted
+  // at `hostKeyPath`. Every later start re-registers by proving possession of
+  // that host key — the daemon routes on credential type: `host+jwt` is
+  // re-registration, anything else is first registration
+  // (gibson `internal/server/daemon/capabilitygrant_register.go:134-155`).
+  //
+  // So the bootstrap token is passed ONLY when no host key exists yet. Replaying
+  // a one-time token on every start would be rejected, and it would mean asking
+  // the operator to keep a spent credential in their environment forever.
+  const checkedIn = existsSync(hostKeyPath)
+  const bootstrapToken = checkedIn ? undefined : process.env.GIBSON_BOOTSTRAP_TOKEN
 
   // Standalone: findings go to a local log, and componentize still works —
   // producing a manifest needs no platform.
@@ -49,7 +77,17 @@ export const GibsonPlugin: Plugin = async () => {
     gibson_componentize: componentizeTool(),
   })
 
-  if (!bootstrapToken || !platformURL) {
+  // Standalone unless we can authenticate: a platform URL plus either a token
+  // for the first check-in or an already-registered host key.
+  if (!platformURL || (!bootstrapToken && !checkedIn)) {
+    if (platformURL && !checkedIn) {
+      console.error(
+        "[zerocool] GIBSON_PLATFORM_URL is set but this host has not checked in. " +
+          "Run `gibson login` then `gibson agent enroll`, and start once with " +
+          "GIBSON_BOOTSTRAP_TOKEN=<one-time token>. After that the host key at " +
+          `${hostKeyPath} is enough — you can drop the token.`,
+      )
+    }
     return { tool: standaloneTools() } satisfies Hooks
   }
 
@@ -60,7 +98,7 @@ export const GibsonPlugin: Plugin = async () => {
       platformURL,
       daemonURL: process.env.GIBSON_DAEMON_URL,
       bootstrapToken,
-      hostKeyPath: process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key"),
+      hostKeyPath,
       agentName: "zerocool",
       agentMode: process.env.GIBSON_AGENT_MODE ?? "autonomous",
       agent: { name: "zerocool", version: "0.0.0", capabilities: ["code"] },
@@ -70,9 +108,16 @@ export const GibsonPlugin: Plugin = async () => {
       port: Number(process.env.GIBSON_SHIM_PORT ?? 8787),
     })
     console.error(
-      `[zerocool] Gibson connected (component_scope=${session.componentScope}); ` +
-        `provider "gibson" auto-configured at ${shim.url} — select a gibson/<slot> model`,
+      `[zerocool] Gibson connected via ${checkedIn ? "the registered host key" : "first check-in"} ` +
+        `(component_scope=${session.componentScope}); provider "gibson" auto-configured at ` +
+        `${shim.url} — select a gibson/<slot> model`,
     )
+    if (!checkedIn) {
+      console.error(
+        `[zerocool] Host key written to ${hostKeyPath}. The bootstrap token is spent — ` +
+          "unset GIBSON_BOOTSTRAP_TOKEN; later starts re-register with the host key.",
+      )
+    }
   } catch (e) {
     // Fail open to standalone: a coding agent must still work if the platform is unreachable.
     console.error(`[zerocool] Gibson connect failed; continuing standalone: ${(e as Error).message}`)

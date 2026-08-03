@@ -342,3 +342,53 @@ test("componentize warns when no image reference was supplied", async () => {
   const output = typeof result === "string" ? result : result.output
   assert.match(output, /cannot be dispatched/)
 })
+
+// ---------------------------------------------------------------------------
+// Enrollment lifecycle — check in once, then run unattended (ADR-0045)
+// ---------------------------------------------------------------------------
+
+test("standalone until enrolled: no platform URL means no Gibson tools", async () => {
+  const saved = { url: process.env.GIBSON_PLATFORM_URL, tok: process.env.GIBSON_BOOTSTRAP_TOKEN }
+  delete process.env.GIBSON_PLATFORM_URL
+  delete process.env.GIBSON_BOOTSTRAP_TOKEN
+  try {
+    const { GibsonPlugin } = await import("./index.js")
+    const hooks = await GibsonPlugin({} as never, {})
+    const keys = Object.keys(hooks.tool ?? {})
+    assert.deepEqual(keys.sort(), ["gibson_componentize", "submit_finding"])
+    assert.ok(!("config" in hooks), "no provider is registered without a platform")
+  } finally {
+    if (saved.url) process.env.GIBSON_PLATFORM_URL = saved.url
+    if (saved.tok) process.env.GIBSON_BOOTSTRAP_TOKEN = saved.tok
+  }
+})
+
+test("a platform URL with no token and no host key stays standalone and explains why", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-"))
+  const saved = {
+    url: process.env.GIBSON_PLATFORM_URL,
+    tok: process.env.GIBSON_BOOTSTRAP_TOKEN,
+    key: process.env.GIBSON_HOST_KEY_PATH,
+  }
+  const errors: string[] = []
+  const originalError = console.error
+  console.error = (msg: unknown) => errors.push(String(msg))
+
+  process.env.GIBSON_PLATFORM_URL = "https://api.example.test"
+  process.env.GIBSON_HOST_KEY_PATH = join(dir, "absent.key")
+  delete process.env.GIBSON_BOOTSTRAP_TOKEN
+  try {
+    const { GibsonPlugin } = await import("./index.js")
+    const hooks = await GibsonPlugin({} as never, {})
+    assert.deepEqual(Object.keys(hooks.tool ?? {}).sort(), ["gibson_componentize", "submit_finding"])
+    // The operator must be told how to enrol, not left guessing.
+    assert.ok(errors.some((e) => e.includes("gibson agent enroll")), "should name the enroll command")
+  } finally {
+    console.error = originalError
+    if (saved.url) process.env.GIBSON_PLATFORM_URL = saved.url
+    else delete process.env.GIBSON_PLATFORM_URL
+    if (saved.tok) process.env.GIBSON_BOOTSTRAP_TOKEN = saved.tok
+    if (saved.key) process.env.GIBSON_HOST_KEY_PATH = saved.key
+    else delete process.env.GIBSON_HOST_KEY_PATH
+  }
+})

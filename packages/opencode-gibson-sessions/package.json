@@ -6,9 +6,20 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
-  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
-  "dependencies": { "@zerocool/sdk": "git+ssh://git@github.com/zeroroot-ai/sdk-ts.git" },
-  "peerDependencies": { "@opencode-ai/plugin": "*" },
-  "devDependencies": { "@opencode-ai/plugin": "^1.18.11" }
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zerocool/sdk": "git+ssh://git@github.com/zeroroot-ai/sdk-ts.git"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.11"
+  }
 }
