@@ -15,25 +15,31 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/cli:
+  packages/opencode-gibson:
     dependencies:
-      opencode-ai:
+      '@zerocool/sdk':
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#f476468691f4d63c9d507c20cb3c05cf9e5d1b4f
+    devDependencies:
+      '@opencode-ai/plugin':
         specifier: ^1.18.11
         version: 1.18.11
 
-  packages/gibson-client:
+  packages/opencode-gibson-exec:
     dependencies:
-      '@bufbuild/protobuf':
-        specifier: ^2.2.0
-        version: 2.13.0
-      '@connectrpc/connect':
-        specifier: ^2.0.0
-        version: 2.1.2(@bufbuild/protobuf@2.13.0)
-      '@connectrpc/connect-node':
-        specifier: ^2.0.0
-        version: 2.1.2(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0))
+      '@zerocool/sdk':
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#f476468691f4d63c9d507c20cb3c05cf9e5d1b4f
+    devDependencies:
+      '@opencode-ai/plugin':
+        specifier: ^1.18.11
+        version: 1.18.11
 
-  packages/gibson-plugin:
+  packages/opencode-gibson-sessions:
+    dependencies:
+      '@zerocool/sdk':
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#f476468691f4d63c9d507c20cb3c05cf9e5d1b4f
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -113,6 +119,10 @@ packages:
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
+  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#f476468691f4d63c9d507c20cb3c05cf9e5d1b4f':
+    resolution: {commit: f476468691f4d63c9d507c20cb3c05cf9e5d1b4f, repo: git@github.com:zeroroot-ai/sdk-ts.git, type: git}
+    version: 0.0.0
+
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
@@ -157,75 +167,6 @@ packages:
   node-gyp-build-optional-packages@5.2.2:
     resolution: {integrity: sha512-s+w+rBWnpTMwSFbaE0UXsRlg7hU4FjekKU4eyAih5T8nJuNZT1nNsskXpxmeqSK9UzkBl6UgRlnKc8hz8IEqOw==}
     hasBin: true
-
-  opencode-ai@1.18.11:
-    resolution: {integrity: sha512-2omDujweL9HNMCvz18PKUUkdOf5TbbzxhH43nLDHIQrWQIXM2poXjAjKpLyBCLP3LGj6vRNmB+1Q6CLKdV90cQ==}
-    cpu: [arm64, x64]
-    os: [darwin, linux, win32]
-    hasBin: true
-
-  opencode-darwin-arm64@1.18.11:
-    resolution: {integrity: sha512-3oQKHn/BC/CyIQtBQET3pvEDUGI5h7z7dthvDFXW1QqnKx931Okm4ue1PM89F+7SxLtCETeP424kmN29I3uKIQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  opencode-darwin-x64-baseline@1.18.11:
-    resolution: {integrity: sha512-GSazpGb72728m3v1zC/eex7ozA9jtPehblnLkmVWmZqGj2g+IYZMBmdnJq5Gr2vV0eQYkxmpjIkaGMu6lPWgFw==}
-    cpu: [x64]
-    os: [darwin]
-
-  opencode-darwin-x64@1.18.11:
-    resolution: {integrity: sha512-zTew+6+mmNCDj6GXRD1Iu+S/NUOF19U89e3Xz/VfBAwuD5qDD5XudV08srCDoJMVEJKniB2ivNU68CnmW23BVw==}
-    cpu: [x64]
-    os: [darwin]
-
-  opencode-linux-arm64-musl@1.18.11:
-    resolution: {integrity: sha512-NSn8Gz6BKw1dAQz3tAju4xXbHYu+wAmq/zpJGQX08q7NyXgm+INrQPcn2GCRWUDCOx6WFcVk9zUQtF7Of0p6ig==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  opencode-linux-arm64@1.18.11:
-    resolution: {integrity: sha512-M4Ta+aRcROsWbp6X/uGrxfU5o/o1Qx1+WRlyW1H7vkH8M+G3cOHI6gGM4BgQgf5ZqdQaLVC2KjqFtONJi5rF8A==}
-    cpu: [arm64]
-    os: [linux]
-
-  opencode-linux-x64-baseline-musl@1.18.11:
-    resolution: {integrity: sha512-s2r7OHVcE2xR5nOGKG5JKH6xyElnywP9HP/f7fptewbhUyXOr1CYmsIsXc+o7BP+va/mpTBSA4EwEi/h0mLvrw==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  opencode-linux-x64-baseline@1.18.11:
-    resolution: {integrity: sha512-nIRf162T9Dj5/vmyrsCcie4HrpWbAmPSJgbi0XWQ9DZ4KFzwqCXmC6MebV51DNiwou/Yh6nJClJexpMFsWt7dw==}
-    cpu: [x64]
-    os: [linux]
-
-  opencode-linux-x64-musl@1.18.11:
-    resolution: {integrity: sha512-ToMrIYN+Lqx+au4QotfSo0HqY8F1MI3bKFLFliTqnOeKbpwVgzVtDwduDak/syWpE47N5fAqL+Oc15XSazVBNg==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  opencode-linux-x64@1.18.11:
-    resolution: {integrity: sha512-0mBNdaLK9HWxB85N+qQK0I+2ZySfPFV+G6Q0utGSO1ZkI/YjjEofrIvb4OUVHIjCq3eWFYhFVRcoiOuD39sN6w==}
-    cpu: [x64]
-    os: [linux]
-
-  opencode-windows-arm64@1.18.11:
-    resolution: {integrity: sha512-OOXbkzoY18qKaN7M1kz5r+zFL/553UuUSGXYr3cRfn1jZFj2IDKWK8Q/d/ky1gejkAwxj5Jh9oeYf2T6wgZw9w==}
-    cpu: [arm64]
-    os: [win32]
-
-  opencode-windows-x64-baseline@1.18.11:
-    resolution: {integrity: sha512-jcd8PdbcwA0r0FilreGkRPtIjTiH1B7FRFXYiFEVopERCnkFt3aWqJCFB83eMgMPbbNJRM1mfh3UhFgWVsWNKA==}
-    cpu: [x64]
-    os: [win32]
-
-  opencode-windows-x64@1.18.11:
-    resolution: {integrity: sha512-Xj2kkK/rD2O/7tsQInYzNfmzO82UtvimrHPDjPx8MSkWuv1Hy/BfcCJc362o3Zw9vInKqXTl6CXXrPX4xJfPpg==}
-    cpu: [x64]
-    os: [win32]
 
   path-key@3.1.1:
     resolution: {integrity: sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==}
@@ -323,6 +264,12 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#f476468691f4d63c9d507c20cb3c05cf9e5d1b4f':
+    dependencies:
+      '@bufbuild/protobuf': 2.13.0
+      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.13.0)
+      '@connectrpc/connect-node': 2.1.2(@bufbuild/protobuf@2.13.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.13.0))
+
   cross-spawn@7.0.6:
     dependencies:
       path-key: 3.1.1
@@ -380,57 +327,6 @@ snapshots:
   node-gyp-build-optional-packages@5.2.2:
     dependencies:
       detect-libc: 2.1.2
-    optional: true
-
-  opencode-ai@1.18.11:
-    optionalDependencies:
-      opencode-darwin-arm64: 1.18.11
-      opencode-darwin-x64: 1.18.11
-      opencode-darwin-x64-baseline: 1.18.11
-      opencode-linux-arm64: 1.18.11
-      opencode-linux-arm64-musl: 1.18.11
-      opencode-linux-x64: 1.18.11
-      opencode-linux-x64-baseline: 1.18.11
-      opencode-linux-x64-baseline-musl: 1.18.11
-      opencode-linux-x64-musl: 1.18.11
-      opencode-windows-arm64: 1.18.11
-      opencode-windows-x64: 1.18.11
-      opencode-windows-x64-baseline: 1.18.11
-
-  opencode-darwin-arm64@1.18.11:
-    optional: true
-
-  opencode-darwin-x64-baseline@1.18.11:
-    optional: true
-
-  opencode-darwin-x64@1.18.11:
-    optional: true
-
-  opencode-linux-arm64-musl@1.18.11:
-    optional: true
-
-  opencode-linux-arm64@1.18.11:
-    optional: true
-
-  opencode-linux-x64-baseline-musl@1.18.11:
-    optional: true
-
-  opencode-linux-x64-baseline@1.18.11:
-    optional: true
-
-  opencode-linux-x64-musl@1.18.11:
-    optional: true
-
-  opencode-linux-x64@1.18.11:
-    optional: true
-
-  opencode-windows-arm64@1.18.11:
-    optional: true
-
-  opencode-windows-x64-baseline@1.18.11:
-    optional: true
-
-  opencode-windows-x64@1.18.11:
     optional: true
 
   path-key@3.1.1: {}
