@@ -1,5 +1,5 @@
 {
-  "name": "zerocool-workspace",
+  "name": "zerocool-plugins",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
@@ -9,10 +9,5 @@
   "devDependencies": {
     "typescript": "^5.6.0",
     "@types/node": "^22.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "opencode-ai"
-    ]
   }
 }
