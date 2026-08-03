@@ -4,18 +4,21 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 /**
- * zerocool's Gibson integration (ADR-0001, plugin-first). Standalone (no Gibson
- * key) is a no-op — zerocool behaves exactly like opencode. With a Gibson
- * bootstrap key the agent:
- *   - checks in as a Gibson component (Capability Grant + RegisterComponent + heartbeat, #4)
- *   - serves LLM via Gibson through a local OpenAI-compatible shim (Model seam, #5)
- *     that opencode's `gibson` provider points at; select model `gibson/<slot>`.
- * Tools/streaming/findings/knowledge wire on top per #6-#14.
+ * @zerocool/opencode-gibson — the main Gibson plugin.
+ *
+ * Standalone (no Gibson key) is a no-op: opencode is unchanged. With a Gibson
+ * bootstrap key it:
+ *   - checks in as a Gibson component (Capability Grant + RegisterComponent + heartbeat),
+ *   - starts a local OpenAI-compatible shim over the harness, and
+ *   - **auto-registers a zero-config `gibson` provider** via the `config` hook, so the
+ *     user just selects a `gibson/<slot>` model — no manual opencode.json edits.
+ *
+ * Findings, knowledge, Gibson tools, delegate/missions land on top (#7-#11).
  */
-export const GibsonPlugin: Plugin = async (_ctx) => {
+export const GibsonPlugin: Plugin = async () => {
   const bootstrapToken = process.env.GIBSON_BOOTSTRAP_TOKEN
   const platformURL = process.env.GIBSON_PLATFORM_URL
-  if (!bootstrapToken || !platformURL) return {} // standalone: zerocool === opencode
+  if (!bootstrapToken || !platformURL) return {} // standalone: opencode unchanged
 
   let session: GibsonSession | undefined
   let shim: RunningShim | undefined
@@ -33,19 +36,37 @@ export const GibsonPlugin: Plugin = async (_ctx) => {
       component: session.clients.component,
       port: Number(process.env.GIBSON_SHIM_PORT ?? 8787),
     })
-    console.error(`[zerocool] registered with Gibson (component_scope=${session.componentScope}); LLM via ${shim.url} — select model gibson/<slot>`)
-    const stop = () => { session?.stop(); void shim?.close() }
-    process.once("exit", stop)
-    process.once("SIGINT", stop)
-    process.once("SIGTERM", stop)
+    console.error(
+      `[zerocool] Gibson connected (component_scope=${session.componentScope}); ` +
+        `provider "gibson" auto-configured at ${shim.url} — select a gibson/<slot> model`,
+    )
   } catch (e) {
     // Fail open to standalone: a coding agent must still work if the platform is unreachable.
     console.error(`[zerocool] Gibson connect failed; continuing standalone: ${(e as Error).message}`)
-    void shim?.close()
+    await shim?.close()
     return {}
   }
 
-  return {}
+  const shimUrl = shim.url
+
+  return {
+    // Zero-config LLM: inject the Gibson provider at config-load time (#6).
+    config: async (config) => {
+      const cfg = config as unknown as { provider?: Record<string, unknown> }
+      cfg.provider = cfg.provider ?? {}
+      if (!cfg.provider.gibson) {
+        cfg.provider.gibson = {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Gibson",
+          options: { baseURL: shimUrl, apiKey: "gibson" },
+        }
+      }
+    },
+    dispose: async () => {
+      session?.stop()
+      await shim?.close()
+    },
+  }
 }
 
 export default GibsonPlugin
