@@ -11,7 +11,7 @@
  * and `plugin` only; an agent mission node resolves against the daemon's
  * in-process agent registry and never reaches the work queue, so a component
  * registered as kind=agent would poll forever against an empty stream
- * (gibson#1195). Serving tool work is what makes a mission node actually run
+ * (gibson#1197). Serving tool work is what makes a mission node actually run
  * out-of-cluster code today.
  *
  * Usage (after `gibson agent enroll --kind tool --name <name>`):
