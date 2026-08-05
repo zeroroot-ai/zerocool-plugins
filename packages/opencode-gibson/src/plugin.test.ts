@@ -8,6 +8,10 @@ import { delegationTools } from "./delegate.js"
 import { buildGibsonTools, toolKey } from "./gibson-tools.js"
 import { recallTool } from "./knowledge.js"
 import { localFindingsBackend, submitFindingTool } from "./findings.js"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
+
+import { httpProbeHandler, probe } from "./http-probe.js"
 
 /** A minimal ToolContext — only the fields these tools actually read. */
 const ctx = (directory = process.cwd()) =>
@@ -390,5 +394,50 @@ test("a platform URL with no token and no host key stays standalone and explains
     if (saved.tok) process.env.GIBSON_BOOTSTRAP_TOKEN = saved.tok
     if (saved.key) process.env.GIBSON_HOST_KEY_PATH = saved.key
     else delete process.env.GIBSON_HOST_KEY_PATH
+  }
+})
+
+// ---------------------------------------------------------------------------
+// http_probe — the tool zerocool serves to the fleet (zerocool-plugins#14).
+// ---------------------------------------------------------------------------
+
+test("httpProbeHandler refuses an invocation with no url", async () => {
+  await assert.rejects(
+    () => httpProbeHandler({ workId: "w1", workType: "execute_proto", context: {}, input: {} }),
+    /requires a `url`/,
+    "a probe that silently picks its own target is worse than a failed node",
+  )
+})
+
+test("httpProbeHandler refuses a non-http scheme", async () => {
+  await assert.rejects(
+    () =>
+      httpProbeHandler({
+        workId: "w2",
+        workType: "execute_proto",
+        context: {},
+        input: { url: "file:///etc/passwd" },
+      }),
+    /unsupported scheme/,
+    "file:// would turn a mission node into a local file read",
+  )
+})
+
+test("probe reports the response facts without echoing the body", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain", server: "test-origin" })
+    res.end("hello from the origin")
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  const { port } = server.address() as AddressInfo
+  try {
+    const result = await probe(`http://127.0.0.1:${port}/`)
+    assert.equal(result.status, 200)
+    assert.equal(result.server, "test-origin")
+    assert.equal(result.bytes, Buffer.byteLength("hello from the origin"))
+    assert.ok(!JSON.stringify(result).includes("hello from the origin"),
+      "the body must be measured, not returned — it is untrusted remote content")
+  } finally {
+    server.close()
   }
 })
