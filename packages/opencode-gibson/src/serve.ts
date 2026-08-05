@@ -7,12 +7,12 @@
  * registers as a TOOL, and then blocks on PollWork until a mission node sends
  * it something to do.
  *
- * WHY kind=tool AND NOT kind=agent. The harness enqueues remote work for `tool`
- * and `plugin` only; an agent mission node resolves against the daemon's
- * in-process agent registry and never reaches the work queue, so a component
- * registered as kind=agent would poll forever against an empty stream
- * (gibson#1197). Serving tool work is what makes a mission node actually run
- * out-of-cluster code today.
+ * WHY kind=tool. Every kind receives dispatched work now — agent nodes included
+ * (gibson#1197 / ADR-0011) — so this is a choice, not a limitation. A tool is
+ * the honest description of what this process offers: one named capability with
+ * declared parameters, invoked by whoever needs it. Registering as an agent
+ * would promise a goal-driven executor with its own reasoning loop, which is
+ * what the opencode plugin does interactively, not what this server does.
  *
  * Usage (after `gibson agent enroll --kind tool --name <name>`):
  *
