@@ -1,0 +1,60 @@
+name: node-ci
+
+# Thin caller for the canonical three-tier Node/pnpm CI
+# (zeroroot-ai/.github reusable-node-ci.yml; epic cicd-efficiency, ADR-0060).
+# This repo had NO CI at all until zerocool-plugins#29 — a `main` that did not
+# build from its own lockfile survived a week because nothing ever ran.
+#
+#   pull_request -> fast tier:  frozen-lockfile install, typecheck, lint
+#                               (oxlint), node:test suites.
+#   merge_group  -> heavy tier: `pnpm build` (tsc across the workspace).
+#
+# private-git-deps: the workspace depends on @zerocool/sdk as a git+ssh
+# dependency on the private sibling repo sdk-ts. SDK_TS_DEPLOY_KEY is the
+# private half of a READ-ONLY deploy key on zeroroot-ai/sdk-ts, held as a
+# repo secret here — the least-privilege credential for that one fetch.
+# The git dependency itself is a stopgap; the durable fix is the npm
+# publish tracked in zerocool-plugins#26.
+#
+# Pinned to release tag v2.2.0 per ADR-0060's blast-radius rule (never
+# @main). v2.2.0 is the merge of zeroroot-ai/.github#242, which added the
+# private-git-deps seam.
+#
+# permissions MUST include packages: read — the reusable's job requests it
+# (GitHub Packages reads, zeroroot-ai/.github#240) and a caller granting
+# only contents: read fails validation as a jobless startup_failure.
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: node-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  fast:
+    if: github.event_name == 'pull_request'
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
+    with:
+      tier: fast
+      # empty -> pnpm/action-setup reads the root packageManager field;
+      # the reusable's "10" default conflicts with an explicit packageManager.
+      pnpm-version: ""
+      private-git-deps: true
+    secrets:
+      git-ssh-key: ${{ secrets.SDK_TS_DEPLOY_KEY }}
+
+  heavy:
+    if: github.event_name == 'merge_group'
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
+    with:
+      tier: heavy
+      pnpm-version: ""
+      private-git-deps: true
+    secrets:
+      git-ssh-key: ${{ secrets.SDK_TS_DEPLOY_KEY }}

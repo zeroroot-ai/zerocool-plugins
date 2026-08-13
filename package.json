@@ -4,10 +4,13 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src",
+    "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "oxlint": "^1.78.0",
+    "typescript": "^5.6.0"
   }
 }
