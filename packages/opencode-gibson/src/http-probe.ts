@@ -1,4 +1,4 @@
-import { decodeToolInput, type ToolInvocation } from "@zerocool/sdk"
+import { decodeToolInput, type GibsonClients, type ToolInvocation } from "@zerocool/sdk"
 
 /**
  * The http_probe tool zerocool serves to the fleet.
@@ -60,8 +60,14 @@ export async function probe(url: string, timeoutMs = HTTP_PROBE_TIMEOUT_MS): Pro
  * `url` is required. A missing url throws rather than defaulting to something,
  * because a probe that quietly fetches a different target than the mission
  * asked for is worse than a failed node.
+ *
+ * `clients` is the callback-harness seam: every dispatched handler receives
+ * the session's Gibson clients so it can reach LLM (`clients.component`),
+ * tools, findings and knowledge (`clients.harness`) during a dispatched run.
+ * The probe itself needs none of that — one request, structured facts — so
+ * the parameter is optional and unused here; richer served tools consume it.
  */
-export async function httpProbeHandler(invocation: ToolInvocation): Promise<ProbeResult> {
+export async function httpProbeHandler(invocation: ToolInvocation, _clients?: GibsonClients): Promise<ProbeResult> {
   const url = invocation.input.url
   if (typeof url !== "string" || !url.trim()) {
     throw new Error("http_probe requires a `url` parameter")
