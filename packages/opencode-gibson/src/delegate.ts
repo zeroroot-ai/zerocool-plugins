@@ -6,7 +6,7 @@ import {
   delegateToAgent,
   getMissionResults,
   getMissionStatus,
-  isUnimplemented,
+  isSeamUnavailable,
   listAgents,
   newTask,
   runMission,
@@ -99,7 +99,7 @@ export function delegateTool(session: GibsonSession): ToolDefinition {
           metadata: { status: result.Status, finding_ids: result.Findings ?? [] },
         }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "delegation unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "delegation unavailable", output: UNWIRED }
         // Authz / RoE / budget denials land here. Show the daemon's reason.
         return {
           title: `${args.agent}: denied`,
@@ -136,7 +136,7 @@ export function createMissionTool(session: GibsonSession): ToolDefinition {
           ...(id ? { metadata: { mission_id: id } } : {}),
         }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "missions unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "missions unavailable", output: UNWIRED }
         throw e
       }
     },
@@ -153,7 +153,7 @@ export function runMissionTool(session: GibsonSession): ToolDefinition {
         await runMission(session.clients.component, args.mission_id)
         return { title: "queued", output: `Mission ${args.mission_id} is queued for execution.` }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "missions unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "missions unavailable", output: UNWIRED }
         throw e
       }
     },
@@ -184,7 +184,7 @@ export function missionStatusTool(session: GibsonSession): ToolDefinition {
           output: JSON.stringify(state, null, 2),
         }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "missions unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "missions unavailable", output: UNWIRED }
         throw e
       }
     },
@@ -201,7 +201,7 @@ export function missionResultsTool(session: GibsonSession): ToolDefinition {
         const results = await getMissionResults(session.clients.component, args.mission_id)
         return { title: `results ${args.mission_id}`, output: JSON.stringify(results, null, 2) }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "missions unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "missions unavailable", output: UNWIRED }
         throw e
       }
     },
@@ -218,7 +218,7 @@ export function cancelMissionTool(session: GibsonSession): ToolDefinition {
         await cancelMission(session.clients.component, args.mission_id)
         return { title: "cancelled", output: `Cancellation requested for mission ${args.mission_id}.` }
       } catch (e) {
-        if (isUnimplemented(e)) return { title: "missions unavailable", output: UNWIRED }
+        if (isSeamUnavailable(e)) return { title: "missions unavailable", output: UNWIRED }
         throw e
       }
     },

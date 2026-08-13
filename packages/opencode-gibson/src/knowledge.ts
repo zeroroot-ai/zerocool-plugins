@@ -2,7 +2,7 @@ import type { ToolDefinition } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import {
   formatKnowledgeForPrompt,
-  isUnimplemented,
+  isSeamUnavailable,
   queryKnowledge,
   type GibsonSession,
   type KnowledgeHit,
@@ -56,7 +56,7 @@ export function recallTool(session: GibsonSession): ToolDefinition {
           ...(args.node_types ? { nodeTypes: args.node_types } : {}),
         })
       } catch (e) {
-        if (isUnimplemented(e)) {
+        if (isSeamUnavailable(e)) {
           return {
             title: "recall unavailable",
             output:
@@ -91,7 +91,7 @@ export function ambientKnowledge(session: GibsonSession, seedQuery: string) {
   const cache = new Map<string, string>()
   const inFlight = new Map<string, Promise<string>>()
 
-  const load = async (key: string): Promise<string> => {
+  const load = async (_key: string): Promise<string> => {
     try {
       const hits = await queryKnowledge(session.clients.component, {
         text: seedQuery,

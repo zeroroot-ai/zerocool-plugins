@@ -26,7 +26,7 @@
  */
 import {
   connectGibson,
-  registerComponentAs,
+  registerInstance,
   startHeartbeat,
   startWorker,
   type ToolInvocation,
@@ -60,8 +60,11 @@ async function main(): Promise<void> {
 
   // Register under the kind that actually receives work. connectGibson has
   // already registered an agent identity for the session; this adds the tool
-  // identity the harness dispatches to.
-  const registered = await registerComponentAs(session.clients.component, "tool", {
+  // identity the harness dispatches to. registerInstance returns the ONE
+  // shared InstanceRef the heartbeat and the work loop both use — renewal is
+  // single-flight inside the ref, so an expired instance is re-registered
+  // once and both loops adopt the new id (sdk-ts#6).
+  const ref = await registerInstance(session.clients.component, "tool", {
     name: toolName,
     version: "0.1.0",
     capabilities: ["http_probe"],
@@ -72,33 +75,21 @@ async function main(): Promise<void> {
   // daemon expires an instance that stops heartbeating and PollWork then answers
   // NotFound forever — a process that looks healthy while being invisible to the
   // fleet.
-  const toolReg = {
-    name: toolName,
-    version: "0.1.0",
-    capabilities: ["http_probe"],
-    metadata: { served_by: "zerocool" },
-  }
-  const stopHeartbeat = startHeartbeat(session.clients.component, toolReg, registered, (e: unknown) =>
+  const stopHeartbeat = startHeartbeat(session.clients.component, ref, (e: unknown) =>
     console.error(`[zerocool-serve] heartbeat: ${(e as Error).message}`),
   )
 
   console.error(
-    `[zerocool-serve] registered tool "${toolName}" (instance=${registered.instanceId}); polling for work`,
+    `[zerocool-serve] registered tool "${toolName}" (instance=${ref.current()}); polling for work`,
   )
 
-  const stop = startWorker(session.clients.component, {
-    instanceId: registered.instanceId,
-    reregister: async () => {
-      const again = await registerComponentAs(session.clients.component, "tool", toolReg)
-      console.error(`[zerocool-serve] re-registered (instance=${again.instanceId})`)
-      return again.instanceId
-    },
+  const stop = startWorker(session.clients.component, ref, {
     onWork: (item: ToolInvocation) =>
       console.error(
         `[zerocool-serve] claimed work ${item.workId} (${item.workType}) input=${JSON.stringify(item.input)}`,
       ),
     onError: (e: unknown) => console.error(`[zerocool-serve] ${(e as Error).message}`),
-    handler: async (item) => {
+    handler: async (item: ToolInvocation) => {
       const result = await httpProbeHandler(item)
       console.error(
         `[zerocool-serve] ${result.url} -> ${result.status} ${result.statusText}, ` +
