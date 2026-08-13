@@ -21,8 +21,8 @@ importers:
   packages/opencode-gibson:
     dependencies:
       '@zerocool/sdk':
-        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
-        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -31,8 +31,8 @@ importers:
   packages/opencode-gibson-exec:
     dependencies:
       '@zerocool/sdk':
-        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
-        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -41,8 +41,8 @@ importers:
   packages/opencode-gibson-sessions:
     dependencies:
       '@zerocool/sdk':
-        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
-        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89
+        specifier: git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
+        version: git+https://git@github.com:zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -244,8 +244,8 @@ packages:
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
-  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89':
-    resolution: {commit: d582489ab0cdd742a4b034428a27a80abb286c89, repo: git@github.com:zeroroot-ai/sdk-ts.git, type: git}
+  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa':
+    resolution: {commit: 496b34a1688feab8301528d997136e674bf5dbaa, repo: git@github.com:zeroroot-ai/sdk-ts.git, type: git}
     version: 0.0.0
 
   cross-spawn@7.0.6:
@@ -459,7 +459,7 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89':
+  '@zerocool/sdk@git+https://git@github.com:zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa':
     dependencies:
       '@bufbuild/protobuf': 2.13.0
       '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.13.0)

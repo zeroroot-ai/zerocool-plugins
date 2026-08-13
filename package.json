@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src",
+    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src --deny-warnings",
     "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args"
   },
   "devDependencies": {

@@ -15,7 +15,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zerocool/sdk": "git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#d582489ab0cdd742a4b034428a27a80abb286c89"
+    "@zerocool/sdk": "git+ssh://git@github.com/zeroroot-ai/sdk-ts.git#496b34a1688feab8301528d997136e674bf5dbaa"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
