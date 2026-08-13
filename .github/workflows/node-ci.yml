@@ -42,6 +42,9 @@ jobs:
     uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
     with:
       tier: fast
+      # empty -> pnpm/action-setup reads the root packageManager field;
+      # the reusable's "10" default conflicts with an explicit packageManager.
+      pnpm-version: ""
       private-git-deps: true
     secrets:
       git-ssh-key: ${{ secrets.SDK_TS_DEPLOY_KEY }}
@@ -51,6 +54,7 @@ jobs:
     uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
     with:
       tier: heavy
+      pnpm-version: ""
       private-git-deps: true
     secrets:
       git-ssh-key: ${{ secrets.SDK_TS_DEPLOY_KEY }}
