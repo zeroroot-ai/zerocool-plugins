@@ -18,9 +18,11 @@ name: node-ci
 #
 # Pinned to release tag v2.2.0 per ADR-0060's blast-radius rule (never
 # @main). v2.2.0 is the merge of zeroroot-ai/.github#242, which added the
-# private-git-deps seam. (A full-SHA ref to a reusable in the special
-# .github repo fails workflow validation with a jobless startup_failure —
-# pin tags here, never SHAs.)
+# private-git-deps seam.
+#
+# permissions MUST include packages: read — the reusable's job requests it
+# (GitHub Packages reads, zeroroot-ai/.github#240) and a caller granting
+# only contents: read fails validation as a jobless startup_failure.
 
 on:
   pull_request:
@@ -32,6 +34,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   fast:
