@@ -1,0 +1,97 @@
+name: release-please
+
+# Releases follow the polyrepo convention: release-please opens a release PR
+# from Conventional Commits; merging it creates the tag and GitHub release,
+# and the publish job below ships @zerocool/opencode-gibson to npm.
+#
+# Publishing is DOUBLY gated (zerocool-plugins#26):
+#   1. NPM_TOKEN must exist as a secret. Until the @zerocool npm scope is
+#      claimed and the token added (human-only steps), the publish job
+#      warns and skips — releases still happen, npm just lags.
+#   2. The package must not depend on a git URL. Publishing a tarball whose
+#      dependency is git+ssh://…sdk-ts.git would be uninstallable for anyone
+#      without repo access; the guard fails the job until the dependency is
+#      a semver range on the published @zerocool/sdk.
+#
+# The two opt-in stub packages (opencode-gibson-exec, opencode-gibson-
+# sessions) are private: true until #12/#13 have implementations — claiming
+# npm names with empty packages helps nobody.
+#
+# GITHUB_TOKEN (not a PAT) is deliberate: tags pushed by GITHUB_TOKEN do not
+# fire downstream tag-triggered workflows, but nothing here depends on a tag
+# trigger — publish reacts to the action's own outputs in the same run.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: rp
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: publish to npm
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Gate on NPM_TOKEN
+        id: gate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "::warning::A release was created but NPM_TOKEN is not configured — npm publish skipped. Claim the @zerocool scope and add the secret (zerocool-plugins#26)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6.0.2 # pin: de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        if: steps.gate.outputs.ready == 'true'
+
+      - name: Refuse to publish a git-URL dependency
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          if grep -q '"@zerocool/sdk": "git+' packages/opencode-gibson/package.json; then
+            echo "::error::@zerocool/opencode-gibson still depends on @zerocool/sdk via a git URL — uninstallable for anyone without repo access. Publish @zerocool/sdk first and switch to a semver range (zerocool-plugins#26)."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v6.0.9 # pin: 0ebf47130e4866e96fce0953f49152a61190b271
+        if: steps.gate.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v6.4.0 # pin: 48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          node-version-file: .tool-versions
+
+      - name: Install and build
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Publish @zerocool/opencode-gibson
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "$HOME/.npmrc"
+          pnpm publish --filter @zerocool/opencode-gibson --access public --no-git-checks
