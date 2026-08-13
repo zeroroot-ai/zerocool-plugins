@@ -19,7 +19,7 @@
  *   GIBSON_PLATFORM_URL=https://api.example:30443 \
  *   GIBSON_BOOTSTRAP_TOKEN=<one-time token> \
  *   ZEROCOOL_TOOL_NAME=zerocool-http \
- *     node dist/serve.js
+ *     zerocool-serve            # the package's bin; node dist/serve.js works too
  *
  * The token is needed for the first check-in only; afterwards the persisted
  * host key re-registers this host without human involvement (ADR-0045).
@@ -89,8 +89,10 @@ async function main(): Promise<void> {
         `[zerocool-serve] claimed work ${item.workId} (${item.workType}) input=${JSON.stringify(item.input)}`,
       ),
     onError: (e: unknown) => console.error(`[zerocool-serve] ${(e as Error).message}`),
+    // Handlers get the session's clients: the callback-harness seam for
+    // LLM/tools/findings/knowledge during a dispatched run.
     handler: async (item: ToolInvocation) => {
-      const result = await httpProbeHandler(item)
+      const result = await httpProbeHandler(item, session.clients)
       console.error(
         `[zerocool-serve] ${result.url} -> ${result.status} ${result.statusText}, ` +
           `server=${result.server ?? "-"}, ${result.bytes} bytes in ${result.elapsedMs}ms`,
