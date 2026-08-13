@@ -16,9 +16,11 @@ name: node-ci
 # The git dependency itself is a stopgap; the durable fix is the npm
 # publish tracked in zerocool-plugins#26.
 #
-# Pinned to a commit of zeroroot-ai/.github per ADR-0060's blast-radius rule
-# (never @main). The pinned commit is the merge of zeroroot-ai/.github#242,
-# which added the private-git-deps seam.
+# Pinned to release tag v2.2.0 per ADR-0060's blast-radius rule (never
+# @main). v2.2.0 is the merge of zeroroot-ai/.github#242, which added the
+# private-git-deps seam. (A full-SHA ref to a reusable in the special
+# .github repo fails workflow validation with a jobless startup_failure —
+# pin tags here, never SHAs.)
 
 on:
   pull_request:
@@ -34,7 +36,7 @@ permissions:
 jobs:
   fast:
     if: github.event_name == 'pull_request'
-    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@7f6f1e6be42a282a284b1008f85d92a17e1e6a27 # pin: post-#242 main
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
     with:
       tier: fast
       private-git-deps: true
@@ -43,7 +45,7 @@ jobs:
 
   heavy:
     if: github.event_name == 'merge_group'
-    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@7f6f1e6be42a282a284b1008f85d92a17e1e6a27 # pin: post-#242 main
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@v2.2.0 # pin: 7f6f1e6 (post-#242)
     with:
       tier: heavy
       private-git-deps: true
