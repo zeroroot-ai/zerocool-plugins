@@ -91,3 +91,51 @@ test("the agent loop's tools reach the model and calls come back as tool_calls",
     assert.equal(last.finish_reason, "tool_calls")
   })
 })
+
+test("the loop's second step carries the tool result on a transportable role", async () => {
+  // The step that broke: opencode replays the tool result as an OpenAI
+  // `role: "tool"` message. `LLMMessage` has no `tool_call_id`, and a
+  // provider rejects a tool-role turn without one, so the whole request
+  // failed — the first tool call worked and the turn carrying its result did
+  // not. Nothing the shim sends may reach the harness with role "tool".
+  let sawRoles: string[] = []
+  let sawContent: string[] = []
+  const component = {
+    completeWithTools: async (req: { messages: { role: string; content: string }[] }) => {
+      sawRoles = req.messages.map((m) => m.role)
+      sawContent = req.messages.map((m) => m.content)
+      return {
+        response: { role: "assistant", content: "index.ts is there" },
+        finishReason: "stop",
+        usage: { inputTokens: 14, outputTokens: 6 },
+      }
+    },
+  }
+  await withShim(component, async (shim) => {
+    const res = await fetch(`${shim.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "primary",
+        stream: true,
+        messages: [
+          { role: "user", content: "list the files" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ id: "call_1", type: "function", function: { name: "bash", arguments: '{"command":"ls"}' } }],
+          },
+          { role: "tool", tool_call_id: "call_1", content: "index.ts" },
+        ],
+        tools: [{ type: "function", function: { name: "bash", parameters: { type: "object" } } }],
+      }),
+    })
+    assert.equal(res.status, 200)
+    const { done } = frames(await res.text())
+    assert.ok(done)
+    assert.ok(!sawRoles.includes("tool"), `no message may carry role "tool", got ${JSON.stringify(sawRoles)}`)
+    assert.deepEqual(sawRoles, ["user", "assistant", "user"])
+    assert.match(sawContent[1], /\[tool_calls\].*bash/, "the requested call stays in the transcript")
+    assert.match(sawContent[2], /^\[tool_result call_1\] index\.ts$/, "the result keeps its originating call id")
+  })
+})
