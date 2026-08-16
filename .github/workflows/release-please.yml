@@ -75,12 +75,21 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.gate.outputs.ready == 'true'
 
-      - name: Refuse to publish a git-URL dependency
+      # The bar this guard defends is "a stranger can install what we publish".
+      # A git+ssh dependency fails that outright -- it needs a key on a private
+      # repo -- so it stays a hard error. git+https on the now-public sdk-ts
+      # does install for anyone, so it is a warning, not a block: still not the
+      # end state we want (no semver range, a build-from-source on install),
+      # which is #26.
+      - name: Refuse to publish an uninstallable dependency
         if: steps.gate.outputs.ready == 'true'
         run: |
-          if grep -q '"@zerocool/sdk": "git+' packages/opencode-gibson/package.json; then
-            echo "::error::@zerocool/opencode-gibson still depends on @zerocool/sdk via a git URL — uninstallable for anyone without repo access. Publish @zerocool/sdk first and switch to a semver range (zerocool-plugins#26)."
+          if grep -q '"@zerocool/sdk": "git+ssh' packages/opencode-gibson/package.json; then
+            echo "::error::@zerocool/opencode-gibson depends on @zerocool/sdk over git+ssh — nobody outside the org can install it. Use the public https URL, or publish to npm and switch to a semver range (#26)."
             exit 1
+          fi
+          if grep -q '"@zerocool/sdk": "git+' packages/opencode-gibson/package.json; then
+            echo "::warning::@zerocool/opencode-gibson still depends on @zerocool/sdk via a git URL. It installs (sdk-ts is public), but consumers build it from source and cannot express a version range — publish to npm and switch to semver (#26)."
           fi
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
