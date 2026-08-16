@@ -4,3 +4,8 @@ Copyright (c) 2026 ZeroRoot
 These are plugins for opencode (https://github.com/sst/opencode); opencode is a
 peer dependency (`@opencode-ai/plugin`), not vendored here. zerocool is not
 affiliated with or endorsed by opencode or SST.
+
+Portions of this software are derived from opencode
+(https://github.com/sst/opencode), Copyright (c) SST, licensed under the MIT
+License. Their copyright notice and license are preserved in the corresponding
+source files and/or here once that code is incorporated.
