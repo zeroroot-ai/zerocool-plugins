@@ -7,6 +7,25 @@ Install a plugin and opencode gains Gibson — LLM routed through the harness
 (slots, budget, per-tenant creds, tracing), Gibson tools, findings, the knowledge
 graph, and delegation/missions.
 
+## Install
+
+Not yet installable from a package registry. The `@zerocool` scope is unclaimed on
+npm, so `npm i @zerocool/opencode-gibson` does not resolve, and a git install of this
+repository does not work either: the packages live in a pnpm workspace subdirectory and
+ship only `dist`, so a git fetch produces a package with nothing to load.
+
+`@zerocool/sdk` is the exception — it is the whole of [`sdk-ts`](https://github.com/zeroroot-ai/sdk-ts),
+so a git dependency on it resolves and builds:
+
+```sh
+npm i "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.1.0"
+```
+
+Publishing these plugins to npm is tracked in
+[#26](https://github.com/zeroroot-ai/zerocool-plugins/issues/26). Until that lands, use
+the repository directly: `pnpm install && pnpm build`, then point opencode at
+`packages/opencode-gibson`.
+
 ## Packages
 
 - **`@zerocool/opencode-gibson`** — the main plugin. Zero-config LLM via Gibson,
