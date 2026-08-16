@@ -1,6 +1,6 @@
 {
   "name": "@zerocool/opencode-gibson",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "opencode plugin: Gibson platform integration (zerocool). Zero-config LLM, tools, findings, knowledge, delegate/missions.",
   "license": "MIT",
   "type": "module",
