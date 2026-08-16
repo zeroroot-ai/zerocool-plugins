@@ -4,7 +4,8 @@
   "packages": {
     "packages/opencode-gibson": {
       "bump-minor-pre-major": true,
-      "component": "opencode-gibson"
+      "component": "opencode-gibson",
+      "initial-version": "0.1.0"
     }
   }
 }
