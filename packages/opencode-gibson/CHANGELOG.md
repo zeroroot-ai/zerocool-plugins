@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.1.0...opencode-gibson-v0.1.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **deps:** fetch @zerocool/sdk over public https, not a deploy key ([#42](https://github.com/zeroroot-ai/zerocool-plugins/issues/42)) ([e17eff7](https://github.com/zeroroot-ai/zerocool-plugins/commit/e17eff79a355249d5e37b5c2fee5d9f242764a5b)), closes [#26](https://github.com/zeroroot-ai/zerocool-plugins/issues/26)
+
 ## 0.1.0 (2026-08-16)
 
 
