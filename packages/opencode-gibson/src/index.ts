@@ -1,5 +1,5 @@
 import type { Hooks, Plugin, ToolDefinition } from "@opencode-ai/plugin"
-import { connectGibson, startCompletionsShim, type GibsonSession, type RunningShim } from "@zerocool/sdk"
+import { connectGibson, startCompletionsShim, type GibsonSession, type RunningShim } from "@zeroroot-ai/sdk"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -15,7 +15,7 @@ import {
 } from "./findings.js"
 
 /**
- * @zerocool/opencode-gibson — the main Gibson plugin.
+ * @zeroroot-ai/zerocool — the main Gibson plugin.
  *
  * ENROLLMENT — check in once, then run unattended. A human enrolls this host
  * one time:

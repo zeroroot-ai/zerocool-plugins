@@ -1,5 +1,5 @@
 {
-  "name": "@zerocool/opencode-gibson-exec",
+  "name": "@zeroroot-ai/zerocool-exec",
   "version": "0.0.0",
   "description": "opencode plugin (opt-in): route execution into the setec Devbox via a workspace adapter (zerocool#12).",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@zerocool/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.1.0"
+    "@zeroroot-ai/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"

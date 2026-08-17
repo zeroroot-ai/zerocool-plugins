@@ -30,7 +30,7 @@ import {
   startHeartbeat,
   startWorker,
   type ToolInvocation,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"

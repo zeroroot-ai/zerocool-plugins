@@ -6,7 +6,7 @@ import {
   type Finding,
   type GibsonSession,
   type Severity,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 import { appendFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 

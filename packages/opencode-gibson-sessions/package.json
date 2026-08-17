@@ -1,5 +1,5 @@
 {
-  "name": "@zerocool/opencode-gibson-sessions",
+  "name": "@zeroroot-ai/zerocool-sessions",
   "version": "0.0.0",
   "description": "opencode plugin (opt-in): checkpoint local context to the daemon session store (zerocool#13).",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@zerocool/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.1.0"
+    "@zeroroot-ai/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
