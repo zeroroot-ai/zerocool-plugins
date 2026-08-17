@@ -12,7 +12,7 @@ import {
   runMission,
   waitMission,
   type GibsonSession,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 
 /**
  * Delegation and missions — the factory's dispatch and recursion

@@ -2,16 +2,17 @@ name: release-please
 
 # Releases follow the polyrepo convention: release-please opens a release PR
 # from Conventional Commits; merging it creates the tag and GitHub release,
-# and the publish job below ships @zerocool/opencode-gibson to npm.
+# and the publish job below ships @zeroroot-ai/zerocool to npm.
 #
 # Publishing is DOUBLY gated (zerocool-plugins#26):
-#   1. NPM_TOKEN must exist as a secret. Until the @zerocool npm scope is
-#      claimed and the token added (human-only steps), the publish job
-#      warns and skips — releases still happen, npm just lags.
+#   1. NPM_TOKEN must exist as a secret. Without it the publish job warns
+#      and skips — releases still happen, npm just lags. The scope itself is
+#      no longer a gate: @zeroroot-ai is the npm account's own username
+#      scope, so unlike @zerocool it needs no org and no human step (#26).
 #   2. The package must not depend on a git URL. Publishing a tarball whose
 #      dependency is git+ssh://…sdk-ts.git would be uninstallable for anyone
 #      without repo access; the guard fails the job until the dependency is
-#      a semver range on the published @zerocool/sdk.
+#      a semver range on the published @zeroroot-ai/sdk.
 #
 # The two opt-in stub packages (opencode-gibson-exec, opencode-gibson-
 # sessions) are private: true until #12/#13 have implementations — claiming
@@ -66,7 +67,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "::warning::A release was created but NPM_TOKEN is not configured — npm publish skipped. Claim the @zerocool scope and add the secret (zerocool-plugins#26)."
+            echo "::warning::A release was created but NPM_TOKEN is not configured — npm publish skipped. Add the secret (zerocool-plugins#26)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -84,12 +85,12 @@ jobs:
       - name: Refuse to publish an uninstallable dependency
         if: steps.gate.outputs.ready == 'true'
         run: |
-          if grep -q '"@zerocool/sdk": "git+ssh' packages/opencode-gibson/package.json; then
-            echo "::error::@zerocool/opencode-gibson depends on @zerocool/sdk over git+ssh — nobody outside the org can install it. Use the public https URL, or publish to npm and switch to a semver range (#26)."
+          if grep -q '"@zeroroot-ai/sdk": "git+ssh' packages/opencode-gibson/package.json; then
+            echo "::error::@zeroroot-ai/zerocool depends on @zeroroot-ai/sdk over git+ssh — nobody outside the org can install it. Use the public https URL, or publish to npm and switch to a semver range (#26)."
             exit 1
           fi
-          if grep -q '"@zerocool/sdk": "git+' packages/opencode-gibson/package.json; then
-            echo "::warning::@zerocool/opencode-gibson still depends on @zerocool/sdk via a git URL. It installs (sdk-ts is public), but consumers build it from source and cannot express a version range — publish to npm and switch to semver (#26)."
+          if grep -q '"@zeroroot-ai/sdk": "git+' packages/opencode-gibson/package.json; then
+            echo "::warning::@zeroroot-ai/zerocool still depends on @zeroroot-ai/sdk via a git URL. It installs (sdk-ts is public), but consumers build it from source and cannot express a version range — publish to npm and switch to semver (#26)."
           fi
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -106,10 +107,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      - name: Publish @zerocool/opencode-gibson
+      - name: Publish @zeroroot-ai/zerocool
         if: steps.gate.outputs.ready == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" >> "$HOME/.npmrc"
-          pnpm publish --filter @zerocool/opencode-gibson --access public --no-git-checks
+          pnpm publish --filter @zeroroot-ai/zerocool --access public --no-git-checks

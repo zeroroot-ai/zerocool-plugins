@@ -1,4 +1,4 @@
 packages:
   - "packages/*"
 onlyBuiltDependencies:
-  - "@zerocool/sdk"
+  - "@zeroroot-ai/sdk"

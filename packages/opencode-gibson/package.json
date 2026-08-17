@@ -1,5 +1,5 @@
 {
-  "name": "@zerocool/opencode-gibson",
+  "name": "@zeroroot-ai/zerocool",
   "version": "0.1.1",
   "description": "opencode plugin: Gibson platform integration (zerocool). Zero-config LLM, tools, findings, knowledge, delegate/missions.",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zerocool/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.1.0"
+    "@zeroroot-ai/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"

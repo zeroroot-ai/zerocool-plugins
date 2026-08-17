@@ -7,7 +7,7 @@ import {
   queryGibsonPlugin,
   type GibsonSession,
   type GibsonTool,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 
 /**
  * Gibson tools and plugins as opencode tools (zerocool-plugins#9).

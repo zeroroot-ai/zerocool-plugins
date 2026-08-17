@@ -9,7 +9,7 @@ name: node-ci
 #                               (oxlint), node:test suites.
 #   merge_group  -> heavy tier: `pnpm build` (tsc across the workspace).
 #
-# @zerocool/sdk is fetched over public https from zeroroot-ai/sdk-ts, which
+# @zeroroot-ai/sdk is fetched over public https from zeroroot-ai/sdk-ts, which
 # is a public MIT repo, so this workspace installs with no credential at all.
 # It used to be a git+ssh fetch authenticated by SDK_TS_DEPLOY_KEY; that key
 # and the reusable's private-git-deps seam are no longer needed here, and a

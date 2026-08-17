@@ -1,4 +1,4 @@
-import { decodeToolInput, type GibsonClients, type ToolInvocation } from "@zerocool/sdk"
+import { decodeToolInput, type GibsonClients, type ToolInvocation } from "@zeroroot-ai/sdk"
 
 /**
  * The http_probe tool zerocool serves to the fleet.

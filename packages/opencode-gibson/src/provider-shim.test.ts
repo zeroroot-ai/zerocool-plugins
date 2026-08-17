@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { startCompletionsShim, type RunningShim } from "@zerocool/sdk"
+import { startCompletionsShim, type RunningShim } from "@zeroroot-ai/sdk"
 
 /**
  * Depth-1 completion (#6): the zero-config `gibson` provider points

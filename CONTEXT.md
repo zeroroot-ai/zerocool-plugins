@@ -6,7 +6,7 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 
 ## Three layers (all branded zerocool)
 
-1. **`@zerocool/sdk`** (repo [`sdk-ts`](https://github.com/zeroroot-ai/sdk-ts)) — the
+1. **`@zeroroot-ai/sdk`** (repo [`sdk-ts`](https://github.com/zeroroot-ai/sdk-ts)) — the
    framework-agnostic TS Gibson SDK: connect-es bindings (BSR), Capability Grant
    auth, component register/heartbeat, the session singleton, the OpenAI-compat
    shim. Nothing opencode-specific. Any TS program can use it.
@@ -18,9 +18,9 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 
 | Package | What | Adoption |
 |---|---|---|
-| **`@zerocool/opencode-gibson`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
-| **`@zerocool/opencode-gibson-exec`** (opt-in) | route execution into the setec **Devbox** via `experimental_workspace.register` (#12) | invasive — changes where code runs |
-| **`@zerocool/opencode-gibson-sessions`** (opt-in) | mirror local context to the daemon store via events (#13) | invasive — changes where state lives |
+| **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
+| **`@zeroroot-ai/zerocool-exec`** (opt-in) | route execution into the setec **Devbox** via `experimental_workspace.register` (#12) | invasive — changes where code runs |
+| **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror local context to the daemon store via events (#13) | invasive — changes where state lives |
 
 ## Boundary — plugin vs core
 
@@ -33,7 +33,7 @@ including zero-config LLM and Devbox execution.
 over opencode's server/SDK (`PollWork` → run opencode headless). Deferred to the
 `zerocool` fork.
 
-A shared **Gibson session singleton** lives in `@zerocool/sdk` so multiple plugins
+A shared **Gibson session singleton** lives in `@zeroroot-ai/sdk` so multiple plugins
 share one Capability-Grant auth + one `RegisterComponent`.
 
 ## Open platform-side item

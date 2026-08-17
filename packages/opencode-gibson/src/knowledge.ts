@@ -6,7 +6,7 @@ import {
   queryKnowledge,
   type GibsonSession,
   type KnowledgeHit,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 
 /**
  * Knowledge — read the tenant graph so the agent sharpens across runs

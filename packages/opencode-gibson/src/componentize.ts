@@ -8,7 +8,7 @@ import {
   type ComponentKind,
   type ComponentSpec,
   type GibsonSession,
-} from "@zerocool/sdk"
+} from "@zeroroot-ai/sdk"
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 
