@@ -168,7 +168,7 @@ async function main(): Promise<void> {
 }
 
 // Only run when executed as the bin, so the handler above stays importable.
-if (process.argv[1] && /serve-agent\.js$/.test(process.argv[1])) {
+if (process.argv[1]?.endsWith("serve-agent.js")) {
   main().catch((e: unknown) => {
     console.error(`[zerocool-agent] fatal: ${(e as Error).message}`)
     process.exit(1)
