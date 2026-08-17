@@ -7,6 +7,7 @@ import { componentizeTool, enrollComponentTool } from "./componentize.js"
 import { delegationTools } from "./delegate.js"
 import { buildGibsonTools } from "./gibson-tools.js"
 import { ambientKnowledge, recallTool } from "./knowledge.js"
+import { selectKnowledgeSource } from "./knowledge-source.js"
 import {
   gibsonFindingsBackend,
   localFindingsBackend,
@@ -130,13 +131,19 @@ export const GibsonPlugin: Plugin = async () => {
 
   // Tool discovery runs once at load — opencode reads the `tool` hook as a
   // static object, so a tool registered mid-session would never reach the model.
+  // Which grant this process reads the knowledge graph with. A dispatched run
+  // reads as the TASK; an interactive one keeps the component grant. Chosen once
+  // here so nothing downstream has to ask.
+  const { knowledge, scope: knowledgeScope } = selectKnowledgeSource(live)
+  console.error(`[zerocool] knowledge reads use the ${knowledgeScope} grant`)
+
   const gibson = await buildGibsonTools(live)
   if (gibson.note) console.error(`[zerocool] Gibson tool discovery: ${gibson.note}`)
   else console.error(`[zerocool] ${gibson.discovered} Gibson tool(s) registered`)
 
   const tools: Record<string, ToolDefinition> = {
     submit_finding: submitFindingTool(gibsonFindingsBackend(live), context),
-    recall: recallTool(live),
+    recall: recallTool(knowledge),
     gibson_componentize: componentizeTool(),
     gibson_enroll_component: enrollComponentTool(live),
     ...gibson.tools,
@@ -144,7 +151,7 @@ export const GibsonPlugin: Plugin = async () => {
   }
 
   const injectKnowledge = ambientKnowledge(
-    live,
+    knowledge,
     process.env.ZEROCOOL_AMBIENT_QUERY ?? "prior findings and security facts for this codebase",
   )
 

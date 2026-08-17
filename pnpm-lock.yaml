@@ -21,8 +21,8 @@ importers:
   packages/opencode-gibson:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0
-        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723
+        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.4.0
+        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -31,8 +31,8 @@ importers:
   packages/opencode-gibson-exec:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0
-        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723
+        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.4.0
+        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -41,8 +41,8 @@ importers:
   packages/opencode-gibson-sessions:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.2.0
-        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723
+        specifier: git+https://github.com/zeroroot-ai/sdk-ts.git#v0.4.0
+        version: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.11
@@ -244,9 +244,9 @@ packages:
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
-  '@zeroroot-ai/sdk@https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723':
-    resolution: {tarball: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723}
-    version: 0.2.0
+  '@zeroroot-ai/sdk@https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621':
+    resolution: {tarball: https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621}
+    version: 0.4.0
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -459,7 +459,7 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@zeroroot-ai/sdk@https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/1ee17f977feaab671d31b3522333fbf6d18df723':
+  '@zeroroot-ai/sdk@https://codeload.github.com/zeroroot-ai/sdk-ts/tar.gz/0e36ec7a168bc492209e068594beeea2d3c70621':
     dependencies:
       '@bufbuild/protobuf': 2.13.0
       '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.13.0)
