@@ -3,9 +3,8 @@ import { tool } from "@opencode-ai/plugin"
 import {
   formatKnowledgeForPrompt,
   isSeamUnavailable,
-  queryKnowledge,
-  type GibsonSession,
   type KnowledgeHit,
+  type KnowledgeSource,
 } from "@zeroroot-ai/sdk"
 
 /**
@@ -32,7 +31,7 @@ import {
 /** How many hits the ambient block injects. Kept small — it is prompt overhead. */
 const AMBIENT_LIMIT = 5
 
-export function recallTool(session: GibsonSession): ToolDefinition {
+export function recallTool(knowledge: KnowledgeSource): ToolDefinition {
   const z = tool.schema
   return tool({
     description:
@@ -50,7 +49,7 @@ export function recallTool(session: GibsonSession): ToolDefinition {
     async execute(args) {
       let hits: KnowledgeHit[]
       try {
-        hits = await queryKnowledge(session.clients.component, {
+        hits = await knowledge.query({
           text: args.query,
           topK: args.limit ?? 10,
           ...(args.node_types ? { nodeTypes: args.node_types } : {}),
@@ -87,13 +86,13 @@ export function recallTool(session: GibsonSession): ToolDefinition {
  * produced one. The lookup is fired once and cached, so a session pays for at
  * most one GraphRAG query no matter how many turns it runs.
  */
-export function ambientKnowledge(session: GibsonSession, seedQuery: string) {
+export function ambientKnowledge(knowledge: KnowledgeSource, seedQuery: string) {
   const cache = new Map<string, string>()
   const inFlight = new Map<string, Promise<string>>()
 
   const load = async (_key: string): Promise<string> => {
     try {
-      const hits = await queryKnowledge(session.clients.component, {
+      const hits = await knowledge.query({
         text: seedQuery,
         topK: AMBIENT_LIMIT,
       })

@@ -6,6 +6,7 @@ import { join } from "node:path"
 import { componentizeTool } from "./componentize.js"
 import { delegationTools } from "./delegate.js"
 import { buildGibsonTools, toolKey } from "./gibson-tools.js"
+import { componentKnowledge } from "@zeroroot-ai/sdk"
 import { recallTool } from "./knowledge.js"
 import { localFindingsBackend, submitFindingTool } from "./findings.js"
 import { createServer } from "node:http"
@@ -29,6 +30,15 @@ const ctx = (directory = process.cwd()) =>
 /** Build a fake GibsonSession whose component client is the given stub. */
 const session = (component: Record<string, unknown>) =>
   ({ clients: { component }, componentScope: "test", instanceId: "i-1", stop: () => {} }) as never
+
+/**
+ * A KnowledgeSource backed by the same component stub. recallTool takes a
+ * source rather than a session now, so the tool works the same whether the run
+ * reads with the component grant or a dispatch's task grant — which is the
+ * point of the abstraction.
+ */
+const knowledgeOf = (component: Record<string, unknown>) =>
+  componentKnowledge(component as never)
 
 const unimplemented = () => {
   throw Object.assign(new Error("unimplemented"), { code: "unimplemented" })
@@ -108,7 +118,7 @@ test("submit_finding routes to Gibson when a session exists", async () => {
 // ---------------------------------------------------------------------------
 
 test("recall reports the unwired daemon instead of failing the turn", async () => {
-  const t = recallTool(session({ queryNodes: unimplemented }))
+  const t = recallTool(knowledgeOf({ queryNodes: unimplemented }))
   const result = await t.execute({ query: "prior sqli findings" } as never, ctx())
   const output = typeof result === "string" ? result : result.output
   assert.match(output, /gibson#1186/)
@@ -117,7 +127,7 @@ test("recall reports the unwired daemon instead of failing the turn", async () =
 
 test("recall renders hits as a prompt-ready block", async () => {
   const t = recallTool(
-    session({
+    knowledgeOf({
       queryNodes: async () => ({
         results: [
           {
@@ -140,7 +150,7 @@ test("recall renders hits as a prompt-ready block", async () => {
 })
 
 test("recall says so plainly when the graph has no match", async () => {
-  const t = recallTool(session({ queryNodes: async () => ({ results: [] }) }))
+  const t = recallTool(knowledgeOf({ queryNodes: async () => ({ results: [] }) }))
   const result = await t.execute({ query: "nothing here" } as never, ctx())
   const output = typeof result === "string" ? result : result.output
   assert.match(output, /Nothing in the tenant graph/)
