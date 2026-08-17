@@ -24,7 +24,8 @@
     "@opencode-ai/plugin": "^1.18.11"
   },
   "bin": {
-    "zerocool-serve": "dist/serve.js"
+    "zerocool-serve": "dist/serve.js",
+    "zerocool-agent": "dist/serve-agent.js"
   },
   "publishConfig": {
     "access": "public"
