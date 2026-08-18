@@ -61,6 +61,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Presence is not validity. An ABSENT token skips the publish with a
+      # warning (a release still happened, npm just lags). An EXPIRED or
+      # REVOKED one used to pass this gate and die 40 lines later inside
+      # `pnpm publish`, which reads as a broken release rather than as a
+      # credential that lapsed. `npm whoami` is the cheapest call that
+      # actually exercises the token, so ask it here and name the likely
+      # cause in the failure.
       - name: Gate on NPM_TOKEN
         id: gate
         env:
@@ -69,9 +76,38 @@ jobs:
           if [ -z "${NPM_TOKEN:-}" ]; then
             echo "::warning::A release was created but NPM_TOKEN is not configured — npm publish skipped. Add the secret (zerocool-plugins#26)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          code=$(curl -sS -o /tmp/whoami.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${NPM_TOKEN}" \
+            https://registry.npmjs.org/-/whoami || echo 000)
+
+          if [ "$code" != "200" ]; then
+            echo "::error::NPM_TOKEN is present but not usable (HTTP ${code} from /-/whoami)."
+            echo "::error::The usual cause is EXPIRY — npm granular tokens are time-limited and the secret does not change when the token lapses. Mint a new one with bypass-2FA enabled and update the NPM_TOKEN secret."
+            exit 1
+          fi
+
+          echo "npm token authenticates as: $(jq -r .username /tmp/whoami.json)"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      # Advisory, never fatal: a token that authenticates can still be unable
+      # to PUBLISH, because this account enforces 2FA and only a token with
+      # bypass-2fa may publish unattended. `npm publish --dry-run` does not
+      # detect that — it prints a perfect tarball and exits 0 — so the token
+      # introspection endpoint is the only place it shows up before the real
+      # publish fails with a 403.
+      - name: Report token expiry and 2FA bypass
+        if: steps.gate.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          curl -sS -H "Authorization: Bearer ${NPM_TOKEN}" \
+            https://registry.npmjs.org/-/npm/v1/tokens \
+            | jq -r '.objects[]? | "permissions=\(.permissions | tostring) bypass_2fa=\(.bypass_2fa) expiry=\(.expiry // "none")"' \
+            || echo "::warning::could not read token metadata (a granular token may not list tokens) — skipping the advisory check"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.gate.outputs.ready == 'true'
