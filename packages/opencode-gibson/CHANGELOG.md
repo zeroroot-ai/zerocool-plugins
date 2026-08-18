@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.1.1...opencode-gibson-v0.2.0) (2026-08-17)
+
+
+### Features
+
+* **agent:** serve kind=agent dispatched work by driving opencode headless ([#47](https://github.com/zeroroot-ai/zerocool-plugins/issues/47)) ([bc111bb](https://github.com/zeroroot-ai/zerocool-plugins/commit/bc111bb8c93d3e7fd13afd4b7532c5d33a7403b0))
+* **knowledge:** a dispatched run reads with its task grant ([#49](https://github.com/zeroroot-ai/zerocool-plugins/issues/49)) ([f3f9f8f](https://github.com/zeroroot-ai/zerocool-plugins/commit/f3f9f8f2806914dd5c9f68db97eb672d47e65465)), closes [#48](https://github.com/zeroroot-ai/zerocool-plugins/issues/48)
+
 ## [0.1.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.1.0...opencode-gibson-v0.1.1) (2026-08-16)
 
 
