@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.2.0...opencode-gibson-v0.2.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* **deps:** install @zeroroot-ai/sdk from npm, not a git URL ([#54](https://github.com/zeroroot-ai/zerocool-plugins/issues/54)) ([03fd7c4](https://github.com/zeroroot-ai/zerocool-plugins/commit/03fd7c49720a4fe03c185f162cce0de975e86275))
+
 ## [0.2.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.1.1...opencode-gibson-v0.2.0) (2026-08-17)
 
 
