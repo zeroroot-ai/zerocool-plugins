@@ -113,20 +113,29 @@ jobs:
         if: steps.gate.outputs.ready == 'true'
 
       # The bar this guard defends is "a stranger can install what we publish".
-      # A git+ssh dependency fails that outright -- it needs a key on a private
-      # repo -- so it stays a hard error. git+https on the now-public sdk-ts
-      # does install for anyone, so it is a warning, not a block: still not the
-      # end state we want (no semver range, a build-from-source on install),
-      # which is #26.
+      #
+      # It used to warn on git+https and hard-fail only on git+ssh, because
+      # git+https at least installs for anyone on the public sdk-ts. That was
+      # the right call while @zeroroot-ai/sdk was unpublished; it is published
+      # now, so ANY git URL is a regression rather than a stepping stone —
+      # a git dependency builds from source on install, cannot express a
+      # version range, and needs git plus network reach to GitHub, which an
+      # air-gapped or locked-down consumer does not have.
       - name: Refuse to publish an uninstallable dependency
         if: steps.gate.outputs.ready == 'true'
         run: |
-          if grep -q '"@zeroroot-ai/sdk": "git+ssh' packages/opencode-gibson/package.json; then
-            echo "::error::@zeroroot-ai/zerocool depends on @zeroroot-ai/sdk over git+ssh — nobody outside the org can install it. Use the public https URL, or publish to npm and switch to a semver range (#26)."
+          # Every package, not just the published one. A private stub with a
+          # git dependency becomes a published package with a git dependency
+          # the day it flips, and the guard would not have been watching.
+          if grep -rn '"@zeroroot-ai/sdk": "git+' packages/*/package.json; then
+            echo "::error::A package depends on @zeroroot-ai/sdk via a git URL (listed above). @zeroroot-ai/sdk is published to npm — use a semver range so consumers install a tarball instead of building from source."
             exit 1
           fi
-          if grep -q '"@zeroroot-ai/sdk": "git+' packages/opencode-gibson/package.json; then
-            echo "::warning::@zeroroot-ai/zerocool still depends on @zeroroot-ai/sdk via a git URL. It installs (sdk-ts is public), but consumers build it from source and cannot express a version range — publish to npm and switch to semver (#26)."
+          # The lockfile is the other half: a semver range in package.json with
+          # a git tarball resolved in the lock still installs from GitHub.
+          if grep -q 'codeload.github.com/zeroroot-ai/sdk-ts' pnpm-lock.yaml; then
+            echo "::error::pnpm-lock.yaml still resolves @zeroroot-ai/sdk from a git tarball. Re-run pnpm install so it resolves from the registry."
+            exit 1
           fi
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9

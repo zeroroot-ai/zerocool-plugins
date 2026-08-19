@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@zeroroot-ai/sdk": "git+https://github.com/zeroroot-ai/sdk-ts.git#v0.4.0"
+    "@zeroroot-ai/sdk": "^0.4.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
