@@ -23,13 +23,13 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zeroroot-ai/sdk": "^0.11.0"
+    "@zeroroot-ai/sdk": "^0.12.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.11"
+    "@opencode-ai/plugin": "^1.18.27"
   },
   "bin": {
     "zerocool-serve": "dist/serve.js",

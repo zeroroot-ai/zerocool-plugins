@@ -25,7 +25,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zeroroot-ai/sdk": "^0.9.0"
+    "@zeroroot-ai/sdk": "^0.12.0"
   },
   "bin": {
     "zerocool-claude-hook": "dist/hook.js"
