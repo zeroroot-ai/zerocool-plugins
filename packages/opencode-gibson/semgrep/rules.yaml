@@ -1,0 +1,178 @@
+# The pinned semgrep ruleset the zerocool source-analysis task runs
+# (zerocool-plugins#87). Vendored, not fetched: the sandbox must produce the
+# same candidate list for the same checkout on every run, with no registry
+# call and no telemetry. Every rule names the CWE it detects in metadata.cwe;
+# the task turns that into the Finding's Vulnerability id. A rule without a
+# CWE gets a platform id instead (zerocool:semgrep:<rule id>).
+#
+# Rules are candidates, not verdicts. The model triages each match; a rule
+# here may be noisy on purpose as long as the match carries enough context
+# to be judged. Keep the set small and cross-language; a rule that never
+# yields a real finding in the demo fixture or a real repository is removed.
+rules:
+  - id: js-eval-of-request-input
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      eval() runs a string that comes from request input. An attacker who
+      controls that input runs arbitrary code in the server process.
+    patterns:
+      - pattern-either:
+          - pattern: eval($ARG)
+          - pattern: new Function($ARG)
+      - metavariable-pattern:
+          metavariable: $ARG
+          pattern-either:
+            - pattern: $REQ.body.$X
+            - pattern: $REQ.query.$X
+            - pattern: $REQ.params.$X
+            - pattern: $REQ.body
+            - pattern: $REQ.query
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      category: injection
+
+  - id: js-eval-any
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      eval() on a value. Real when the value can be influenced by a caller;
+      noise when it is a constant.
+    pattern: eval($ARG)
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      category: injection
+
+  - id: js-child-process-shell-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A shell command is built by string concatenation and run through
+      child_process. Input in the string becomes shell syntax.
+    patterns:
+      - pattern-either:
+          - pattern: $CP.exec($CMD, ...)
+          - pattern: $CP.execSync($CMD, ...)
+          - pattern: exec($CMD, ...)
+          - pattern: execSync($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-either:
+            - pattern: $A + $B
+            - pattern: "`...${$X}...`"
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      category: injection
+
+  - id: js-sql-string-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A SQL query is built by string concatenation or interpolation and passed
+      to a query function. Use a parameterized query.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query($SQL, ...)
+          - pattern: $DB.raw($SQL, ...)
+          - pattern: $DB.execute($SQL, ...)
+      - metavariable-pattern:
+          metavariable: $SQL
+          pattern-either:
+            - pattern: $A + $B
+            - pattern: "`...${$X}...`"
+    metadata:
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      category: injection
+
+  - id: js-hardcoded-jwt-secret
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A JWT is signed or verified with a string literal secret. Anyone who
+      reads the source can forge tokens.
+    patterns:
+      - pattern-either:
+          - pattern: $JWT.sign($P, "$SECRET", ...)
+          - pattern: $JWT.verify($T, "$SECRET", ...)
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      category: secrets-exposure
+
+  - id: js-express-res-send-request-input
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Request input is written straight into the response body. If the
+      response is HTML this is reflected cross-site scripting.
+    patterns:
+      - pattern-either:
+          - pattern: $RES.send($ARG)
+          - pattern: $RES.write($ARG)
+      - metavariable-pattern:
+          metavariable: $ARG
+          pattern-either:
+            - pattern: $REQ.query.$X
+            - pattern: $REQ.params.$X
+            - pattern: $REQ.body.$X
+            - pattern: "`...${$REQ.query.$X}...`"
+            - pattern: "`...${$REQ.params.$X}...`"
+            - pattern: $A + $REQ.query.$X
+            - pattern: $A + $REQ.params.$X
+    metadata:
+      cwe: "CWE-79: Improper Neutralization of Input During Web Page Generation"
+      category: injection
+
+  - id: py-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >-
+      subprocess is called with shell=True and a command that is not a
+      constant. Input in the command becomes shell syntax.
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+      - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      category: injection
+
+  - id: py-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: yaml.load without a safe Loader deserializes arbitrary objects.
+    patterns:
+      - pattern: yaml.load($X)
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      category: deserialization
+
+  - id: go-sql-string-concat
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A SQL query is built with fmt.Sprintf or concatenation and passed to the
+      database. Use placeholders.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.Query(fmt.Sprintf(...), ...)
+          - pattern: $DB.Exec(fmt.Sprintf(...), ...)
+          - pattern: $DB.QueryRow(fmt.Sprintf(...), ...)
+          - pattern: $DB.Query($A + $B, ...)
+          - pattern: $DB.Exec($A + $B, ...)
+    metadata:
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      category: injection
+
+  - id: go-exec-command-shell
+    languages: [go]
+    severity: WARNING
+    message: >-
+      A shell is invoked with -c and a command that is not a constant.
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD, ...)
+          - pattern: exec.Command("bash", "-c", $CMD, ...)
+      - pattern-not: exec.Command("...", "-c", "...", ...)
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      category: injection

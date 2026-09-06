@@ -1,0 +1,39 @@
+{
+  "name": "@zeroroot-ai/zerocool-sessions",
+  "version": "0.0.0",
+  "description": "opencode plugin (opt-in): checkpoint local context to the daemon session store (zerocool#13).",
+  "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeroroot-ai/zerocool-plugins.git",
+    "directory": "packages/opencode-gibson-sessions"
+  },
+  "homepage": "https://github.com/zeroroot-ai/zerocool-plugins",
+  "bugs": "https://github.com/zeroroot-ai/zerocool-plugins/issues",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zeroroot-ai/sdk": "^0.4.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.11"
+  },
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

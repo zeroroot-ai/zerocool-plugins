@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+# The zerocool Claude agent image (gibson#1706, ADR-0008, ADR-0016).
+#
+# One image, two shapes, selected by the manifest command (gibson#1717):
+#
+#   /app/dist/sandbox.js      one-shot: one dispatched Task, one auto-closed job
+#   /app/dist/member-main.js  member:   always-on, pulls jobs from its bank
+#
+# It carries the unmodified Claude Code CLI, the Gibson MCP server, and the
+# member driver. The Claude Code binary is installed as Anthropic publishes it
+# and is never modified: the hosting terms require that, and they require the
+# end user's own credential, which the launch injects or the person signs in
+# with inside the sandbox.
+#
+# Non-root: Claude Code refuses --dangerously-skip-permissions as root, and the
+# gVisor sandbox is the permission boundary.
+ARG NODE_VERSION=22.21.1
+# Pinned: the stream-json fixtures in packages/claude-member/test/fixtures come
+# from this version, and a bump re-captures them (test/fixtures/README.md).
+ARG CLAUDE_CODE_VERSION=2.1.257
+# The one tool surface for every host (ADR-0008). The driver spawns its bin.
+ARG GIBSON_MCP_VERSION=0.2.0
+
+FROM node:${NODE_VERSION}-slim AS build
+WORKDIR /src
+RUN corepack enable
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages ./packages
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
+RUN pnpm -r build
+RUN pnpm --filter @zeroroot-ai/zerocool-claude-member deploy --prod --legacy /app
+
+FROM node:${NODE_VERSION}-slim AS runtime
+ARG CLAUDE_CODE_VERSION
+ARG GIBSON_MCP_VERSION
+ENV NODE_ENV=production \
+    ZEROCOOL_CLAUDE_BIN=claude \
+    ZEROCOOL_MCP_BIN=gibson-mcp \
+    ZEROCOOL_AGENT_NAME=claude \
+    CLAUDE_CONFIG_DIR=/home/claude/.claude \
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
+    ZEROCOOL_STATE_DIR=/home/claude/.zerocool \
+    ZEROCOOL_WORKSPACE=/workspace
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && npm i -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @zeroroot-ai/gibson-mcp@${GIBSON_MCP_VERSION} \
+ && npm cache clean --force \
+ && claude --version \
+ && gibson-mcp --version
+COPY --from=build /app /app
+RUN useradd -u 65532 -m -d /home/claude claude \
+ && mkdir -p /workspace /home/claude/.claude /home/claude/.zerocool \
+ && chown -R 65532:65532 /workspace /app /home/claude
+WORKDIR /workspace
+USER 65532:65532
+# The one-shot shape is the default. A member sandbox overrides the command.
+ENTRYPOINT ["node", "/app/dist/sandbox.js"]

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gibson": {
+      "command": "npx",
+      "args": ["--yes", "--package", "@zeroroot-ai/gibson-mcp@latest", "gibson-mcp", "--transport", "stdio"]
+    }
+  }
+}

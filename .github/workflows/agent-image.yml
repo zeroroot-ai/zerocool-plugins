@@ -1,0 +1,64 @@
+name: agent-image
+# Build + cosign-sign the zerocool AGENT container image (kind=agent dispatched,
+# ADR-0006) from source, via the org's reusable image-build workflow — the same
+# build-from-source + keyless-OIDC cosign convention gibson-images.yml uses.
+#
+# The image is an OUTBOUND dispatched worker (no listen port): gibson's platform
+# catalog (ADR-0015) references it by digest, and gitops deploys it as an
+# external agent workload that registers with the daemon (GIBSON_PLATFORM_URL).
+#
+# Trigger discipline (ADR-0060): push:main (sha-tagged) + the release tag
+# (release-please cuts `opencode-gibson-v*`; tag_pattern derives the semver
+# image tag from it) + workflow_dispatch for manual rebuild. No pull_request.
+on:
+  push:
+    branches: [main]
+    tags: ['opencode-gibson-v*', 'claude-member-v*']
+  workflow_dispatch:
+concurrency:
+  group: agent-image-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  image:
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      actions: read
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@cf1c48774b57e552ccdd17a2a4bba3f782587dbe # main, .github recreated 2026-09-06
+    with:
+      component_name: zerocool-agent
+      component_path: .
+      dockerfile_path: Dockerfile
+      image_name: ghcr.io/zeroroot-ai/zerocool-agent
+      tag_pattern: type=match,pattern=opencode-gibson-v(.*)
+    secrets:
+      # The Dockerfile installs only public deps (SDK over public https, opencode
+      # from npm), so no private-module PAT is needed; pass GITHUB_TOKEN to satisfy
+      # the reusable's ghcr login + metadata step.
+      ghtoken: ${{ secrets.GITHUB_TOKEN }}
+
+  # The Claude agent image (gibson#1706): the unmodified Claude Code CLI, the
+  # Gibson MCP server and the member driver. One image for both shapes,
+  # one build per claude-member release.
+  image-claude:
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      actions: read
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@cf1c48774b57e552ccdd17a2a4bba3f782587dbe # main, .github recreated 2026-09-06
+    with:
+      component_name: zerocool-claude-agent
+      component_path: .
+      dockerfile_path: Dockerfile.claude
+      image_name: ghcr.io/zeroroot-ai/zerocool-claude-agent
+      tag_pattern: type=match,pattern=claude-member-v(.*)
+    secrets:
+      ghtoken: ${{ secrets.GITHUB_TOKEN }}

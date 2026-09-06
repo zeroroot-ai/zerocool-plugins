@@ -1,0 +1,42 @@
+{
+  "name": "@zeroroot-ai/zerocool-claude",
+  "version": "0.6.0",
+  "description": "Claude Code host adapter for Gibson (zerocool): the plugin bundle around the Gibson MCP server, plus SessionStart and SessionEnd hooks. The model stays on your Claude login.",
+  "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeroroot-ai/zerocool-plugins.git",
+    "directory": "packages/claude-gibson"
+  },
+  "homepage": "https://github.com/zeroroot-ai/zerocool-plugins",
+  "bugs": "https://github.com/zeroroot-ai/zerocool-plugins/issues",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    ".claude-plugin",
+    ".mcp.json",
+    "hooks"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@zeroroot-ai/sdk": "^0.9.0"
+  },
+  "bin": {
+    "zerocool-claude-hook": "dist/hook.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

@@ -1,0 +1,128 @@
+name: release-please
+
+# Releases follow the polyrepo convention: release-please opens a release PR
+# from Conventional Commits; merging it creates the tag and GitHub release,
+# and the publish job below ships @zeroroot-ai/zerocool to npm.
+#
+# Publishing is DOUBLY gated (zerocool-plugins#26):
+#      and skips — releases still happen, npm just lags. The scope itself is
+#      no longer a gate: @zeroroot-ai is the npm account's own username
+#      scope, so unlike @zerocool it needs no org and no human step (#26).
+#   2. The package must not depend on a git URL. Publishing a tarball whose
+#      dependency is git+ssh://…sdk-ts.git would be uninstallable for anyone
+#      without repo access; the guard fails the job until the dependency is
+#      a semver range on the published @zeroroot-ai/sdk.
+#
+# The two opt-in stub packages (opencode-gibson-exec, opencode-gibson-
+# sessions) are private: true until #12/#13 have implementations — claiming
+# npm names with empty packages helps nobody.
+#
+# GITHUB_TOKEN (not a PAT) is deliberate: tags pushed by GITHUB_TOKEN do not
+# fire downstream tag-triggered workflows, but nothing here depends on a tag
+# trigger — publish reacts to the action's own outputs in the same run.
+
+on:
+  push:
+    branches: [main]
+  # Publish an existing release tag again. Never hand-tag: the tag must exist.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. opencode-gibson-v0.2.1"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: release-please
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+    steps:
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.SDK_FANOUT_APP_ID }}
+          private-key: ${{ secrets.SDK_FANOUT_APP_PRIVATE_KEY }}
+          owner: zeroroot-ai
+          repositories: zerocool-plugins
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        id: rp
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Trusted publishing (OIDC). No npm token exists anywhere: the job proves
+  # its identity to npm with a short-lived GitHub OIDC token, and npm accepts
+  # it because each package's trusted publisher names this repo and this
+  # workflow file. Provenance is attached by default. Requires npm >= 11.5.1,
+  # which Node 22 does not ship, so the job installs npm 11 first.
+  # Docs: https://docs.npmjs.com/trusted-publishers
+  #
+  # A package that does not exist on npm yet cannot have a trusted publisher.
+  # Its first version is published once from a terminal by a person, then the
+  # trusted publisher is added and this job takes over.
+  publish:
+    name: publish to npm
+    needs: release-please
+    if: ${{ !cancelled() && (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+
+      - name: Refuse to publish an uninstallable dependency
+        run: |
+          if grep -rn '"@zeroroot-ai/sdk": "git+' packages/*/package.json; then
+            echo "::error::A package depends on @zeroroot-ai/sdk via a git URL (listed above). @zeroroot-ai/sdk is published to npm — use a semver range so consumers install a tarball instead of building from source."
+            exit 1
+          fi
+          if grep -q 'codeload.github.com/zeroroot-ai/sdk-ts' pnpm-lock.yaml; then
+            echo "::error::pnpm-lock.yaml still resolves @zeroroot-ai/sdk from a git tarball. Re-run pnpm install so it resolves from the registry."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .tool-versions
+          registry-url: https://registry.npmjs.org
+
+      - name: Use npm 11 (trusted publishing needs 11.5.1 or later)
+        run: npm install -g npm@11 && npm --version
+
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # Each package publishes only when its own version is not on npm yet, so
+      # a re-run after one package failed does not fail on the one that landed.
+      - name: Publish the packages
+        run: |
+          set -euo pipefail
+          for dir in packages/opencode-gibson packages/claude-gibson; do
+            [ -f "$dir/package.json" ] || continue
+            name=$(jq -r .name "$dir/package.json")
+            version=$(jq -r .version "$dir/package.json")
+            if [ "$(jq -r .private "$dir/package.json")" = "true" ]; then
+              echo "skip $name: private"; continue
+            fi
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip $name@$version: already on npm"; continue
+            fi
+            echo "publish $name@$version"
+            (cd "$dir" && npm publish --access public)
+          done

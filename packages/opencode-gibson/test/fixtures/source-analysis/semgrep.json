@@ -1,0 +1,115 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "src/server.js"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "js-eval-any",
+      "end": {
+        "col": 43,
+        "line": 13,
+        "offset": 447
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "message": "eval() on a value. Real when the value can be influenced by a caller; noise when it is a constant.",
+        "metadata": {
+          "category": "injection",
+          "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "src/server.js",
+      "start": {
+        "col": 18,
+        "line": 13,
+        "offset": 422
+      }
+    },
+    {
+      "check_id": "js-eval-of-request-input",
+      "end": {
+        "col": 43,
+        "line": 13,
+        "offset": 447
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "message": "eval() runs a string that comes from request input. An attacker who controls that input runs arbitrary code in the server process.",
+        "metadata": {
+          "category": "injection",
+          "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "src/server.js",
+      "start": {
+        "col": 18,
+        "line": 13,
+        "offset": 422
+      }
+    },
+    {
+      "check_id": "js-child-process-shell-concat",
+      "end": {
+        "col": 5,
+        "line": 21,
+        "offset": 677
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "message": "A shell command is built by string concatenation and run through child_process. Input in the string becomes shell syntax.",
+        "metadata": {
+          "category": "injection",
+          "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "src/server.js",
+      "start": {
+        "col": 3,
+        "line": 19,
+        "offset": 570
+      }
+    },
+    {
+      "check_id": "js-eval-any",
+      "end": {
+        "col": 54,
+        "line": 26,
+        "offset": 885
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "message": "eval() on a value. Real when the value can be influenced by a caller; noise when it is a constant.",
+        "metadata": {
+          "category": "injection",
+          "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "src/server.js",
+      "start": {
+        "col": 23,
+        "line": 26,
+        "offset": 854
+      }
+    }
+  ],
+  "version": "1.175.0"
+}

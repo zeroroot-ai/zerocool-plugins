@@ -1,0 +1,54 @@
+name: node-ci
+
+# Thin caller for the canonical three-tier Node/pnpm CI
+# (zeroroot-ai/.github reusable-node-ci.yml; epic cicd-efficiency, ADR-0060).
+# This repo had NO CI at all until zerocool-plugins#29 — a `main` that did not
+# build from its own lockfile survived a week because nothing ever ran.
+#
+#   pull_request -> fast tier:  frozen-lockfile install, typecheck, lint
+#                               (oxlint), node:test suites.
+#   merge_group  -> heavy tier: `pnpm build` (tsc across the workspace).
+#
+# @zeroroot-ai/sdk is fetched over public https from zeroroot-ai/sdk-ts, which
+# is a public MIT repo, so this workspace installs with no credential at all.
+# It used to be a git+ssh fetch authenticated by SDK_TS_DEPLOY_KEY; that key
+# and the reusable's private-git-deps seam are no longer needed here, and a
+# fork's CI now installs the same way ours does. The git URL itself is still
+# a stopgap — the durable fix is the npm publish tracked in #26.
+#
+# Pinned to release tag v2.2.0 per ADR-0060's blast-radius rule (never
+# @main). v2.2.0 is the merge of zeroroot-ai/.github#242, which added the
+# private-git-deps seam.
+#
+# permissions MUST include packages: read — the reusable's job requests it
+# (GitHub Packages reads, zeroroot-ai/.github#240) and a caller granting
+# only contents: read fails validation as a jobless startup_failure.
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: node-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  fast:
+    if: github.event_name == 'pull_request'
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@cf1c48774b57e552ccdd17a2a4bba3f782587dbe # main, .github recreated 2026-09-06
+    with:
+      tier: fast
+      # empty -> pnpm/action-setup reads the root packageManager field;
+      # the reusable's "10" default conflicts with an explicit packageManager.
+      pnpm-version: ""
+
+  heavy:
+    if: github.event_name == 'merge_group'
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@cf1c48774b57e552ccdd17a2a4bba3f782587dbe # main, .github recreated 2026-09-06
+    with:
+      tier: heavy
+      pnpm-version: ""

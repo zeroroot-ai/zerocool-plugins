@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx",
+            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@latest", "zerocool-claude-hook"],
+            "timeout": 30,
+            "statusMessage": "Loading Gibson context"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx",
+            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@latest", "zerocool-claude-hook"],
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

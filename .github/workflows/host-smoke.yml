@@ -1,0 +1,108 @@
+name: host-smoke
+
+# The config snippets in hosts/ are the install path for every coding agent
+# that has no bundle (ADR-0008, slice A8). A snippet that no longer starts the
+# server is a broken install page, and nothing else in CI would notice.
+#
+# Codex CLI and Gemini CLI have a headless mode, so this workflow writes the
+# real snippet and asks each CLI to list its MCP servers. That starts the
+# server and reads its tool list, with no model call and no API key. Cursor
+# and Windsurf have no headless mode; their snippets are checked by the shape
+# test in the node-ci suite.
+#
+# Trigger discipline (ADR-0060, ADR-0012): main and a daily schedule, never on
+# a pull request. It installs from the npm registry, which a PR gate must not
+# depend on.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hosts/**'
+      - '.github/workflows/host-smoke.yml'
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: host-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [codex, gemini]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22.21.1'
+          # This job installs global npm packages and never installs the
+          # workspace, so there is nothing to cache. Left on, setup-node reads
+          # the root `packageManager` field, tries to run pnpm for the cache
+          # key, and fails with "Unable to locate executable file: pnpm".
+          package-manager-cache: false
+
+      # Its own step so a broken publish reads as what it is, rather than as a
+      # confusing failure inside a host CLI.
+      - name: Install the Gibson MCP server
+        run: |
+          npm i -g @zeroroot-ai/gibson-mcp@latest
+          gibson-mcp --version
+
+      - name: Install the host CLI
+        run: |
+          case "${{ matrix.host }}" in
+            codex)  npm i -g @openai/codex ;;
+            gemini) npm i -g @google/gemini-cli ;;
+          esac
+
+      - name: Write the snippet from hosts/
+        run: |
+          set -eu
+          case "${{ matrix.host }}" in
+            codex)
+              mkdir -p ~/.codex
+              awk '/^```toml$/{f=1;next} /^```$/{f=0} f' hosts/codex.md > ~/.codex/config.toml
+              cat ~/.codex/config.toml
+              ;;
+            gemini)
+              mkdir -p ~/.gemini
+              awk '/^```json$/{f=1;next} /^```$/{f=0} f' hosts/gemini.md > ~/.gemini/settings.json
+              # A fresh CI checkout is a folder Gemini has never been told to
+              # trust, and it suppresses every MCP server in an untrusted
+              # folder. Folder trust is a local safety feature, not part of the
+              # snippet, so CI turns it off here rather than in hosts/gemini.md.
+              node -e '
+                const fs = require("node:fs")
+                const path = `${process.env.HOME}/.gemini/settings.json`
+                const settings = JSON.parse(fs.readFileSync(path, "utf8"))
+                settings.security = { ...settings.security, folderTrust: { enabled: false } }
+                fs.writeFileSync(path, JSON.stringify(settings, null, 2))
+              '
+              cat ~/.gemini/settings.json
+              ;;
+          esac
+
+      # No model call: listing the servers starts ours and reads its tool list,
+      # so the check needs no API key and costs nothing. Both CLIs write parts
+      # of that listing to stderr, so both streams are captured.
+      - name: The host starts the server and sees the Gibson tools
+        run: |
+          set -eu
+          case "${{ matrix.host }}" in
+            codex)  codex mcp list 2>&1 | tee /tmp/mcp.txt ;;
+            gemini) gemini mcp list 2>&1 | tee /tmp/mcp.txt ;;
+          esac
+          grep -qi gibson /tmp/mcp.txt
+          # A server that is listed but disabled serves no tools, which is the
+          # failure this test exists to catch.
+          if grep -i gibson /tmp/mcp.txt | grep -qi disabled; then
+            echo "the host lists the Gibson server but has it disabled"
+            exit 1
+          fi

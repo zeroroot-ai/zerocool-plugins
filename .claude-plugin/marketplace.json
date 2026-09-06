@@ -1,0 +1,14 @@
+{
+  "name": "zerocool",
+  "owner": { "name": "ZeroRoot", "url": "https://zeroroot.ai" },
+  "description": "Gibson platform plugins for coding agents.",
+  "plugins": [
+    {
+      "name": "zerocool",
+      "source": "./packages/claude-gibson",
+      "description": "Gibson for Claude Code: the session is a live mission. Memory, knowledge, findings, tools, delegation. Your Claude subscription pays for the model.",
+      "category": "security",
+      "keywords": ["gibson", "security", "knowledge-graph"]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "name": "@zeroroot-ai/zerocool-claude-member",
+  "version": "0.3.0",
+  "description": "The always-on Claude Code member driver for Gibson banks (gibson#1706): job table, one Claude Code process per active job, workspace manager, status heartbeat. Spawns the unmodified claude CLI.",
+  "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeroroot-ai/zerocool-plugins.git",
+    "directory": "packages/claude-member"
+  },
+  "homepage": "https://github.com/zeroroot-ai/zerocool-plugins",
+  "bugs": "https://github.com/zeroroot-ai/zerocool-plugins/issues",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@zeroroot-ai/sdk": "^0.12.0",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-node": "^2.0.0"
+  },
+  "bin": {
+    "zerocool-claude-dispatch": "dist/sandbox.js",
+    "zerocool-claude-member": "dist/member-main.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "zerocool",
+  "displayName": "Zerocool (Gibson)",
+  "description": "Gibson for Claude Code. The model stays on your Claude login.",
+  "author": {
+    "name": "ZeroRoot",
+    "url": "https://zeroroot.ai"
+  },
+  "homepage": "https://github.com/zeroroot-ai/zerocool-plugins",
+  "repository": "https://github.com/zeroroot-ai/zerocool-plugins",
+  "license": "MIT",
+  "keywords": [
+    "gibson",
+    "security",
+    "knowledge-graph",
+    "mcp"
+  ]
+}

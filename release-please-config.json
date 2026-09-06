@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "packages": {
+    "packages/opencode-gibson": {
+      "bump-minor-pre-major": true,
+      "component": "opencode-gibson",
+      "initial-version": "0.1.0"
+    },
+    "packages/claude-gibson": {
+      "bump-minor-pre-major": true,
+      "component": "claude-gibson",
+      "initial-version": "0.1.0"
+    },
+    "packages/claude-member": {
+      "bump-minor-pre-major": true,
+      "component": "claude-member",
+      "initial-version": "0.1.0"
+    }
+  }
+}
