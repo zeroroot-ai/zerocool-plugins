@@ -36,11 +36,6 @@ jobs:
       dockerfile_path: Dockerfile
       image_name: ghcr.io/zeroroot-ai/zerocool-agent
       tag_pattern: type=match,pattern=opencode-gibson-v(.*)
-    secrets:
-      # The Dockerfile installs only public deps (SDK over public https, opencode
-      # from npm), so no private-module PAT is needed; pass GITHUB_TOKEN to satisfy
-      # the reusable's ghcr login + metadata step.
-      ghtoken: ${{ secrets.GITHUB_TOKEN }}
 
   # The Claude agent image (gibson#1706): the unmodified Claude Code CLI, the
   # Gibson MCP server and the member driver. One image for both shapes,
@@ -60,5 +55,3 @@ jobs:
       dockerfile_path: Dockerfile.claude
       image_name: ghcr.io/zeroroot-ai/zerocool-claude-agent
       tag_pattern: type=match,pattern=claude-member-v(.*)
-    secrets:
-      ghtoken: ${{ secrets.GITHUB_TOKEN }}
