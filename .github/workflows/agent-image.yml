@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@ff1284a9ffcb2cd1d2437de2b5bd214de24878b3 # main, Trivy ignore-unfixed (.github#19)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@bcb3d77b816e2dc782c2c64e8fd0c82fc1bbffb1 # main 2026-09-07, node version guard (.github#23)
     with:
       component_name: zerocool-agent
       component_path: .
@@ -52,7 +52,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@ff1284a9ffcb2cd1d2437de2b5bd214de24878b3 # main, Trivy ignore-unfixed (.github#19)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@bcb3d77b816e2dc782c2c64e8fd0c82fc1bbffb1 # main 2026-09-07, node version guard (.github#23)
     with:
       component_name: zerocool-claude-agent
       component_path: .
