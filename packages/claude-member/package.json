@@ -1,6 +1,6 @@
 {
   "name": "@zeroroot-ai/zerocool-claude-member",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The always-on Claude Code member driver for Gibson banks (gibson#1706): job table, one Claude Code process per active job, workspace manager, status heartbeat. Spawns the unmodified claude CLI.",
   "license": "Elastic-2.0",
   "repository": {

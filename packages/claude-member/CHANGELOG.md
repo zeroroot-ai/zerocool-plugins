@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.3.0...claude-member-v0.3.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **security:** move agent images to Debian 13, scope tokens, fix regex and git argument handling ([#15](https://github.com/zeroroot-ai/zerocool-plugins/issues/15)) ([0f727c0](https://github.com/zeroroot-ai/zerocool-plugins/commit/0f727c0bc7e0c4f65eefe23d6905eaa80ec79aac))
+
 ## [0.3.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.2.0...claude-member-v0.3.0) (2026-09-01)
 
 
