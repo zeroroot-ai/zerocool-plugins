@@ -24,6 +24,7 @@ updates:
       - /tools/claude
       - /tools/hosts
       - /tools/npm
+      - /tools/pnpm
     schedule:
       interval: weekly
       day: tuesday
@@ -32,6 +33,8 @@ updates:
       - dependencies
     ignore:
       - dependency-name: "@anthropic-ai/claude-code"
+      # Bumped by hand together with packageManager in the root package.json.
+      - dependency-name: pnpm
   - package-ecosystem: pip
     directory: /tools/semgrep
     schedule:
