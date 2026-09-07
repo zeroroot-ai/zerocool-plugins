@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.3.1...claude-member-v0.3.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **rework:** pin npm 11 and pnpm 10.34.5 in the images, keep the git runner internal ([#25](https://github.com/zeroroot-ai/zerocool-plugins/issues/25)) ([27aad20](https://github.com/zeroroot-ai/zerocool-plugins/commit/27aad20ecea98932f4db733c9c569bd6222ffbc9))
+
 ## [0.3.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.3.0...claude-member-v0.3.1) (2026-09-07)
 
 
