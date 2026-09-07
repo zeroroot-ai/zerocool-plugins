@@ -4,5 +4,8 @@
   "description": "The opencode CLI the zerocool agent image spawns (ZEROCOOL_OPENCODE_BIN). Installed with npm ci from this lockfile so the binary is hash pinned.",
   "dependencies": {
     "opencode-ai": "1.18.27"
+  },
+  "allowScripts": {
+    "opencode-ai": true
   }
 }
