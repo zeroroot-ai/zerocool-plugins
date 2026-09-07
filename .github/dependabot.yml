@@ -35,6 +35,12 @@ updates:
       - dependency-name: "@anthropic-ai/claude-code"
       # Bumped by hand together with packageManager in the root package.json.
       - dependency-name: pnpm
+      # npm 12.0.2 ships older tar, undici, ip-address and brace-expansion
+      # than 11.19.1 (Trivy and Scorecard on the images, #13). Minor and
+      # patch bumps of npm 11 still flow.
+      - dependency-name: npm
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: pip
     directory: /tools/semgrep
     schedule:
