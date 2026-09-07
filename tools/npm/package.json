@@ -1,7 +1,7 @@
 {
   "name": "zerocool-publish-tools",
   "private": true,
-  "description": "npm 11 for trusted publishing (npm >= 11.5.1). Node 22 ships npm 10, so release-please.yml installs this lockfile with npm ci instead of an unpinned npm install -g.",
+  "description": "npm, hash pinned. The npm node bundles is whatever node shipped that day; npm 10 carried fixed CVEs in its bundled deps and is too old for trusted publishing (npm >= 11.5.1). Both agent images replace the bundled npm with this one, and release-please.yml installs it with npm ci.",
   "dependencies": {
     "npm": "12.0.2"
   }
