@@ -61,15 +61,29 @@ export interface SignInRelay {
 
 export class SignInError extends Error {}
 
-const URL_LINE = /https:\/\/\S*claude\.\S*\/\S*/
 const PROMPT_LINE = /paste code[^\n]*/i
 const INVALID_LINE = /invalid code[^\n]*/i
 const EXPIRY_LINE = /login expires in (\d+) days?/i
 
-/** Read the authorization URL out of one stdout line. Empty when there is none. */
+/**
+ * Read the authorization URL out of one stdout line. Empty when there is none.
+ *
+ * The URL is the first whitespace-free run that starts with `https://` and
+ * has `claude.` followed by a `/` somewhere after it, for example
+ * `https://claude.com/cai/oauth/authorize?...`. A whitespace split plus
+ * indexOf reads each character once. The old regular expression (three
+ * overlapping non-space runs around `claude.`) was polynomial on long lines
+ * (CodeQL js/polynomial-redos, #13).
+ */
 export function parseAuthUrl(line: string): string {
-  const m = URL_LINE.exec(line)
-  return m ? m[0]! : ""
+  for (const token of line.split(/\s+/)) {
+    const start = token.indexOf("https://")
+    if (start < 0) continue
+    const url = token.slice(start)
+    const host = url.indexOf("claude.", "https://".length)
+    if (host >= 0 && url.indexOf("/", host + "claude.".length) >= 0) return url
+  }
+  return ""
 }
 
 /** Read the paste prompt out of one stdout line. Empty when there is none. */

@@ -8,7 +8,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { runGit, type GitRunner } from "./git.js"
 import type { JobRepository } from "./job.js"
-import { clonePath, jobBranch, WorkspaceManager, worktreePath } from "./workspace.js"
+import { assertCloneUrl, assertGitArgument, clonePath, jobBranch, WorkspaceManager, worktreePath } from "./workspace.js"
 
 /**
  * The tests run against a real local bare repository, so `git worktree add`,
@@ -179,6 +179,29 @@ test("an empty credential fails the job instead of cloning anonymously", async (
   try {
     const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "" })
     await assert.rejects(ws.prepare("job-1", [f.repo]), /returned an empty secret/)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test("a job id, repository name or base branch git could read as an option or a path escape is refused", async () => {
+  const f = await fixture()
+  try {
+    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "tok" })
+    await assert.rejects(ws.prepare("--upload-pack=touch /tmp/pwned", [f.repo]), /job id .* starts with a dash/)
+    await assert.rejects(ws.prepare("../escape", [f.repo]), /job id .* contains \.\./)
+    await assert.rejects(ws.prepare("job-1", [repository(f.repo.cloneUrl, { name: "-x" })]), /repository name .* starts with a dash/)
+    await assert.rejects(ws.prepare("job-1", [repository(f.repo.cloneUrl, { name: "a/b" })]), /repository name .* contains a slash/)
+    await assert.rejects(ws.prepare("job-1", [repository(f.repo.cloneUrl, { baseBranch: "--upload-pack=x" })]), /base branch .* starts with a dash/)
+    await assert.rejects(ws.prepare("job-1", [repository(f.repo.cloneUrl, { baseBranch: "main branch" })]), /base branch .* control or space/)
+    await assert.rejects(ws.prepare("job-1", [repository("--upload-pack=x")]), /clone url .* starts with a dash/)
+    await assert.rejects(ws.remove("../escape", [f.repo]), /job id .* contains \.\./)
+    assert.equal(assertGitArgument("base branch", "release/2026.09"), "release/2026.09")
+    assert.equal(assertGitArgument("job id", "job_1.a-b", { path: true }), "job_1.a-b")
+    assert.equal(assertCloneUrl("https://git.example/acme/api.git"), "https://git.example/acme/api.git")
+    const trees = await ws.prepare("job-ok", [f.repo])
+    assert.equal(trees.length, 1, "a well formed job still prepares")
+    await ws.remove("job-ok", [f.repo])
   } finally {
     await f.cleanup()
   }

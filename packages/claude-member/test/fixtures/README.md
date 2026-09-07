@@ -54,7 +54,8 @@ own login.
 6. Replace `job-turn-synthetic.jsonl` with the real capture, drop the
    `synthetic-until-captured` row from the table above, and update
    `PINNED_CLAUDE_CODE_VERSION` in `src/version.ts` and the
-   `CLAUDE_CODE_VERSION` build argument in `Dockerfile.claude`.
+   `@anthropic-ai/claude-code` pin in `tools/claude/package.json` (then
+   `npm install --package-lock-only` there to refresh the lockfile).
 
 A fixture directory for a version the image does not pin is deleted, never
 kept (ADR-0027).

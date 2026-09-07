@@ -22,3 +22,13 @@ test("the pin is a floor: a newer CLI is supported, an older one is not", () => 
   assert.ok(!versionIsSupported(""))
   assert.ok(compareVersions("2.1.9", "2.1.10") < 0, "components compare as numbers, not strings")
 })
+
+test("parseClaudeVersion takes the first dotted triple and reads long output once", () => {
+  assert.equal(parseClaudeVersion("v2.1.257-beta"), "2.1.257")
+  assert.equal(parseClaudeVersion("1.2.3.4"), "1.2.3")
+  assert.equal(parseClaudeVersion("build 12 then 3.4.5 later"), "3.4.5")
+  assert.equal(parseClaudeVersion("1..2.3"), "")
+  assert.equal(parseClaudeVersion(""), "")
+  assert.equal(parseClaudeVersion("9".repeat(200_000)), "")
+  assert.equal(parseClaudeVersion(`${"9".repeat(200_000)} 2.1.257`), "2.1.257")
+})

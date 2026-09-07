@@ -31,9 +31,11 @@ on:
         description: "Existing release tag to publish, e.g. opencode-gibson-v0.2.1"
         required: true
 
+# The App token minted below opens the release PR and pushes the tag, so the
+# GITHUB_TOKEN itself needs no write scope anywhere in this workflow
+# (Scorecard Token-Permissions, #13).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
@@ -100,8 +102,13 @@ jobs:
           node-version-file: .tool-versions
           registry-url: https://registry.npmjs.org
 
+      # tools/npm/package-lock.json pins npm 11 by hash (Scorecard
+      # Pinned-Dependencies, #13). Dependabot bumps it.
       - name: Use npm 11 (trusted publishing needs 11.5.1 or later)
-        run: npm install -g npm@11 && npm --version
+        run: |
+          npm ci --prefix tools/npm --no-audit --no-fund
+          echo "$PWD/tools/npm/node_modules/.bin" >> "$GITHUB_PATH"
+          tools/npm/node_modules/.bin/npm --version
 
       - name: Install and build
         run: |

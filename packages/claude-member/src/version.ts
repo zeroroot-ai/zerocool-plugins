@@ -13,8 +13,26 @@ export const PINNED_CLAUDE_CODE_VERSION = "2.1.257"
 
 /** Read the running CLI's version from `claude --version` output. */
 export function parseClaudeVersion(stdout: string): string {
-  const m = /(\d+\.\d+\.\d+)/.exec(stdout)
-  return m ? m[1]! : ""
+  // The first `digits.digits.digits` run. Splitting on everything that is not
+  // a digit or a dot, then checking each piece, reads the text once; the old
+  // unanchored `/(\d+\.\d+\.\d+)/` rescanned long digit runs (CodeQL
+  // js/polynomial-redos, #13).
+  for (const piece of stdout.split(/[^0-9.]+/)) {
+    const parts = piece.split(".")
+    while (parts.length && parts[0] === "") parts.shift()
+    if (parts.length < 3) continue
+    const [major, minor, patch] = parts
+    if (major && minor && patch && isDigits(major) && isDigits(minor) && isDigits(patch)) return `${major}.${minor}.${patch}`
+  }
+  return ""
+}
+
+function isDigits(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 48 || c > 57) return false
+  }
+  return true
 }
 
 /** Compare two dotted versions. Negative when `a` is older than `b`. */

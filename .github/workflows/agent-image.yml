@@ -23,7 +23,9 @@ permissions:
 jobs:
   image:
     permissions:
-      contents: write
+      # contents:read: the reusable workflow checks out, builds, pushes to
+      # GHCR, signs and attests. It writes nothing to the repository.
+      contents: read
       packages: write
       id-token: write
       attestations: write
@@ -42,7 +44,9 @@ jobs:
   # one build per claude-member release.
   image-claude:
     permissions:
-      contents: write
+      # contents:read: the reusable workflow checks out, builds, pushes to
+      # GHCR, signs and attests. It writes nothing to the repository.
+      contents: read
       packages: write
       id-token: write
       attestations: write

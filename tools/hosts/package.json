@@ -1,0 +1,10 @@
+{
+  "name": "zerocool-host-smoke-tools",
+  "private": true,
+  "description": "The host CLIs and the Gibson MCP server host-smoke.yml installs with npm ci, so each run pins the exact published packages. Dependabot bumps them weekly.",
+  "dependencies": {
+    "@google/gemini-cli": "0.58.0",
+    "@openai/codex": "0.153.4",
+    "@zeroroot-ai/gibson-mcp": "0.2.0"
+  }
+}

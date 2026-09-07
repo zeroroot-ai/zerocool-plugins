@@ -41,25 +41,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22.21.1'
+          node-version-file: .tool-versions
           # This job installs global npm packages and never installs the
           # workspace, so there is nothing to cache. Left on, setup-node reads
           # the root `packageManager` field, tries to run pnpm for the cache
           # key, and fails with "Unable to locate executable file: pnpm".
           package-manager-cache: false
 
+      # tools/hosts/package-lock.json pins the Gibson MCP server and both host
+      # CLIs by hash (Scorecard Pinned-Dependencies, #13); Dependabot bumps
+      # them weekly, so the smoke still tracks what is published.
       # Its own step so a broken publish reads as what it is, rather than as a
       # confusing failure inside a host CLI.
       - name: Install the Gibson MCP server
         run: |
-          npm i -g @zeroroot-ai/gibson-mcp@latest
-          gibson-mcp --version
+          npm ci --prefix tools/hosts --no-audit --no-fund
+          echo "$PWD/tools/hosts/node_modules/.bin" >> "$GITHUB_PATH"
+          tools/hosts/node_modules/.bin/gibson-mcp --version
 
-      - name: Install the host CLI
+      - name: The host CLI is on the path
         run: |
           case "${{ matrix.host }}" in
-            codex)  npm i -g @openai/codex ;;
-            gemini) npm i -g @google/gemini-cli ;;
+            codex)  codex --version ;;
+            gemini) gemini --version ;;
           esac
 
       - name: Write the snippet from hosts/
