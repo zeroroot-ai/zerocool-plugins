@@ -93,6 +93,50 @@ export function jobBranch(jobId: string): string {
   return `job/${jobId}`
 }
 
+/**
+ * Refuse a value that git could read as an option or that could leave the
+ * workspace root. Job ids, repository names and base branches come from the
+ * bank over the wire; they are positional git arguments and path elements
+ * here (CodeQL js/second-order-command-line-injection, zerocool-plugins#13).
+ * A ref name follows `git check-ref-format`: no leading `-`, no `..`, no
+ * control or space characters, no `@{`, no `\\`, no `.lock` suffix.
+ */
+export function assertGitArgument(what: string, value: string, opts: { path?: boolean } = {}): string {
+  const reject = (why: string): never => {
+    throw new Error(`${what} ${JSON.stringify(value)} is not usable: ${why}`)
+  }
+  if (value === "") reject("it is empty")
+  if (value.startsWith("-")) reject("it starts with a dash, which git reads as an option")
+  if (value.includes("..")) reject("it contains ..")
+  if (value.endsWith(".lock") || value.endsWith("/") || value.endsWith(".")) reject("it ends with .lock, a slash or a dot")
+  if (value.includes("@{") || value.includes("\\")) reject("it contains @{ or a backslash")
+  for (const ch of value) {
+    const code = ch.charCodeAt(0)
+    if (code < 0x21 || code === 0x7f) reject("it contains a control or space character")
+    if (ch === "~" || ch === "^" || ch === ":" || ch === "?" || ch === "*" || ch === "[") reject(`it contains ${ch}`)
+    if (opts.path && ch === "/") reject("it contains a slash, and it names one directory")
+  }
+  if (opts.path && (value === "." || value === "..")) reject("it names the current or parent directory")
+  return value
+}
+
+/** The job id and every repository name are one path element each. */
+function assertNames(jobId: string, repos: JobRepository[]): void {
+  assertGitArgument("job id", jobId, { path: true })
+  for (const repo of repos) assertGitArgument("repository name", repo.name, { path: true })
+}
+
+/** A clone URL or path git may take positionally. Never an option, never empty. */
+export function assertCloneUrl(url: string): string {
+  if (url === "") throw new Error("clone url is empty")
+  if (url.startsWith("-")) throw new Error(`clone url ${JSON.stringify(url)} starts with a dash, which git reads as an option`)
+  for (const ch of url) {
+    const code = ch.charCodeAt(0)
+    if (code < 0x21 || code === 0x7f) throw new Error(`clone url ${JSON.stringify(url)} contains a control or space character`)
+  }
+  return url
+}
+
 async function dirSize(path: string): Promise<number> {
   let total = 0
   let entries
@@ -141,6 +185,7 @@ export class WorkspaceManager {
 
   /** Clone once, fetch after. Returns the bare clone path. */
   async ensureClone(repo: JobRepository): Promise<string> {
+    const cloneUrl = assertCloneUrl(repo.cloneUrl)
     const key = cloneCacheKey(repo)
     const path = clonePath(this.opts.root, repo)
     const credential = await this.credentialFor(repo)
@@ -154,7 +199,7 @@ export class WorkspaceManager {
     if (!exists) {
       await mkdir(join(path, ".."), { recursive: true })
       this.log(`clone ${repo.name} -> ${path}`)
-      await this.git(["clone", "--bare", "--quiet", repo.cloneUrl, path], { cwd: this.opts.root, credential, askpassPath })
+      await this.git(["clone", "--bare", "--quiet", "--", cloneUrl, path], { cwd: this.opts.root, credential, askpassPath })
     } else {
       this.log(`fetch ${repo.name}`)
       await this.git(["fetch", "--quiet", "--prune", "origin", `+refs/heads/*:refs/heads/*`], { cwd: path, credential, askpassPath })
@@ -166,7 +211,9 @@ export class WorkspaceManager {
   /** One worktree per repository for the job, on `job/<job_id>` from the base branch. */
   async prepare(jobId: string, repos: JobRepository[]): Promise<Worktree[]> {
     const out: Worktree[] = []
+    assertNames(jobId, repos)
     for (const repo of repos) {
+      const base = assertGitArgument("base branch", repo.baseBranch)
       const clone = await this.ensureClone(repo)
       const path = worktreePath(this.opts.root, jobId, repo.name)
       const branch = jobBranch(jobId)
@@ -180,8 +227,8 @@ export class WorkspaceManager {
         await mkdir(join(path, ".."), { recursive: true })
         const branches = await this.git(["branch", "--list", branch], { cwd: clone })
         const args = branches.stdout.trim()
-          ? ["worktree", "add", "--quiet", path, branch]
-          : ["worktree", "add", "--quiet", "-b", branch, path, repo.baseBranch]
+          ? ["worktree", "add", "--quiet", "--", path, branch]
+          : ["worktree", "add", "--quiet", "-b", branch, "--", path, `refs/heads/${base}`]
         await this.git(args, { cwd: clone })
       }
       out.push({ repository: repo.name, path, branch, deliverable: repo.deliverable })
@@ -190,7 +237,7 @@ export class WorkspaceManager {
   }
 
   private async commitsAhead(cwd: string, base: string, branch: string): Promise<number> {
-    const r = await this.git(["rev-list", "--count", `${base}..${branch}`], { cwd })
+    const r = await this.git(["rev-list", "--count", `refs/heads/${base}..${branch}`, "--"], { cwd })
     return Number(r.stdout.trim()) || 0
   }
 
@@ -210,18 +257,20 @@ export class WorkspaceManager {
    */
   async wrapUp(jobId: string, repos: JobRepository[], opts: { push: boolean; title: string; description: string }): Promise<WrapUpOutcome[]> {
     const out: WrapUpOutcome[] = []
+    assertNames(jobId, repos)
     for (const repo of repos) {
       const path = worktreePath(this.opts.root, jobId, repo.name)
       const branch = jobBranch(jobId)
       const outcome: WrapUpOutcome = { repository: repo.name, branch, deliverable: repo.deliverable, commits: 0, pushed: false, mergeRequestUrl: "", error: "" }
       try {
+        const base = assertGitArgument("base branch", repo.baseBranch)
         await this.commitIfDirty(path, `job ${jobId}: wrap-up`)
-        outcome.commits = await this.commitsAhead(path, repo.baseBranch, branch)
+        outcome.commits = await this.commitsAhead(path, base, branch)
         const wantsPush = repo.deliverable !== "NONE" && (opts.push || (repo.deliverable === "PUSH_BRANCH" && outcome.commits > 0))
         if (wantsPush && outcome.commits > 0) {
           const credential = await this.credentialFor(repo)
           const askpassPath = await this.askpassPath()
-          await this.git(["push", "--quiet", "--force-with-lease", "origin", `${branch}:${branch}`], { cwd: path, credential, askpassPath })
+          await this.git(["push", "--quiet", "--force-with-lease", "origin", `refs/heads/${branch}:refs/heads/${branch}`], { cwd: path, credential, askpassPath })
           outcome.pushed = true
           if (!opts.push) outcome.error = "abandoned: branch pushed so the commits are not lost, no merge request opened"
         }
@@ -241,11 +290,12 @@ export class WorkspaceManager {
 
   /** Remove the job's worktrees. Nothing else deletes a worktree (glossary, Close). */
   async remove(jobId: string, repos: JobRepository[]): Promise<void> {
+    assertNames(jobId, repos)
     for (const repo of repos) {
       const path = worktreePath(this.opts.root, jobId, repo.name)
       const clone = clonePath(this.opts.root, repo)
       try {
-        await this.git(["worktree", "remove", "--force", path], { cwd: clone })
+        await this.git(["worktree", "remove", "--force", "--", path], { cwd: clone })
       } catch (e) {
         this.log(`worktree remove ${path}: ${(e as Error).message}`)
         await rm(path, { recursive: true, force: true })

@@ -1,0 +1,8 @@
+{
+  "name": "zerocool-publish-tools",
+  "private": true,
+  "description": "npm 11 for trusted publishing (npm >= 11.5.1). Node 22 ships npm 10, so release-please.yml installs this lockfile with npm ci instead of an unpinned npm install -g.",
+  "dependencies": {
+    "npm": "11.19.1"
+  }
+}

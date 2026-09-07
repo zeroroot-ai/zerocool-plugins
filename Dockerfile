@@ -4,15 +4,16 @@
 # and drives opencode headless for each dispatched Task. It listens on no port.
 # Built from source; consumed by the Gibson platform catalog (ADR-0015) and by
 # gitops as an external agent workload. See docs/adr/0006 + zerocool-plugins#33.
-ARG NODE_VERSION=22.21.1
-ARG OPENCODE_VERSION=1.18.25
-# semgrep runs the vendored ruleset for the source-analysis task
-# (zerocool-plugins#87). Pinned like opencode: the candidate list for a
-# checkout must not change under a Scan mission because a registry moved.
-ARG SEMGREP_VERSION=1.175.0
+#
+# Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
+# zerocool-plugins#13): the base image by digest, the opencode CLI through
+# tools/opencode/package-lock.json (npm ci), and semgrep through
+# tools/semgrep/requirements.txt (pip --require-hashes). Dependabot bumps
+# each of them. The candidate list for a checkout must not change under a
+# Scan mission because a registry moved (zerocool-plugins#87).
 
 # ---- build: install the workspace and tsc the zerocool package ----
-FROM node:${NODE_VERSION}-slim AS build
+FROM node:22.23.2-trixie-slim@sha256:7b8a0c89c54499bee567618f96578e1a12a800f062fbdbfd1fb6a443fa6f6284 AS build
 WORKDIR /src
 RUN corepack enable
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
@@ -23,9 +24,7 @@ RUN pnpm -r build
 RUN pnpm --filter @zeroroot-ai/zerocool deploy --prod --legacy /app
 
 # ---- runtime: node + the opencode CLI the agent spawns + the deployed agent ----
-FROM node:${NODE_VERSION}-slim AS runtime
-ARG OPENCODE_VERSION
-ARG SEMGREP_VERSION
+FROM node:22.23.2-trixie-slim@sha256:7b8a0c89c54499bee567618f96578e1a12a800f062fbdbfd1fb6a443fa6f6284 AS runtime
 ENV NODE_ENV=production \
     ZEROCOOL_OPENCODE_BIN=opencode \
     ZEROCOOL_SEMGREP_BIN=semgrep \
@@ -33,13 +32,20 @@ ENV NODE_ENV=production \
     SEMGREP_ENABLE_VERSION_CHECK=0 \
     ZEROCOOL_AGENT_NAME=zerocool
 # The opencode CLI is the headless driver the agent spawns (ZEROCOOL_OPENCODE_BIN).
-RUN npm i -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force
+COPY tools/opencode/package.json tools/opencode/package-lock.json /opt/opencode/
+RUN cd /opt/opencode \
+ && npm ci --omit=dev --no-audit --no-fund \
+ && npm cache clean --force \
+ && ln -s /opt/opencode/node_modules/.bin/opencode /usr/local/bin/opencode \
+ && opencode --version
 # semgrep (ZEROCOOL_SEMGREP_BIN): the candidate producer for source analysis.
 # git is what semgrep uses to list the files of a checkout; without it every
 # file in a git checkout is "not listed by git ls-files" and skipped.
+COPY tools/semgrep/requirements.txt /tmp/semgrep-requirements.txt
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip git ca-certificates \
- && pip3 install --no-cache-dir --break-system-packages semgrep==${SEMGREP_VERSION} \
+ && pip3 install --no-cache-dir --break-system-packages --require-hashes -r /tmp/semgrep-requirements.txt \
+ && rm /tmp/semgrep-requirements.txt \
  && apt-get purge -y --auto-remove python3-pip \
  && rm -rf /var/lib/apt/lists/* \
  && semgrep --version

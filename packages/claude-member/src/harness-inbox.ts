@@ -14,6 +14,7 @@ import {
 import { Principal_Kind, type Principal } from "@zeroroot-ai/sdk/gen/gibson/common/v1/gibson_common_pb.js"
 import type { DeliverableReport, GrantSource, Inbox, JobInput, JobInputKind, JobStateReport } from "./inbox.js"
 import type { Deliverable, JobRepository, JobSpec, JobState } from "./job.js"
+import { trimLeadingSlashes, trimTrailingSlashes } from "./text.js"
 
 /**
  * The member inbox over the harness (zerocool-plugins#105, epic decision 6).
@@ -103,8 +104,9 @@ export function wireJobState(state: JobState): WireJobState {
  * the project is already a url, it is used as it stands.
  */
 export function repositoryOf(r: RepositorySpec, credentialName: string, connectorBaseUrl: string): JobRepository {
-  const project = r.project.replace(/^\/+/, "")
-  const cloneUrl = /^https?:\/\//.test(project) ? project : `${connectorBaseUrl.replace(/\/+$/, "")}/${project}.git`
+  const project = trimLeadingSlashes(r.project)
+  const isUrl = project.startsWith("https://") || project.startsWith("http://")
+  const cloneUrl = isUrl ? project : `${trimTrailingSlashes(connectorBaseUrl)}/${project}.git`
   return {
     name: r.name || project.split("/").pop() || "repo",
     connectorRef: r.connectorRef,

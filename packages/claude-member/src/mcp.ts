@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createServer } from "node:net"
 import { resolveBin } from "./claude-run.js"
 import type { McpGateway } from "./inbox.js"
+import { trimTrailingSlashes } from "./text.js"
 
 /**
  * The Gibson MCP server inside the member sandbox (zerocool-plugins#108,
@@ -92,9 +93,10 @@ export interface McpServer extends McpGateway {
 export function mcpGateway(base: string, opts: { callbackEndpoint?: string; insecure?: boolean; fetch?: typeof globalThis.fetch; log?: (line: string) => void }): McpGateway {
   const doFetch = opts.fetch ?? globalThis.fetch
   const log = opts.log ?? (() => {})
-  const url = `${base.replace(/\/+$/, "")}/turn`
+  const root = trimTrailingSlashes(base)
+  const url = `${root}/turn`
   return {
-    url: `${base.replace(/\/+$/, "")}${MCP_PATH}`,
+    url: `${root}${MCP_PATH}`,
     async useGrant(jobId: string, grant: string): Promise<void> {
       const body: TurnBody = {
         job_id: jobId,

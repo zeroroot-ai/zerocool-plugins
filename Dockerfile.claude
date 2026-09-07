@@ -14,14 +14,15 @@
 #
 # Non-root: Claude Code refuses --dangerously-skip-permissions as root, and the
 # gVisor sandbox is the permission boundary.
-ARG NODE_VERSION=22.21.1
-# Pinned: the stream-json fixtures in packages/claude-member/test/fixtures come
-# from this version, and a bump re-captures them (test/fixtures/README.md).
-ARG CLAUDE_CODE_VERSION=2.1.257
-# The one tool surface for every host (ADR-0008). The driver spawns its bin.
-ARG GIBSON_MCP_VERSION=0.2.0
+#
+# Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
+# zerocool-plugins#13): the base image by digest, and the Claude Code CLI plus
+# the Gibson MCP server (the one tool surface for every host, ADR-0008)
+# through tools/claude/package-lock.json (npm ci). The Claude Code version
+# there is the one the stream-json fixtures in packages/claude-member/test/
+# fixtures came from; a bump re-captures them (test/fixtures/README.md).
 
-FROM node:${NODE_VERSION}-slim AS build
+FROM node:22.23.2-trixie-slim@sha256:7b8a0c89c54499bee567618f96578e1a12a800f062fbdbfd1fb6a443fa6f6284 AS build
 WORKDIR /src
 RUN corepack enable
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
@@ -30,9 +31,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --froze
 RUN pnpm -r build
 RUN pnpm --filter @zeroroot-ai/zerocool-claude-member deploy --prod --legacy /app
 
-FROM node:${NODE_VERSION}-slim AS runtime
-ARG CLAUDE_CODE_VERSION
-ARG GIBSON_MCP_VERSION
+FROM node:22.23.2-trixie-slim@sha256:7b8a0c89c54499bee567618f96578e1a12a800f062fbdbfd1fb6a443fa6f6284 AS runtime
 ENV NODE_ENV=production \
     ZEROCOOL_CLAUDE_BIN=claude \
     ZEROCOOL_MCP_BIN=gibson-mcp \
@@ -41,9 +40,13 @@ ENV NODE_ENV=production \
     CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
     ZEROCOOL_STATE_DIR=/home/claude/.zerocool \
     ZEROCOOL_WORKSPACE=/workspace
+COPY tools/claude/package.json tools/claude/package-lock.json /opt/claude/
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* \
- && npm i -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @zeroroot-ai/gibson-mcp@${GIBSON_MCP_VERSION} \
+ && cd /opt/claude \
+ && npm ci --omit=dev --no-audit --no-fund \
  && npm cache clean --force \
+ && ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude \
+ && ln -s /opt/claude/node_modules/.bin/gibson-mcp /usr/local/bin/gibson-mcp \
  && claude --version \
  && gibson-mcp --version
 COPY --from=build /app /app

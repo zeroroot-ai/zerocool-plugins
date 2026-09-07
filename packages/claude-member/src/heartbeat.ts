@@ -7,6 +7,7 @@ import { grantInterceptor } from "@zeroroot-ai/sdk"
 import { ComponentService } from "@zeroroot-ai/sdk"
 import { MemberState as WireMemberState, type MemberStatus as WireMemberStatus } from "@zeroroot-ai/sdk/gen/gibson/bank/v1/bank_pb.js"
 import type { MemberState, MemberStatus, StatusReporter } from "./inbox.js"
+import { trimTrailingSlashes } from "./text.js"
 
 /**
  * The member heartbeat (glossary, Member status; zerocool-plugins#105).
@@ -92,6 +93,6 @@ export class ComponentHeartbeat implements StatusReporter {
 export function openComponentClient(platformURL: string, token: () => string): Client<typeof ComponentService> {
   return createClient(
     ComponentService,
-    createGrpcTransport({ baseUrl: platformURL.replace(/\/+$/, ""), interceptors: [grantInterceptor(token)] }),
+    createGrpcTransport({ baseUrl: trimTrailingSlashes(platformURL), interceptors: [grantInterceptor(token)] }),
   )
 }

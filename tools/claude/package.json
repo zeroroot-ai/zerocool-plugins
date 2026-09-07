@@ -1,0 +1,9 @@
+{
+  "name": "zerocool-claude-agent-tools",
+  "private": true,
+  "description": "The unmodified Claude Code CLI and the Gibson MCP server the Claude agent image spawns. Installed with npm ci from this lockfile so both binaries are hash pinned. CLAUDE_CODE_VERSION here must match PINNED_CLAUDE_CODE_VERSION in packages/claude-member/src/version.ts.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.257",
+    "@zeroroot-ai/gibson-mcp": "0.2.0"
+  }
+}

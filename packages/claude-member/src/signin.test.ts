@@ -189,3 +189,14 @@ test("the relayed prompt is the only place the URL appears, and the log seam nev
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("parseAuthUrl takes the first claude URL token and reads a long line once", () => {
+  assert.equal(parseAuthUrl("visit https://claude.ai/oauth/x?y=1 or https://claude.com/other"), "https://claude.ai/oauth/x?y=1")
+  assert.equal(parseAuthUrl("see: https://claude.com/ now"), "https://claude.com/")
+  assert.equal(parseAuthUrl("https://example.com/claude.txt"), "", "claude. must be in the token after https://, and a slash must follow it")
+  assert.equal(parseAuthUrl("https://claude.com no slash after the host"), "")
+  assert.equal(parseAuthUrl("prefix>https://console.claude.com/login"), "https://console.claude.com/login")
+  const long = `https://${"claude.".repeat(50_000)}`
+  assert.equal(parseAuthUrl(long), "", "a pathological line without a trailing slash ends promptly")
+  assert.equal(parseAuthUrl(`${long}/`), `${long}/`)
+})
