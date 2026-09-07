@@ -1,8 +1,8 @@
 {
   "name": "zerocool-publish-tools",
   "private": true,
-  "description": "npm, hash pinned. The npm node bundles is whatever node shipped that day; npm 10 carried fixed CVEs in its bundled deps and is too old for trusted publishing (npm >= 11.5.1). Both agent images replace the bundled npm with this one, and release-please.yml installs it with npm ci.",
+  "description": "npm, hash pinned. The npm node bundles is whatever node shipped that day; npm 10 carried fixed CVEs in its bundled deps and is too old for trusted publishing (npm >= 11.5.1). Both agent images replace the bundled npm with this one, and release-please.yml installs it with npm ci. npm 12.0.2 ships older tar, undici, ip-address and brace-expansion than 11.19.1, so the pin stays on 11 until a 12.x carries the fixes.",
   "dependencies": {
-    "npm": "12.0.2"
+    "npm": "11.19.1"
   }
 }
