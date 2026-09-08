@@ -29,7 +29,7 @@
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.27"
+    "@opencode-ai/plugin": "^1.18.29"
   },
   "bin": {
     "zerocool-serve": "dist/serve.js",
