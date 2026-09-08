@@ -1,6 +1,6 @@
 {
   "name": "@zeroroot-ai/zerocool",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "opencode host adapter for Gibson (zerocool): zero-config LLM through the harness, ambient knowledge, and the Gibson MCP server registered for you. The tools come from @zeroroot-ai/gibson-mcp.",
   "license": "Elastic-2.0",
   "repository": {
