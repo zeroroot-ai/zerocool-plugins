@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { runDispatch, type DispatchContext } from "./dispatch.js"
+import { readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
 import { gitlabRest, parsePipeline, TRIGGER_STATUS, type GitLabClient, type Pipeline } from "./gitlab.js"
 import {
   CHECKPOINT_KIND,
@@ -638,13 +638,21 @@ test("a pipeline row without an id or a commit is dropped, not guessed at", () =
 // the dispatch
 // --------------------------------------------------------------------------
 
+// Built through the real reader, so the fixture cannot drift from the launcher
+// contract. `taskContext` is then set directly: these tests vary it per case.
 const watchCtx = (context: Record<string, string>): DispatchContext => ({
-  callbackEndpoint: "daemon:50001",
-  callbackToken: "grant",
-  goal: "watch the customer portal",
+  ...readDispatchContext(
+    {
+      GIBSON_CALLBACK_ENDPOINT: "daemon:50001",
+      GIBSON_CG_JWT: "grant",
+      GIBSON_AGENT_TASK_B64: Buffer.from(
+        JSON.stringify({ goal: "watch the customer portal" }),
+        "utf8",
+      ).toString("base64"),
+    },
+    { cwd: "/tmp/watch" },
+  ),
   taskContext: { "zerocool.task": "watch", ...context },
-  workspace: "/tmp/watch",
-  timeoutMs: 0,
 })
 
 test("the watch dispatch drives the loop and reports what it did", async () => {

@@ -7,7 +7,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { runDispatch, type DispatchContext } from "./dispatch.js"
+import { readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
 import type { FindingsBackend } from "./findings.js"
 import { bareRuleId, parseSemgrepOutput, semgrepArgs, type SemgrepCandidate } from "./semgrep.js"
 import {
@@ -503,24 +503,32 @@ test("formatSourceAnalysis states the counts and every verdict", async () => {
 // dispatch routing
 // --------------------------------------------------------------------------
 
-const sourceAnalysisCtx = (): DispatchContext => ({
-  callbackEndpoint: "gibson:50001",
-  callbackToken: "task-tok",
-  insecure: true,
-  missionRunId: "run-1",
-  agentRunId: "agent-1",
-  traceId: "",
-  goal: "analyze the checkout for source weaknesses",
-  taskContext: {
-    "zerocool.task": "source-analysis",
-    "repository.url": "https://gitlab.com/examplebank/customer-portal",
-    "repository.commit": "abc1234",
-    "target.id": "t-1",
-  },
-  missionId: "m-1",
-  workspace: repoDir,
-  timeoutMs: 0,
-})
+// Built through the real reader, so the fixture cannot drift from the launcher
+// contract: the task context arrives as gibson marshals it, TypedValue-wrapped.
+const sourceAnalysisCtx = (): DispatchContext =>
+  readDispatchContext(
+    {
+      GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+      GIBSON_CG_JWT: "task-tok",
+      GIBSON_CALLBACK_INSECURE: "1",
+      GIBSON_MISSION_ID: "m-1",
+      GIBSON_MISSION_RUN_ID: "run-1",
+      GIBSON_AGENT_RUN_ID: "agent-1",
+      GIBSON_AGENT_TASK_B64: Buffer.from(
+        JSON.stringify({
+          goal: "analyze the checkout for source weaknesses",
+          context: {
+            "zerocool.task": { stringValue: "source-analysis" },
+            "repository.url": { stringValue: "https://gitlab.com/examplebank/customer-portal" },
+            "repository.commit": { stringValue: "abc1234" },
+            "target.id": { stringValue: "t-1" },
+          },
+        }),
+        "utf8",
+      ).toString("base64"),
+    },
+    { cwd: repoDir },
+  )
 
 test("a source-analysis task runs the analysis and never spawns opencode", async () => {
   const findings = recordingFindings()

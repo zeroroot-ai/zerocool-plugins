@@ -128,7 +128,7 @@ export const GibsonPlugin: Plugin = async () => {
   // Which grant this process reads the knowledge graph with. A dispatched run
   // reads as the TASK; an interactive one keeps the component grant. Chosen once
   // here so nothing downstream has to ask.
-  const { knowledge, scope: knowledgeScope } = selectKnowledgeSource(live)
+  const { knowledge, scope: knowledgeScope, stop: stopKnowledge } = selectKnowledgeSource(live)
   console.error(`[zerocool] knowledge reads use the ${knowledgeScope} grant`)
 
   const injectKnowledge = ambientKnowledge(
@@ -171,6 +171,9 @@ export const GibsonPlugin: Plugin = async () => {
     },
 
     dispose: async () => {
+      // A task-scoped source holds a grant-renewal timer. Leaving it running
+      // would keep renewing a grant for a session that has ended.
+      stopKnowledge()
       session?.stop()
       await shim?.close()
     },

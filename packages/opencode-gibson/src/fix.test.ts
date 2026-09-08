@@ -31,7 +31,7 @@ import {
   type ReadFinding,
   type Workspace,
 } from "./fix.js"
-import { dispatchTaskKind, runDispatch, type DispatchContext } from "./dispatch.js"
+import { dispatchTaskKind, readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
 
 /**
  * The Fix (zerocool-plugins#89).
@@ -644,13 +644,21 @@ test("byWorkOrder is total, so no pair of findings is left unordered", () => {
 // the dispatch route (zerocool-plugins#96)
 // --------------------------------------------------------------------------
 
+// Built through the real reader, so the fixture cannot drift from the launcher
+// contract. `taskContext` is then set directly: these tests vary it per case.
 const fixCtx = (context: Record<string, string>): DispatchContext => ({
-  callbackEndpoint: "127.0.0.1:50051",
-  callbackToken: SENTINEL,
-  goal: "fix what the scan found",
+  ...readDispatchContext(
+    {
+      GIBSON_CALLBACK_ENDPOINT: "127.0.0.1:50051",
+      GIBSON_CG_JWT: SENTINEL,
+      GIBSON_AGENT_TASK_B64: Buffer.from(
+        JSON.stringify({ goal: "fix what the scan found" }),
+        "utf8",
+      ).toString("base64"),
+    },
+    { cwd: "/tmp/fix" },
+  ),
   taskContext: { "zerocool.task": "fix", ...context },
-  workspace: "/tmp/fix",
-  timeoutMs: 0,
 })
 
 const FULL_CONTEXT = {
