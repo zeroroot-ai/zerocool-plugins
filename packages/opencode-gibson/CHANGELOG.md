@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.1...opencode-gibson-v0.9.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* **rework:** the sessions entry module exported helpers opencode calls as plugins ([#32](https://github.com/zeroroot-ai/zerocool-plugins/issues/32)) ([a43dd32](https://github.com/zeroroot-ai/zerocool-plugins/commit/a43dd325c0aff89192759c9a4f1dcb6237fcae18))
+
 ## [0.9.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.0...opencode-gibson-v0.9.1) (2026-09-08)
 
 
