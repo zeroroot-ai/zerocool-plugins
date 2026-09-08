@@ -1,6 +1,6 @@
 {
   "name": "@zeroroot-ai/zerocool-exec",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "opencode plugin (opt-in): run the agent's shell commands in the setec Devbox through the Gibson DevboxExec stream, instead of on this host.",
   "license": "Elastic-2.0",
   "repository": {
