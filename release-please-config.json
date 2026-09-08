@@ -16,6 +16,11 @@
       "bump-minor-pre-major": true,
       "component": "claude-member",
       "initial-version": "0.1.0"
+    },
+    "packages/opencode-gibson-sessions": {
+      "bump-minor-pre-major": true,
+      "component": "opencode-gibson-sessions",
+      "initial-version": "0.1.0"
     }
   }
 }

@@ -66,6 +66,25 @@ It spawns the unmodified `claude` CLI. See
 [`packages/claude-member/README.md`](packages/claude-member/README.md) for the
 environment contract, and `CONTEXT.md` § Glossary for the vocabulary.
 
+## Durable sessions
+
+`@zeroroot-ai/zerocool-sessions` is opt-in and installs beside the main plugin:
+
+```json
+{ "plugin": ["@zeroroot-ai/zerocool", "@zeroroot-ai/zerocool-sessions"] }
+```
+
+With a platform it copies each session to the daemon session store on every
+`session.updated` and `message.updated`, keyed by opencode's own session id and
+by your tenant. Set `GIBSON_OPENCODE_SESSION_ID` to the session you are
+continuing and it reads that session back on start. Writes are debounced;
+`ZEROCOOL_SESSION_MIRROR_DEBOUNCE_MS` changes the window, which defaults to
+2000 ms.
+
+With no platform it does nothing at all, and opencode uses its own disk, as it
+always does. It degrades the same way if the store is unreachable: one warning,
+then the session runs on local disk.
+
 ## Any coding agent
 
 Cursor, Codex CLI, Gemini CLI and Windsurf reach Gibson through the same MCP
@@ -84,7 +103,10 @@ host, the three check-in sources, and the environment every snippet reads.
   driver for Gibson banks: the job table, the workspace manager and the
   per-turn grant.
 - **`@zeroroot-ai/zerocool-exec`** (opt-in) — run execution in the setec Devbox.
-- **`@zeroroot-ai/zerocool-sessions`** (opt-in) — durable sessions via the daemon store.
+- **`@zeroroot-ai/zerocool-sessions`** (opt-in) — durable sessions. It mirrors
+  the opencode session to the Gibson daemon session store as it changes, and
+  restores it on start, so a session survives a restart of the host. opencode
+  keeps its own storage; this is a copy in the tenant's trusted store.
 
 All build on **[`@zeroroot-ai/sdk`](https://www.npmjs.com/package/@zeroroot-ai/sdk)**,
 the framework-agnostic TypeScript Gibson SDK, and every tool they expose comes

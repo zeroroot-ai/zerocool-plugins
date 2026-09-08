@@ -13,9 +13,9 @@ name: release-please
 #      without repo access; the guard fails the job until the dependency is
 #      a semver range on the published @zeroroot-ai/sdk.
 #
-# The two opt-in stub packages (opencode-gibson-exec, opencode-gibson-
-# sessions) are private: true until #12/#13 have implementations — claiming
-# npm names with empty packages helps nobody.
+# An opt-in package stays private: true until it has an implementation —
+# claiming an npm name with an empty package helps nobody. opencode-gibson-
+# exec is still a stub (#12); opencode-gibson-sessions is real as of #11.
 #
 # GITHUB_TOKEN (not a PAT) is deliberate: tags pushed by GITHUB_TOKEN do not
 # fire downstream tag-triggered workflows, but nothing here depends on a tag
@@ -115,12 +115,23 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      # Each package publishes only when its own version is not on npm yet, so
-      # a re-run after one package failed does not fail on the one that landed.
+      # The package list comes from release-please-config.json, which is the
+      # one place a package is declared releasable. A hand-written list here
+      # went stale silently: claude-member was releasable and tagged for weeks
+      # while this step never looked at it.
+      #
+      # Three skips, each for a different reason:
+      #   - private: the package is not meant for npm at all.
+      #   - already on npm: a re-run after one package failed must not fail on
+      #     the one that landed.
+      #   - no such package on npm: a name that does not exist yet cannot have
+      #     a trusted publisher, so its FIRST version is published once from a
+      #     terminal by a person. The notice says so; the job stays green and
+      #     takes over from the next release on.
       - name: Publish the packages
         run: |
           set -euo pipefail
-          for dir in packages/opencode-gibson packages/claude-gibson; do
+          for dir in $(jq -r '.packages | keys[]' release-please-config.json); do
             [ -f "$dir/package.json" ] || continue
             name=$(jq -r .name "$dir/package.json")
             version=$(jq -r .version "$dir/package.json")
@@ -129,6 +140,10 @@ jobs:
             fi
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "skip $name@$version: already on npm"; continue
+            fi
+            if ! npm view "$name" version >/dev/null 2>&1; then
+              echo "::notice::$name is not on npm yet. Publish $name@$version once from a terminal, then add the trusted publisher for this repo and workflow; this job publishes every version after that."
+              continue
             fi
             echo "publish $name@$version"
             (cd "$dir" && npm publish --access public)

@@ -22,7 +22,42 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 | **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
 | **`@zeroroot-ai/zerocool-exec`** (opt-in) | route execution into the setec **Devbox** via `experimental_workspace.register` (#12) | invasive — changes where code runs |
 | **`@zeroroot-ai/zerocool-claude`** (Claude Code) | MCP server + hooks. The session is a **live mission** (one AGENT node naming this component, task grant from the dispatch). `remember` = `Observe(MemoryObservation)`, `recall`, `world_view`, findings, Gibson tools, delegation. **Never routes LLM**: the user's Claude subscription pays for the model. ADR-0007. | one install, needs `GIBSON_TARGET_ID` for the live posture |
-| **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror local context to the daemon store via events (#13) | invasive — changes where state lives |
+| **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror the session to the daemon **session-context store** on `session.updated`/`message.updated`, restore on start (#11) | invasive — changes where state lives |
+
+## The store seam (#11)
+
+`@zeroroot-ai/zerocool-sessions` keeps a copy of an opencode session in the
+tenant's trusted store, so the session survives a restart of the host.
+
+The store is three RPCs on `HarnessCallbackService`: `PutSessionContext`,
+`GetSessionContext` and `DeleteSessionContext`. The daemon holds one opaque
+blob per **(tenant, session_id)** in the per-tenant dataplane Postgres and
+never reads the bytes. The tenant half comes from the caller's identity, so no
+request names a tenant and one component cannot reach another's session. A
+write carries an etag: an empty etag means create, a stale etag comes back
+`Aborted`, and the writer reads the current version and retries once. The blob
+cap is 8 MB.
+
+**It mirrors, it never replaces.** opencode owns its session format and its
+local disk. Replacing that storage needs the fork, not a plugin. So the plugin
+copies, and a restore adopts the stored version instead of rebuilding the
+session.
+
+**The session id is opencode's own.** `session.updated` carries the session
+record and `message.updated` carries a message that names its session, so the
+plugin reads the id off the event. It mints no second identity, and `DevboxExec`
+in #12 keys its Devbox on the same id.
+
+**Local context never reaches the Devbox.** The store is the trusted home for
+it, which is why the plugin calls only the session RPCs and never a workspace
+one.
+
+Three modes, chosen once at start: a dispatched run writes on the task grant
+(`GIBSON_CALLBACK_ENDPOINT` + `GIBSON_CALLBACK_TOKEN`, which wins when both are
+present), an interactive one writes on the component grant from the host key
+the main plugin registered, and anything else is standalone with no mirror and
+no hooks. A store that answers `Unavailable` or `Unimplemented` stops the
+mirror after one warning, and the session stays on opencode's disk.
 
 ## Boundary — plugin vs core
 
