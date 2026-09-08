@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { sessionIdOf, sessionsPlugin } from "./index.js"
+import { sessionIdOf, sessionsPlugin } from "./plugin.js"
 import type { HarnessClient } from "./store.js"
 import { selectSessionStore } from "./store.js"
 
