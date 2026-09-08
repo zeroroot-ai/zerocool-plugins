@@ -5,31 +5,37 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
-  decodeTask,
   dispatchChildEnv,
   dispatchTaskKind,
   formatTerminalResult,
   readDispatchContext,
   runDispatch,
-  typedValueString,
+  taskContextStrings,
   type DispatchContext,
 } from "./dispatch.js"
 import type { OpencodeRunOptions, OpencodeRunResult } from "./opencode-run.js"
 
 /**
- * The sandboxed dispatched shape (zerocool-plugins#57).
+ * The sandboxed dispatched shape (zerocool-plugins#57, #7).
  *
  * The property under test throughout: a sandboxed run authenticates with the
  * per-dispatch grant the sandbox injected, and NEVER with a bootstrap token. The
  * grant and the goal are required; a missing one is a launch defect and must
  * fail loudly rather than run opencode with no task or make unauthenticated
  * calls.
+ *
+ * The launcher names are read by `readSandboxDispatch` in `@zeroroot-ai/sdk`,
+ * which is the one reader of them in this package. These tests drive
+ * `readDispatchContext` through the real environment the launcher writes, so a
+ * name that drifted from gibson `sandboxed/agent.go` fails here.
  */
 
 // taskB64 renders a gibson.types.v1.Task as the base64 protojson gibson injects
-// as GIBSON_AGENT_TASK_B64.
-const taskB64 = (goal: string): string =>
-  Buffer.from(JSON.stringify({ goal }), "utf8").toString("base64")
+// as GIBSON_AGENT_TASK_B64. `context` and `metadata` are
+// map<string, gibson.common.v1.TypedValue>, so every entry is a one-key object
+// naming the oneof arm — gibson marshals them with `mapToTypedValueMap`.
+const taskB64 = (goal: string, context: Record<string, unknown> = {}): string =>
+  Buffer.from(JSON.stringify({ goal, context }), "utf8").toString("base64")
 
 const baseEnv = (): NodeJS.ProcessEnv => ({
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
@@ -45,6 +51,7 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
   const ctx = readDispatchContext(
     {
       ...baseEnv(),
+      GIBSON_MISSION_ID: "m-1",
       GIBSON_MISSION_RUN_ID: "mr-1",
       GIBSON_AGENT_RUN_ID: "ar-1",
       GIBSON_TRACE_ID: "tr-1",
@@ -54,12 +61,13 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
     { cwd: "/srv/work" },
   )
   assert.equal(ctx.callbackEndpoint, "gibson:50001")
-  assert.equal(ctx.callbackToken, "task-tok")
+  assert.equal(ctx.grant, "task-tok")
   assert.equal(ctx.goal, "audit the login flow")
   assert.equal(ctx.missionRunId, "mr-1")
   assert.equal(ctx.agentRunId, "ar-1")
   assert.equal(ctx.traceId, "tr-1")
   assert.equal(ctx.model, "gibson/default")
+  assert.equal(ctx.missionId, "m-1")
   assert.equal(ctx.workspace, "/srv/work")
   assert.equal(ctx.timeoutMs, 60000)
 })
@@ -69,7 +77,7 @@ test("readDispatchContext needs NO bootstrap token, host key or platform URL", (
   // enrollment handshake this run exists to avoid. A context that has only the
   // per-dispatch grant is complete.
   const ctx = readDispatchContext(baseEnv(), { cwd: "/w" })
-  assert.equal(ctx.callbackToken, "task-tok")
+  assert.equal(ctx.grant, "task-tok")
 })
 
 test("readDispatchContext ignores a bootstrap token even when one is present", () => {
@@ -79,7 +87,7 @@ test("readDispatchContext ignores a bootstrap token even when one is present", (
     { ...baseEnv(), GIBSON_BOOTSTRAP_TOKEN: "should-be-ignored" },
     { cwd: "/w" },
   )
-  assert.equal(ctx.callbackToken, "task-tok")
+  assert.equal(ctx.grant, "task-tok")
   assert.ok(!("bootstrapToken" in ctx))
 })
 
@@ -92,7 +100,7 @@ test("readDispatchContext fails when the callback endpoint is missing", () => {
 test("readDispatchContext fails, not falls back, when the token is missing", () => {
   const env = baseEnv()
   delete env.GIBSON_CG_JWT
-  assert.throws(() => readDispatchContext(env), /GIBSON_CG_JWT is not/)
+  assert.throws(() => readDispatchContext(env), /GIBSON_CG_JWT is not set/)
 })
 
 test("readDispatchContext fails on an empty task goal", () => {
@@ -111,7 +119,7 @@ test("readDispatchContext fails when the task is missing", () => {
 test("readDispatchContext fails on an undecodable task", () => {
   assert.throws(
     () => readDispatchContext({ ...baseEnv(), GIBSON_AGENT_TASK_B64: "!!!not-base64-json!!!" }),
-    /not valid base64 protojson|no goal/,
+    /GIBSON_AGENT_TASK_B64 is not a base64 protojson/,
   )
 })
 
@@ -164,17 +172,19 @@ const fakeRunResult = (over: Partial<OpencodeRunResult> = {}): OpencodeRunResult
   ...over,
 })
 
+// Built through the real reader, so the fixture cannot drift from the contract.
 const ctx = (over: Partial<DispatchContext> = {}): DispatchContext => ({
-  callbackEndpoint: "gibson:50001",
-  callbackToken: "tok",
-  insecure: false,
-  missionRunId: "mr-1",
-  agentRunId: "ar-1",
-  traceId: "tr-1",
-  goal: "do the thing",
-  taskContext: {},
-  workspace: "/srv/work",
-  timeoutMs: 0,
+  ...readDispatchContext(
+    {
+      GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+      GIBSON_CG_JWT: "tok",
+      GIBSON_AGENT_TASK_B64: taskB64("do the thing"),
+      GIBSON_MISSION_RUN_ID: "mr-1",
+      GIBSON_AGENT_RUN_ID: "ar-1",
+      GIBSON_TRACE_ID: "tr-1",
+    },
+    { cwd: "/srv/work" },
+  ),
   ...over,
 })
 
@@ -274,51 +284,56 @@ test("formatTerminalResult carries a self-reported failure", () => {
  * plain strings dropped every entry: no `zerocool.task` selector, no
  * `repository.commit`, no `target.id` ever reached a dispatched run.
  */
-const wholeTaskB64 = (task: unknown): string => Buffer.from(JSON.stringify(task), "utf8").toString("base64")
-
-test("a Task context marshalled by gibson decodes to strings", () => {
-  const decoded = decodeTask(
-    wholeTaskB64({
-      goal: "scan the portal",
-      context: {
+test("a Task context marshalled by gibson reaches the run as strings", () => {
+  const ctx = readDispatchContext(
+    {
+      ...baseEnv(),
+      GIBSON_AGENT_TASK_B64: taskB64("scan the portal", {
         "zerocool.task": { stringValue: "source-analysis" },
         "repository.commit": { stringValue: "cafebabe" },
         "pipeline.id": { intValue: "41" },
         "watch.enabled": { boolValue: true },
         "score.ratio": { doubleValue: 0.5 },
         "target.id": { nullValue: "NULL_VALUE" },
-      },
-    }),
+      }),
+    },
+    { cwd: "/w" },
   )
 
-  assert.equal(decoded.context["zerocool.task"], "source-analysis")
-  assert.equal(decoded.context["repository.commit"], "cafebabe")
-  assert.equal(decoded.context["pipeline.id"], "41", "protojson renders int64 as a string")
-  assert.equal(decoded.context["watch.enabled"], "true")
-  assert.equal(decoded.context["score.ratio"], "0.5")
+  assert.equal(ctx.taskContext["zerocool.task"], "source-analysis")
+  assert.equal(ctx.taskContext["repository.commit"], "cafebabe")
+  assert.equal(ctx.taskContext["pipeline.id"], "41", "protojson renders int64 as a string")
+  assert.equal(ctx.taskContext["watch.enabled"], "true")
+  assert.equal(ctx.taskContext["score.ratio"], "0.5")
   assert.ok(
-    !("target.id" in decoded.context),
+    !("target.id" in ctx.taskContext),
     "a null is the absence of a value; rendering it would give a task the target id \"null\"",
   )
 })
 
 test("the task kind selector works off a real dispatched Task", () => {
-  const decoded = decodeTask(wholeTaskB64({ goal: "watch", context: { "zerocool.task": { stringValue: "watch" } } }))
-  assert.equal(dispatchTaskKind({ taskContext: decoded.context }), "watch")
+  const ctx = readDispatchContext(
+    { ...baseEnv(), GIBSON_AGENT_TASK_B64: taskB64("watch", { "zerocool.task": { stringValue: "watch" } }) },
+    { cwd: "/w" },
+  )
+  assert.equal(dispatchTaskKind(ctx), "watch")
 })
 
-test("a hand-built Task with plain strings still decodes", () => {
-  const decoded = decodeTask(wholeTaskB64({ goal: "g", context: { "zerocool.task": "source-analysis" } }))
-  assert.equal(decoded.context["zerocool.task"], "source-analysis")
-})
-
-test("typedValueString reads both protojson spellings and refuses the rest", () => {
-  assert.equal(typedValueString({ stringValue: "a" }), "a")
-  assert.equal(typedValueString({ string_value: "a" }), "a", "protojson can be told to keep proto field names")
-  assert.equal(typedValueString({ int_value: "7" }), "7")
-  assert.equal(typedValueString("bare"), "bare")
-  assert.equal(typedValueString({ nullValue: "NULL_VALUE" }), undefined)
-  assert.equal(typedValueString({ listValue: [] }), undefined)
-  assert.equal(typedValueString(undefined), undefined)
-  assert.equal(typedValueString(42), undefined)
+test("taskContextStrings drops what a task cannot read as one string", () => {
+  // bytes, arrays and maps are legal TypedValue arms that no task context key
+  // is ever read as. Dropping them beats handing a task "[object Object]".
+  const ctx = readDispatchContext(
+    {
+      ...baseEnv(),
+      GIBSON_AGENT_TASK_B64: taskB64("g", {
+        keep: { stringValue: "yes" },
+        bytes: { bytesValue: "AQI=" },
+        list: { arrayValue: { items: [] } },
+        map: { mapValue: { entries: {} } },
+      }),
+    },
+    { cwd: "/w" },
+  )
+  assert.deepEqual(ctx.taskContext, { keep: "yes" })
+  assert.deepEqual(taskContextStrings({}), {})
 })

@@ -36,18 +36,21 @@
  * result. stdout is therefore a clean event stream — the driver's own logs go to
  * stderr — and a clean exit lets the sandbox tear down.
  *
- * Environment (injected by the sandbox launch):
+ * THE LAUNCHER CONTRACT IS READ ONCE, BY THE SDK. `readSandboxDispatch` from
+ * `@zeroroot-ai/sdk` is the one reader of the launch environment in this
+ * package, and `sandboxHarness` opens the callbacks on what it read. The
+ * launcher names — GIBSON_CG_JWT, GIBSON_CALLBACK_ENDPOINT,
+ * GIBSON_AGENT_TASK_B64, GIBSON_MISSION_ID, GIBSON_MISSION_RUN_ID,
+ * GIBSON_AGENT_RUN_ID, GIBSON_MODEL, GIBSON_TRACE_ID, GIBSON_SPAN_ID — are
+ * spelled in the SDK, against gibson `internal/engine/harness/sandboxed/agent.go`
+ * (the `envAgent*` constants). This file spells none of them. A second spelling
+ * here is how the two drift, which is the defect zerocool-plugins#7 records.
  *
- * These names are gibson's canonical dispatch contract — the constants in gibson
- * `internal/engine/harness/sandboxed/agent.go` (envAgent*). This process conforms
- * to them; it does not define its own.
+ * FOUR VARIABLES ARE STILL READ HERE, and every one of them is a local option
+ * of this host rather than part of the launcher contract. The launcher never
+ * writes any of them, so the SDK carries none of them:
  *
- *   GIBSON_CALLBACK_ENDPOINT   per-dispatch harness callback dial target (required)
- *   GIBSON_CG_JWT              per-dispatch capability grant (CG-JWT)    (required)
- *   GIBSON_AGENT_TASK_B64      base64 protojson gibson.types.v1.Task     (required)
- *   GIBSON_MODEL               provider/model resolved for the tenant at dispatch
  *   GIBSON_CALLBACK_INSECURE   "1" to dial the callback listener without TLS (kind)
- *   GIBSON_MISSION_ID / GIBSON_MISSION_RUN_ID / GIBSON_AGENT_RUN_ID   provenance
  *   ZEROCOOL_WORKSPACE         working directory (defaults to the cwd)
  *   ZEROCOOL_TASK              force a task kind ("source-analysis", "watch",
  *                              "fix"); the Task's own context `zerocool.task`
@@ -57,9 +60,17 @@
  *
  * The child `opencode run` still receives the grant as GIBSON_CALLBACK_TOKEN via
  * {@link dispatchChildEnv} — that is the opencode plugin's own contract, fed from
- * the GIBSON_CG_JWT this process reads.
+ * the grant the SDK read.
  */
-import { observe, openTaskHarness, taskKnowledge, type AgentOutcome, type TaskHarness } from "@zeroroot-ai/sdk"
+import {
+  observe,
+  readSandboxDispatch,
+  sandboxHarness,
+  taskKnowledge,
+  type AgentOutcome,
+  type SandboxDispatch,
+  type TaskHarness,
+} from "@zeroroot-ai/sdk"
 import { join } from "node:path"
 
 import { taskFindingsBackend, type FindingsBackend } from "./findings.js"
@@ -91,8 +102,11 @@ import {
 } from "./source-analysis.js"
 
 /**
- * The per-dispatch grant, as the sandbox injects it. The child authenticates its
- * harness callbacks with this; {@link dispatchChildEnv} renders it back to env.
+ * The per-dispatch grant as the OPENCODE CHILD receives it.
+ *
+ * These are `ExecuteRequest` field names, not launcher environment names. The
+ * shape is shared with `serve-agent.ts`, which fills it from a polled work
+ * item, so the child sees one environment however the run was launched.
  */
 export interface CallbackGrant {
   /** `ExecuteRequest.callback_endpoint` — a bare `host:port` or an http(s) URL. */
@@ -105,28 +119,6 @@ export interface CallbackGrant {
   missionRunId?: string
   agentRunId?: string
   traceId?: string
-}
-
-/** Everything one sandboxed dispatch needs, read from the environment. */
-export interface DispatchContext extends CallbackGrant {
-  /** `task.goal` — the natural-language objective the sandbox handed over. */
-  goal: string
-  /**
-   * `task.context` — the string map the mission node set. Selects the task kind
-   * (`zerocool.task`) and carries what a task needs beyond a goal: the
-   * repository url and commit, a sub-path, the target id.
-   */
-  taskContext: Record<string, string>
-  /** `GIBSON_MISSION_ID`, so a Finding names the mission it belongs to. */
-  missionId?: string
-  /** opencode edits files here; it is the run's workspace. */
-  workspace: string
-  /** `provider/model`, e.g. `gibson/default`. Omitted lets opencode choose. */
-  model?: string
-  /** Continue an earlier opencode session instead of starting a new one. */
-  sessionId?: string
-  /** Hard deadline for the run, in ms. `0` when none was set. */
-  timeoutMs: number
 }
 
 /**
@@ -150,103 +142,66 @@ export function dispatchChildEnv(g: CallbackGrant): NodeJS.ProcessEnv {
 }
 
 /**
- * Decode the base64 protojson `gibson.types.v1.Task` the sandbox launch injects
- * as `GIBSON_AGENT_TASK_B64` (gibson agent.go `envAgentTaskB64`) and return its
- * goal. gibson sends the full typed Task, not a plain goal string, so decode it
- * here rather than run opencode against an empty or malformed prompt.
+ * Everything one sandboxed dispatch needs.
+ *
+ * The launcher contract, exactly as `readSandboxDispatch` read it, plus the
+ * local options of this host. Extending {@link SandboxDispatch} rather than
+ * copying its fields keeps one name for each thing: the grant is `grant`, the
+ * dial target is `callbackEndpoint`, and there is no second spelling to drift.
  */
-export function decodeTaskGoal(taskB64: string | undefined): string {
-  return decodeTask(taskB64).goal
-}
-
-/** The parts of a `gibson.types.v1.Task` a dispatch reads. */
-export interface DecodedTask {
-  goal: string
-  context: Record<string, string>
-  metadata: Record<string, string>
+export interface DispatchContext extends SandboxDispatch {
+  /**
+   * `task.context` read as strings. The mission node sets it. It selects the
+   * task kind (`zerocool.task`) and carries what a task needs beyond a goal:
+   * the repository url and commit, a sub-path, the target id.
+   */
+  taskContext: Record<string, string>
+  /** Dial the callback listener without TLS. A local option, not the contract. */
+  insecure: boolean
+  /** opencode edits files here; it is the run's workspace. */
+  workspace: string
+  /** Continue an earlier opencode session instead of starting a new one. */
+  sessionId?: string
+  /** Hard deadline for the run, in ms. `0` when none was set. */
+  timeoutMs: number
 }
 
 /**
- * Decode the whole Task: the goal, and the `context` and `metadata` string
- * maps a mission node sets. protojson renders both as plain objects, so a
- * value that is not a string is dropped rather than guessed at.
+ * Read one `Task.context` entry as a string.
+ *
+ * `Task.context` is `map<string, gibson.common.v1.TypedValue>`. The SDK parses
+ * the launcher's protojson with the generated schema, so every value arrives
+ * as the protobuf-es oneof shape and never as a bare string. Reading these
+ * maps as plain strings dropped every entry, which is why a mission node's
+ * `zerocool.task`, `repository.commit` and `target.id` never reached a run.
+ *
+ * A null yields no entry: a null is the absence of a value, and rendering it
+ * would hand a task a target id of `"null"`. Bytes, arrays and maps yield no
+ * entry either — a task reads these keys as single strings.
  */
-export function decodeTask(taskB64: string | undefined): DecodedTask {
-  if (!taskB64) {
-    throw new Error(
-      "GIBSON_AGENT_TASK_B64 is not set. The sandbox launch injects the task to pursue as the " +
-        "base64 protojson of a gibson.types.v1.Task; without it there is nothing to run.",
-    )
+export function typedValueString(v: SandboxDispatch["task"]["context"][string]): string | undefined {
+  switch (v.kind.case) {
+    case "stringValue":
+      return v.kind.value
+    case "intValue":
+      return String(v.kind.value)
+    case "doubleValue":
+      return String(v.kind.value)
+    case "boolValue":
+      return String(v.kind.value)
+    default:
+      return undefined
   }
-  let task: { goal?: unknown; context?: unknown; metadata?: unknown }
-  try {
-    task = JSON.parse(Buffer.from(taskB64, "base64").toString("utf8")) as typeof task
-  } catch (e) {
-    throw new Error(
-      "GIBSON_AGENT_TASK_B64 is not valid base64 protojson of a gibson.types.v1.Task: " +
-        (e instanceof Error ? e.message : String(e)),
-    )
-  }
-  const goal = typeof task.goal === "string" ? task.goal.trim() : ""
-  if (!goal) {
-    throw new Error(
-      "GIBSON_AGENT_TASK_B64 decoded to a Task with no goal. Running opencode against an empty " +
-        "prompt would report whatever it says back as a mission result.",
-    )
-  }
-  return { goal, context: stringMap(task.context), metadata: stringMap(task.metadata) }
 }
 
-function stringMap(v: unknown): Record<string, string> {
-  if (!v || typeof v !== "object") return {}
+/** The whole context map as strings. Entries with no readable value are dropped. */
+export function taskContextStrings(context: SandboxDispatch["task"]["context"]): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    const s = typedValueString(val)
+  for (const [k, v] of Object.entries(context ?? {})) {
+    const s = typedValueString(v)
     if (s !== undefined) out[k] = s
   }
   return out
-}
-
-/**
- * Read one `Task.context` / `Task.metadata` entry as a string.
- *
- * Both maps are `map<string, gibson.common.v1.TypedValue>`, so canonical
- * protojson renders every value as a one-key object naming the oneof arm —
- * `{"stringValue":"source-analysis"}`, `{"intValue":"42"}` — never as a bare
- * string. gibson marshals the Task with `protojson.Marshal` over
- * `agent.TaskToProto`, which wraps each entry with `mapToTypedValueMap`, so
- * this is the only shape a dispatched agent ever receives. Reading these maps
- * as plain strings silently dropped every entry, which is why a mission node's
- * `zerocool.task`, `repository.commit` and `target.id` never reached the run.
- *
- * A bare string is still accepted, because a hand-built Task written as plain
- * JSON is the normal way to drive a dispatch by hand. Both snake_case and
- * lowerCamel arm names are read: protojson emits lowerCamel by default but can
- * be told to keep the proto field names, and a decoder that accepts only one of
- * them fails on a Task that is otherwise valid.
- *
- * `nullValue` yields no entry: a null is the absence of a value, and rendering
- * it as the string "null" would hand a task a target id of `"null"`.
- */
-export function typedValueString(val: unknown): string | undefined {
-  if (typeof val === "string") return val
-  if (!val || typeof val !== "object") return undefined
-  const v = val as Record<string, unknown>
-  const arm = <T>(camel: string, snake: string): T | undefined =>
-    (v[camel] !== undefined ? v[camel] : v[snake]) as T | undefined
-
-  const s = arm<unknown>("stringValue", "string_value")
-  if (typeof s === "string") return s
-  // protojson renders int64 and uint64 as strings, and double as a number.
-  const i = arm<unknown>("intValue", "int_value")
-  if (typeof i === "string" || typeof i === "number") return String(i)
-  const u = arm<unknown>("uintValue", "uint_value")
-  if (typeof u === "string" || typeof u === "number") return String(u)
-  const d = arm<unknown>("doubleValue", "double_value")
-  if (typeof d === "number") return String(d)
-  const b = arm<unknown>("boolValue", "bool_value")
-  if (typeof b === "boolean") return String(b)
-  return undefined
 }
 
 /** The task kinds a sandboxed dispatch can serve. */
@@ -266,56 +221,46 @@ export function dispatchTaskKind(ctx: Pick<DispatchContext, "taskContext">, env:
 }
 
 /**
- * Read one sandboxed dispatch's context from the environment.
+ * Read one sandboxed dispatch from the environment.
+ *
+ * The launcher contract comes from `readSandboxDispatch`, which is the one
+ * reader of those names on the TypeScript side. It fails, never falls back: a
+ * launch without a grant, an endpoint or a task is a defect in the launch, not
+ * something to guess around by running opencode with no task or by making
+ * unauthenticated calls.
  *
  * Deliberately never reads `GIBSON_BOOTSTRAP_TOKEN` or a host key: a sandboxed
  * run is authenticated by its per-dispatch grant alone, and reaching for a
  * bootstrap token here would reintroduce the enrollment handshake this shape
  * exists to avoid.
  *
- * The grant and the goal are required. A missing piece throws with the reason,
- * because a sandbox that launched this process without them is a defect in the
- * launch, not something to guess around by running opencode with no task or by
- * making unauthenticated calls.
+ * What this adds on top are this host's own options — the workspace, the
+ * deadline, the opencode session to continue, and whether to dial the callback
+ * listener without TLS. The launcher writes none of them, so the SDK carries
+ * none of them, and reading them here is not a second spelling of the contract.
  */
 export function readDispatchContext(
   env: NodeJS.ProcessEnv,
   opts: { cwd?: string } = {},
 ): DispatchContext {
-  const endpoint = env.GIBSON_CALLBACK_ENDPOINT
-  const token = env.GIBSON_CG_JWT
-  if (!endpoint) {
-    throw new Error(
-      "GIBSON_CALLBACK_ENDPOINT is not set. A sandboxed dispatched run is authenticated by " +
-        "the per-dispatch grant the sandbox launch injects, not by a bootstrap token — the " +
-        "launch must supply the callback endpoint and the grant.",
-    )
-  }
-  if (!token) {
-    throw new Error(
-      "GIBSON_CALLBACK_ENDPOINT is set but GIBSON_CG_JWT is not. The callbacks would have no " +
-        "grant to authenticate with; a sandboxed run must not fall back to any other identity, " +
-        "so this fails instead.",
-    )
-  }
-  const task = decodeTask(env.GIBSON_AGENT_TASK_B64)
-
+  const dispatch = readSandboxDispatch(env)
   const timeoutRaw = env.GIBSON_TIMEOUT_MS ? Number(env.GIBSON_TIMEOUT_MS) : 0
   return {
-    callbackEndpoint: endpoint,
-    callbackToken: token,
+    ...dispatch,
+    taskContext: taskContextStrings(dispatch.task.context),
     insecure: env.GIBSON_CALLBACK_INSECURE === "1",
-    missionRunId: env.GIBSON_MISSION_RUN_ID ?? "",
-    agentRunId: env.GIBSON_AGENT_RUN_ID ?? "",
-    traceId: env.GIBSON_TRACE_ID ?? "",
-    goal: task.goal,
-    taskContext: task.context,
-    ...(env.GIBSON_MISSION_ID ? { missionId: env.GIBSON_MISSION_ID } : {}),
     workspace: env.ZEROCOOL_WORKSPACE ?? opts.cwd ?? process.cwd(),
-    ...(env.GIBSON_MODEL ? { model: env.GIBSON_MODEL } : {}),
     ...(env.GIBSON_OPENCODE_SESSION_ID ? { sessionId: env.GIBSON_OPENCODE_SESSION_ID } : {}),
     timeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 0,
   }
+}
+
+/**
+ * The task harness for this dispatch: the grant the launch injected, nothing
+ * else. `sandboxHarness` is the SDK's opener for exactly this shape.
+ */
+export function dispatchHarness(ctx: DispatchContext): TaskHarness {
+  return sandboxHarness(ctx, { insecure: ctx.insecure })
 }
 
 /** Injectable seams, so a test drives a dispatch without spawning opencode. */
@@ -328,7 +273,7 @@ export interface DispatchDeps {
   semgrep?: SemgrepRunner
   model?: TriageModel
   findings?: FindingsBackend
-  /** Opens the task harness. Defaults to `openTaskHarness` on the dispatch grant. */
+  /** Opens the task harness. Defaults to {@link dispatchHarness} on the dispatch grant. */
   harness?: (ctx: DispatchContext) => TaskHarness
   /** Force the task kind, over the Task's own context. */
   taskKind?: DispatchTaskKind
@@ -399,7 +344,16 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
     ...(ctx.model ? { model: ctx.model } : {}),
     ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
     ...(ctx.timeoutMs > 0 ? { timeoutMs: ctx.timeoutMs } : {}),
-    env: dispatchChildEnv(ctx),
+    // The child speaks the opencode plugin's own contract, whose token name is
+    // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
+    env: dispatchChildEnv({
+      callbackEndpoint: ctx.callbackEndpoint,
+      callbackToken: ctx.grant,
+      insecure: ctx.insecure,
+      missionRunId: ctx.missionRunId,
+      agentRunId: ctx.agentRunId,
+      traceId: ctx.traceId,
+    }),
     ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
   })
 
@@ -431,7 +385,7 @@ export async function runSourceAnalysisDispatch(ctx: DispatchContext, deps: Disp
   const harness: TaskHarness | undefined =
     deps.model && deps.findings
       ? undefined
-      : (deps.harness ?? ((c: DispatchContext) => openTaskHarness({ endpoint: c.callbackEndpoint, token: c.callbackToken, insecure: c.insecure ?? false })))(ctx)
+      : (deps.harness ?? dispatchHarness)(ctx)
   const model = deps.model ?? harnessTriageModel(harness as TaskHarness)
   const findings = deps.findings ?? taskFindingsBackend(harness as TaskHarness)
   const sub = ctx.taskContext["source.path"]
@@ -536,11 +490,7 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
   // A harness is opened unless every seam that would use one was injected.
   const needsHarness = !w.gitlab || !w.checkpoints || !w.scans || !w.credential
   const opened = needsHarness && !deps.harness
-  const harness: TaskHarness | undefined = needsHarness
-    ? (deps.harness ??
-        ((c: DispatchContext) =>
-          openTaskHarness({ endpoint: c.callbackEndpoint, token: c.callbackToken, insecure: c.insecure ?? false })))(ctx)
-    : undefined
+  const harness: TaskHarness | undefined = needsHarness ? (deps.harness ?? dispatchHarness)(ctx) : undefined
 
   try {
     const gitlab =
@@ -656,11 +606,7 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
 
   const needsHarness = !f.gitlab || !f.findings || !f.status || !f.credential
   const opened = needsHarness && !deps.harness
-  const harness: TaskHarness | undefined = needsHarness
-    ? (deps.harness ??
-        ((c: DispatchContext) =>
-          openTaskHarness({ endpoint: c.callbackEndpoint, token: c.callbackToken, insecure: c.insecure ?? false })))(ctx)
-    : undefined
+  const harness: TaskHarness | undefined = needsHarness ? (deps.harness ?? dispatchHarness)(ctx) : undefined
 
   try {
     const gitlab =
