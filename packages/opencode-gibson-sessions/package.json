@@ -1,6 +1,6 @@
 {
   "name": "@zeroroot-ai/zerocool-sessions",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "opencode plugin (opt-in): mirror the local session context to the trusted Gibson daemon session store, and restore it on start. opencode keeps its own storage.",
   "license": "Elastic-2.0",
   "repository": {
