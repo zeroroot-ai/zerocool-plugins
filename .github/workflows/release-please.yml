@@ -14,8 +14,8 @@ name: release-please
 #      a semver range on the published @zeroroot-ai/sdk.
 #
 # An opt-in package stays private: true until it has an implementation —
-# claiming an npm name with an empty package helps nobody. opencode-gibson-
-# exec is still a stub (#12); opencode-gibson-sessions is real as of #11.
+# claiming an npm name with an empty package helps nobody. Both are real now:
+# opencode-gibson-sessions since #11, opencode-gibson-exec since #12.
 #
 # GITHUB_TOKEN (not a PAT) is deliberate: tags pushed by GITHUB_TOKEN do not
 # fire downstream tag-triggered workflows, but nothing here depends on a tag

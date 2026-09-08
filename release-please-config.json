@@ -21,6 +21,11 @@
       "bump-minor-pre-major": true,
       "component": "opencode-gibson-sessions",
       "initial-version": "0.1.0"
+    },
+    "packages/opencode-gibson-exec": {
+      "bump-minor-pre-major": true,
+      "component": "opencode-gibson-exec",
+      "initial-version": "0.1.0"
     }
   }
 }

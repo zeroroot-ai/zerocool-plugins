@@ -1,7 +1,7 @@
 {
   "name": "@zeroroot-ai/zerocool-exec",
   "version": "0.0.0",
-  "description": "opencode plugin (opt-in): route execution into the setec Devbox via a workspace adapter (zerocool#12).",
+  "description": "opencode plugin (opt-in): run the agent's shell commands in the setec Devbox through the Gibson DevboxExec stream, instead of on this host.",
   "license": "Elastic-2.0",
   "repository": {
     "type": "git",
@@ -18,10 +18,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zeroroot-ai/sdk": "^0.12.0"
+    "@zeroroot-ai/sdk": "^0.12.0",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-node": "^2.0.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
@@ -29,11 +32,13 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.27"
   },
-  "private": true,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

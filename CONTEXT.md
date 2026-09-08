@@ -20,7 +20,7 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 | Package | What | Adoption |
 |---|---|---|
 | **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
-| **`@zeroroot-ai/zerocool-exec`** (opt-in) | route execution into the setec **Devbox** via `experimental_workspace.register` (#12) | invasive — changes where code runs |
+| **`@zeroroot-ai/zerocool-exec`** (opt-in) | run the agent's shell commands in the setec **Devbox** through `DevboxExec`, by taking over opencode's `bash` tool id (#12) | invasive — changes where code runs |
 | **`@zeroroot-ai/zerocool-claude`** (Claude Code) | MCP server + hooks. The session is a **live mission** (one AGENT node naming this component, task grant from the dispatch). `remember` = `Observe(MemoryObservation)`, `recall`, `world_view`, findings, Gibson tools, delegation. **Never routes LLM**: the user's Claude subscription pays for the model. ADR-0007. | one install, needs `GIBSON_TARGET_ID` for the live posture |
 | **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror the session to the daemon **session-context store** on `session.updated`/`message.updated`, restore on start (#11) | invasive — changes where state lives |
 
@@ -58,6 +58,47 @@ present), an interactive one writes on the component grant from the host key
 the main plugin registered, and anything else is standalone with no mirror and
 no hooks. A store that answers `Unavailable` or `Unimplemented` stops the
 mirror after one warning, and the session stays on opencode's disk.
+
+## The executor seam (#12)
+
+`@zeroroot-ai/zerocool-exec` runs the agent's shell commands in the session
+Devbox instead of on the host, so untrusted repository bytes build and test
+inside a microVM.
+
+**The mechanism is `DevboxExec`, not a remote workspace.** `DevboxExec(session_id,
+argv, stdin) -> stream(stdout | stderr | exit | error)` resolves a
+session-lifetime setec sandbox by (tenant, session_id), launches it lazily on
+the first command and reuses it after that, so successive commands share one
+`/workspace`. The earlier framing in this file said the Devbox must speak
+opencode's remote-workspace protocol. That is struck: it needs an opencode
+server inside every microVM plus a public per-session ingress, which is the
+boundary ADR-0052 keeps clean.
+
+**Exactly one terminal event ends a healthy stream**, an exit or an error. A
+stream that ends without one was cut, and the plugin reports an unknown
+outcome. "The command succeeded" and "the connection dropped" must never look
+alike.
+
+**How a plugin routes a command.** `experimental_workspace.register` exists in
+the pinned plugin API, but its adapter cannot carry one: `target()` returns a
+LOCAL directory or a REMOTE opencode server URL, and a Devbox is neither. What
+a plugin can do is contribute a tool. opencode's registry is
+`[...builtin, ...custom]` collapsed into one map keyed by tool id, so a plugin
+tool named `bash` — the id of the built-in shell tool — takes its place. That
+is the only hook that routes a command rather than observing it.
+
+**One backend, chosen by mode.** Standalone contributes no tool and opencode
+runs on the host. Platform mode sends every command to the Devbox. A daemon
+that answers `Unavailable`, because it was built without the setec integration
+or has no `sandbox.devbox.image`, is not a transient failure: the plugin warns
+once, latches to the host and stays there.
+
+**Known gap: files.** opencode's `read`, `write`, `edit`, `glob` and `grep`
+still run on the host, so the agent can edit a file the Devbox build never
+sees. The Workspace\* RPCs do not close it — they resolve the calling
+component's mission harness and address the MISSION workspace, which is a
+different filesystem from the Devbox volume. Closing it needs Devbox-backed
+file tools on the same `DevboxExec` channel, or the fork.
 
 ## Boundary — plugin vs core
 
@@ -99,11 +140,17 @@ Task as `protojson.Marshal(agent.TaskToProto(task))`, and both `context` and
 arrives as `{"stringValue":"..."}`. A decoder that keeps only plain strings
 drops every key, including the `zerocool.task` selector.
 
-## Open platform-side item
+## Open follow-ups
 
-Devbox execution (#12) uses opencode's **remote-workspace** protocol — the Devbox
-must run that endpoint. This likely supersedes the `DevboxExec` RPC design in
-gibson#1183 (to be re-scoped).
+**The credential selection is written twice.** `opencode-gibson-sessions` and
+`opencode-gibson-exec` each pick between the task grant, the component grant
+and standalone, with the same rules. Its durable home is `@zeroroot-ai/sdk`,
+beside `openTaskHarness` and `connectGibson`. A cross-package dependency inside
+this workspace is not the answer: `pnpm` does not link a workspace package
+without an explicit setting, and the fast CI tier runs no build, so a sibling's
+unbuilt `dist` would land in the type and run paths of every check.
+
+**opencode's file tools still read this host.** See "Known gap: files" in the executor seam above.
 
 ## Glossary (2026-09-01 grill, in progress)
 

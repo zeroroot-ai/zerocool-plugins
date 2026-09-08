@@ -24,7 +24,7 @@ hook surface is materially richer than the docs suggest:
 | Inject context into the model's working set | `experimental.chat.system.transform`, `experimental.chat.messages.transform` |
 | React to agent activity | `event` |
 | Gate dangerous operations | `permission.ask`, `tool.execute.before` |
-| Run execution somewhere else | `experimental_workspace.register` (remote workspace target) |
+| Run execution somewhere else | a plugin `tool` that takes over the built-in tool id. `experimental_workspace.register` cannot: its `target()` is a local directory or a remote opencode server, never a command channel (#12) |
 | Custom auth / provider | `auth`, `provider` |
 | Clean shutdown | `dispose` |
 
