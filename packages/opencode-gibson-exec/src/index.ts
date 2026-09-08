@@ -3,15 +3,17 @@
 
 import type { Plugin } from "@opencode-ai/plugin"
 
+import { execPlugin } from "./plugin.js"
+
 /**
- * Opt-in: route execution into the setec Devbox (zerocool#12). Invasive — it
- * changes where code runs — so it is a separate plugin. Uses opencode's
- * experimental_workspace to register a "gibson-devbox" workspace whose target()
- * is a remote endpoint at the Devbox. Requires the Devbox to speak opencode's
- * remote-workspace protocol (platform-side; see gibson#1183 re-scope).
+ * `@zeroroot-ai/zerocool-exec` — the executor seam (zerocool-plugins#12).
+ * The plugin itself is in `plugin.ts`; see its comment for what it does.
+ *
+ * THIS MODULE EXPORTS THE PLUGIN AND NOTHING ELSE. opencode calls every export
+ * of a plugin entry module as a plugin, so a helper exported here would be
+ * invoked with `PluginInput` and its return value pushed into the hook list.
+ * `entry-exports.test.ts` holds that rule down.
  */
-export const GibsonExecPlugin: Plugin = async (_input) => {
-  // TODO(#12): _input.experimental_workspace.register("gibson-devbox", devboxAdapter)
-  return {}
-}
+export const GibsonExecPlugin: Plugin = async (input) => execPlugin(input)
+
 export default GibsonExecPlugin

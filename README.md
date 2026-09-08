@@ -85,6 +85,28 @@ With no platform it does nothing at all, and opencode uses its own disk, as it
 always does. It degrades the same way if the store is unreachable: one warning,
 then the session runs on local disk.
 
+## Execution in the Devbox
+
+`@zeroroot-ai/zerocool-exec` is opt-in and installs beside the main plugin:
+
+```json
+{ "plugin": ["@zeroroot-ai/zerocool", "@zeroroot-ai/zerocool-exec"] }
+```
+
+With a platform it takes over opencode's `bash` tool. Each command streams into
+this session's Devbox, a setec microVM the daemon launches on the first command
+and reuses after that, so a `git clone` and the `go build` that follows it see
+one workspace. The session is opencode's own session id, the same one the
+durable-sessions plugin keys on.
+
+With no platform it contributes no tool at all, so opencode runs commands on
+your machine, as it always does. It does the same, after one warning, if the
+daemon has no Devbox to offer.
+
+**Read this before you install it.** opencode's file tools still read and write
+your machine. A file the agent edits locally is not the file the Devbox builds.
+Until the file tools move too, use this where the Devbox holds the checkout.
+
 ## Any coding agent
 
 Cursor, Codex CLI, Gemini CLI and Windsurf reach Gibson through the same MCP
@@ -102,7 +124,10 @@ host, the three check-in sources, and the environment every snippet reads.
 - **`@zeroroot-ai/zerocool-claude-member`** — the always-on Claude Code member
   driver for Gibson banks: the job table, the workspace manager and the
   per-turn grant.
-- **`@zeroroot-ai/zerocool-exec`** (opt-in) — run execution in the setec Devbox.
+- **`@zeroroot-ai/zerocool-exec`** (opt-in) — run the agent's shell commands in
+  the setec Devbox instead of on your machine. It takes over opencode's `bash`
+  tool and streams each command into an isolated microVM whose workspace lasts
+  the session.
 - **`@zeroroot-ai/zerocool-sessions`** (opt-in) — durable sessions. It mirrors
   the opencode session to the Gibson daemon session store as it changes, and
   restores it on start, so a session survives a restart of the host. opencode
