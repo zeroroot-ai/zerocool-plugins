@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.0...opencode-gibson-v0.9.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **opencode:** read the sandbox launch with the SDK, stop the task harness ([#28](https://github.com/zeroroot-ai/zerocool-plugins/issues/28)) ([2f7d08b](https://github.com/zeroroot-ai/zerocool-plugins/commit/2f7d08b0ae9f3a93b864e737e9b800ff7b14894f))
+
 ## [0.9.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.8.0...opencode-gibson-v0.9.0) (2026-09-01)
 
 
