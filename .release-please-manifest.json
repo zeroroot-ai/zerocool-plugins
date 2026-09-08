@@ -1,5 +1,6 @@
 {
   "packages/opencode-gibson": "0.9.1",
   "packages/claude-gibson": "0.6.0",
-  "packages/claude-member": "0.3.2"
+  "packages/claude-member": "0.3.2",
+  "packages/opencode-gibson-sessions": "0.1.0"
 }
