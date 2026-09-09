@@ -31,7 +31,7 @@ backends. The Platform key does not unlock agent *features*; it swaps *backends*
 **The product is fully open.** No offensive-capability gating (illusory anyway —
 general coding competence can't be withheld). The moat is Platform
 **infrastructure** (fleet, sandbox, World, hosting), i.e. the self-hosted↔SaaS
-**deployment-profile seam** ([workspace ADR-0006](../../../../enterprise/platform/gibson/docs/adr)),
+**deployment-profile seam** (gibson ADR-0006, which the gibson repository holds),
 not a runtime license gate or withheld code.
 
 ## Consequences

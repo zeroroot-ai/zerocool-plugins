@@ -39,8 +39,10 @@ async function claudeWrote(configDir: string, cwd: string, sessionId: string, bo
 }
 
 test("the project key is the working directory with slashes and dots turned into dashes, as measured", () => {
-  // From a real 2.1.257 capture: /tmp/.../zero-day.ai/... -> -tmp-...-zero-day-ai-...
-  assert.equal(projectKey("/home/ana/Code/zero-day.ai/repo"), "-home-ana-Code-zero-day-ai-repo")
+  // Measured against a real 2.1.257 capture. The path carries every character
+  // the encoding touches: a leading slash, an inner slash, a hyphen already in
+  // a segment, a dot inside a segment, and an upper-case segment.
+  assert.equal(projectKey("/srv/work/Code/demo-app.v2/repo"), "-srv-work-Code-demo-app-v2-repo")
   assert.equal(projectDir("/cfg", "/workspace/jobs/job-1/api"), "/cfg/projects/-workspace-jobs-job-1-api")
 })
 

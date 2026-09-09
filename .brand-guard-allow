@@ -1,0 +1,8 @@
+# The brand guard reads this file. Each path needs a `# why:` line above it.
+# A path that no longer carries a retired string fails the guard, so the list
+# cannot rot.
+
+# why: recorded Claude Code transcript, bytes must match the capture. The
+# `cwd` field in the real `system/init` line records the directory the
+# capture ran in. Rewriting it would make the fixture a hand edit.
+packages/claude-member/test/fixtures/claude-code-2.1.257/auth-error-real.jsonl
