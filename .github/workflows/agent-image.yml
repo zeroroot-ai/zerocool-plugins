@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@bcb3d77b816e2dc782c2c64e8fd0c82fc1bbffb1 # main 2026-09-07, node version guard (.github#23)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@625c0b92ef329bfe40f11f639ee6136c8706538b # main, 2026-09-16: licence label, not NOASSERTION (.github#80)
     with:
       component_name: zerocool-agent
       component_path: .
@@ -52,7 +52,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@bcb3d77b816e2dc782c2c64e8fd0c82fc1bbffb1 # main 2026-09-07, node version guard (.github#23)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@625c0b92ef329bfe40f11f639ee6136c8706538b # main, 2026-09-16: licence label, not NOASSERTION (.github#80)
     with:
       component_name: zerocool-claude-agent
       component_path: .
