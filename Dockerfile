@@ -64,7 +64,22 @@ RUN cd /opt/opencode \
 # modules Debian's own python3 packages install (pip refuses to replace a
 # Debian-owned `packaging`). The venv's pip is removed once it has installed.
 COPY tools/semgrep/requirements.txt /tmp/semgrep-requirements.txt
-RUN apt-get update \
+# APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
+#
+# This image ships gzip, libpcre2-8-0 and libsqlite3-0 one Debian point release
+# behind, which is 5 of its 10 critical/high Trivy findings. The base is
+# digest-pinned, so it is only as current as the day that digest was built, and
+# nothing here ever applied the distro's own security updates.
+#
+# `apt-get upgrade` alone is not enough either: the layer is cached by buildx
+# (cache-from: type=gha) on instruction text plus base digest, so it would run
+# once and be replayed forever. Measured on gibson-executor the same day — an
+# accidental cache-less build produced patched packages, the next cached build
+# put them back. The caller passes a value that changes every run.
+ARG APT_CACHE_BUST=0
+RUN echo "apt refresh ${APT_CACHE_BUST}" >/dev/null \
+ && apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates \
  && python3 -m venv /opt/semgrep \
  && /opt/semgrep/bin/pip install --no-cache-dir --require-hashes -r /tmp/semgrep-requirements.txt \
