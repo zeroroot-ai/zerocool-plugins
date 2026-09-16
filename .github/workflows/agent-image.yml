@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@0fed78673650eb244156e92f3a37ab7411e39750 # main, 2026-09-16: arm the pre-push vulnerability gate (.github#85)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
     with:
       component_name: zerocool-agent
       component_path: .
@@ -55,7 +55,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@0fed78673650eb244156e92f3a37ab7411e39750 # main, 2026-09-16: arm the pre-push vulnerability gate (.github#85)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
     with:
       component_name: zerocool-claude-agent
       component_path: .
