@@ -10,9 +10,8 @@ import { Code, ConnectError } from "@connectrpc/connect"
  * error)` is a server stream on `HarnessCallbackService`. The daemon resolves
  * a session-lifetime sandbox by (tenant, session_id), launches it lazily on
  * the first command, and REUSES it after that, so `git clone` and then `go
- * build` see one `/workspace` (gibson
- * `internal/engine/harness/sandboxed/session.go`). The tenant comes from the
- * caller's identity, so no request names one.
+ * build` see one `/workspace`. The tenant comes from the caller's identity, so
+ * no request names one.
  *
  * THE STREAM CONTRACT IS THE POINT. Exactly one terminal message ends a
  * healthy stream: an exit, or an error. A stream that ends without one was cut

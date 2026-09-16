@@ -59,8 +59,7 @@ export const GibsonPlugin: Plugin = async () => {
   // first Capability Grant handshake and the host key it registers is persisted
   // at `hostKeyPath`. Every later start re-registers by proving possession of
   // that host key — the daemon routes on credential type: `host+jwt` is
-  // re-registration, anything else is first registration
-  // (gibson `internal/server/daemon/capabilitygrant_register.go:134-155`).
+  // re-registration, anything else is first registration.
   //
   // So the bootstrap token is passed ONLY when no host key exists yet. Replaying
   // a one-time token on every start would be rejected, and it would mean asking

@@ -42,9 +42,9 @@
  * launcher names — GIBSON_CG_JWT, GIBSON_CALLBACK_ENDPOINT,
  * GIBSON_AGENT_TASK_B64, GIBSON_MISSION_ID, GIBSON_MISSION_RUN_ID,
  * GIBSON_AGENT_RUN_ID, GIBSON_MODEL, GIBSON_TRACE_ID, GIBSON_SPAN_ID — are
- * spelled in the SDK, against gibson `internal/engine/harness/sandboxed/agent.go`
- * (the `envAgent*` constants). This file spells none of them. A second spelling
- * here is how the two drift, which is the defect zerocool-plugins#7 records.
+ * spelled in the SDK, against the launcher's own constants. This file spells
+ * none of them. A second spelling here is how the two drift, which is the
+ * defect zerocool-plugins#7 records.
  *
  * FOUR VARIABLES ARE STILL READ HERE, and every one of them is a local option
  * of this host rather than part of the launcher contract. The launcher never

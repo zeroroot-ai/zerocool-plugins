@@ -25,8 +25,7 @@ import {
  * `DeleteSessionContext` on `HarnessCallbackService`. The daemon keys one
  * opaque blob per (tenant, session_id) in the per-tenant dataplane store and
  * never reads the bytes. The tenant half comes from the caller's identity, so
- * no request names a tenant and one component cannot reach another's session
- * (gibson `internal/engine/harness/callback_session_context.go`).
+ * no request names a tenant and one component cannot reach another's session.
  *
  * This is the TRUSTED home for a session's local context. Nothing here writes
  * a byte to the workspace or to the Devbox, which is the third acceptance

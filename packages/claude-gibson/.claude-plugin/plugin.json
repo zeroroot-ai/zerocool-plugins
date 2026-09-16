@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/zeroroot-ai/zerocool-plugins",
   "repository": "https://github.com/zeroroot-ai/zerocool-plugins",
-  "license": "MIT",
+  "license": "Elastic-2.0",
   "keywords": [
     "gibson",
     "security",
