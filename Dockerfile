@@ -78,5 +78,14 @@ COPY --from=build /app /app
 WORKDIR /app
 RUN useradd -u 65532 -m zerocool
 USER 65532:65532
+
+# The license text travels with the distribution. Apache-2.0 §4(a) and MIT
+# both require the notice to reach every recipient, and a published image is
+# a distribution. /licenses is the OCI convention. Each Dockerfile needs its
+# own copy: the two images share a base, not a final stage. Last in the stage
+# so a change here rebuilds nothing else.
+COPY LICENSE /licenses/LICENSE
+COPY NOTICE /licenses/NOTICE
+
 # GIBSON_PLATFORM_URL (required) + GIBSON_BOOTSTRAP_TOKEN are supplied at deploy time.
 ENTRYPOINT ["node", "dist/serve-agent.js"]
