@@ -10,7 +10,7 @@ import type { DevboxResult } from "./devbox.js"
  *
  * This runs only after the Devbox proved absent: a daemon built without the
  * setec integration, or one with no `sandbox.devbox.image` configured, answers
- * `Unavailable` (gibson `internal/engine/harness/callback_devbox_exec.go:60`).
+ * `Unavailable`.
  * Degrading here keeps a working coding agent, which is the same discipline
  * the main plugin keeps when it cannot reach the platform at all.
  *

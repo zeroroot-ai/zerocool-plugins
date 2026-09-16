@@ -161,12 +161,9 @@ knowledge through the callback harness during a dispatched run.
 
 See [`CONTEXT.md`](CONTEXT.md) and [`docs/adr/`](docs/adr/).
 
-## License
-
-MIT.
-
 ## License and history
 
 Elastic License 2.0. See [LICENSE](LICENSE). Zero Root AI is the licensor.
+Elastic License 2.0 is source-available, not open source.
 
 Issue and pull request numbers cited in comments and documents dated before 2026-09-05 refer to the tracker before the history reset, archived offline. They do not resolve on GitHub.

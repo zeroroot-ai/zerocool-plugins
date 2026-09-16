@@ -72,11 +72,10 @@ export async function agentHandler(
     // pass it back — see the ADR on why this is not yet automatic.
     sessionId: item.context.opencode_session_id,
     timeoutMs: item.timeoutMs,
-    // The task-scoped callback seam. gibson mints the grant per dispatch
-    // (`internal/engine/harness/implementation.go:1205-1210`) so a dispatched run
-    // reaches the harness as the TASK rather than as this component. The same
-    // passthrough the sandboxed shape uses (`dispatch.ts`), so the child sees one
-    // environment however it was launched.
+    // The task-scoped callback seam. The platform mints the grant per dispatch,
+    // so a dispatched run reaches the harness as the TASK rather than as this
+    // component. The same passthrough the sandboxed shape uses (`dispatch.ts`),
+    // so the child sees one environment however it was launched.
     env: dispatchChildEnv({
       callbackEndpoint: item.callbackEndpoint,
       callbackToken: item.callbackToken,
