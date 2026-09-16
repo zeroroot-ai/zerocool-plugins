@@ -36,6 +36,9 @@ jobs:
       component_name: zerocool-agent
       component_path: .
       dockerfile_path: Dockerfile
+      # Busts the apt layer so `apt-get upgrade` actually runs. Without it the
+      # buildx GHA cache replays an upgrade from the day the layer was built.
+      build_args: APT_CACHE_BUST=${{ github.run_id }}
       image_name: ghcr.io/zeroroot-ai/zerocool-agent
       tag_pattern: type=match,pattern=opencode-gibson-v(.*)
 
@@ -57,5 +60,8 @@ jobs:
       component_name: zerocool-claude-agent
       component_path: .
       dockerfile_path: Dockerfile.claude
+      # Busts the apt layer so `apt-get upgrade` actually runs. Without it the
+      # buildx GHA cache replays an upgrade from the day the layer was built.
+      build_args: APT_CACHE_BUST=${{ github.run_id }}
       image_name: ghcr.io/zeroroot-ai/zerocool-claude-agent
       tag_pattern: type=match,pattern=claude-member-v(.*)
