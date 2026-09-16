@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@e55c31f0bb5fe175e4b7f9cb4407be9f292885ce # v0.3.0
     with:
       component_name: zerocool-agent
       component_path: .
@@ -55,7 +55,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@e55c31f0bb5fe175e4b7f9cb4407be9f292885ce # v0.3.0
     with:
       component_name: zerocool-claude-agent
       component_path: .
