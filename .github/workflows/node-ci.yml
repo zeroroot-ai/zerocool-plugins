@@ -39,7 +39,7 @@ permissions:
 jobs:
   fast:
     if: github.event_name == 'pull_request'
-    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@e55c31f0bb5fe175e4b7f9cb4407be9f292885ce # v0.3.0
     with:
       tier: fast
       # empty -> pnpm/action-setup reads the root packageManager field;
@@ -48,7 +48,7 @@ jobs:
 
   heavy:
     if: github.event_name == 'merge_group'
-    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@271a10c5de3fd796ef375da9658b569ab17d1ad5 # v0.2.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-node-ci.yml@e55c31f0bb5fe175e4b7f9cb4407be9f292885ce # v0.3.0
     with:
       tier: heavy
       pnpm-version: ""
