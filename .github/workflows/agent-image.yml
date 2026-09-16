@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@d33b5cc18ac03d012f37f6e54984ed5f994da41b # main, 2026-09-16: arm the image-licence guard (.github#82)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@cc9c979345bd1940cb070a455e0b7a49004c9bac # main, 2026-09-16: unbreak the build (.github#83)
     with:
       component_name: zerocool-agent
       component_path: .
@@ -52,7 +52,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@d33b5cc18ac03d012f37f6e54984ed5f994da41b # main, 2026-09-16: arm the image-licence guard (.github#82)
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@cc9c979345bd1940cb070a455e0b7a49004c9bac # main, 2026-09-16: unbreak the build (.github#83)
     with:
       component_name: zerocool-claude-agent
       component_path: .
