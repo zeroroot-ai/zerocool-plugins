@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@017f26148bffdc5d382a265edd863e8a647e7830 # v0.4.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@26202a5181acc259188b0a21b0fc2e75a9f1dac3 # v0.4.1
     with:
       component_name: zerocool-agent
       component_path: .
@@ -55,7 +55,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@017f26148bffdc5d382a265edd863e8a647e7830 # v0.4.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@26202a5181acc259188b0a21b0fc2e75a9f1dac3 # v0.4.1
     with:
       component_name: zerocool-claude-agent
       component_path: .
@@ -65,3 +65,29 @@ jobs:
       build_args: APT_CACHE_BUST=${{ github.run_id }}
       image_name: ghcr.io/zeroroot-ai/zerocool-claude-agent
       tag_pattern: type=match,pattern=claude-member-v(.*)
+
+  # The release policy, on the digest this run just pushed. It refuses an
+  # image the shared build did not sign for this repo and this commit, one
+  # whose provenance names another source, or one whose SBOM attestation
+  # does not verify. zerocool-plugins#9 criterion 3.
+  verify:
+    needs: image
+    permissions:
+      contents: read
+      packages: read
+    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@26202a5181acc259188b0a21b0fc2e75a9f1dac3 # v0.4.1
+    with:
+      image_ref: ghcr.io/zeroroot-ai/zerocool-agent@${{ needs.image.outputs.digest }}
+      expected_subject_repo: ${{ github.repository }}
+      expected_commit_sha: ${{ github.sha }}
+
+  verify-claude:
+    needs: image-claude
+    permissions:
+      contents: read
+      packages: read
+    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@26202a5181acc259188b0a21b0fc2e75a9f1dac3 # v0.4.1
+    with:
+      image_ref: ghcr.io/zeroroot-ai/zerocool-claude-agent@${{ needs.image-claude.outputs.digest }}
+      expected_subject_repo: ${{ github.repository }}
+      expected_commit_sha: ${{ github.sha }}
