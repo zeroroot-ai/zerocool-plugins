@@ -123,8 +123,8 @@ sandbox). Three exist:
 | Kind | What it does | Ends |
 |---|---|---|
 | `opencode` (default) | Drives `opencode run` headless on the Task goal. | When opencode returns. |
-| `source-analysis` | semgrep produces candidates, the model triages them, real ones are submitted as Findings. Changes no file. | When the checkout is analysed. |
-| `watch` | Polls the Application's GitLab project and originates a **Scan mission** per finished pipeline on the branch. | Never on its own. The mission is cancelled or the sandbox is torn down. |
+| `source-analysis` | semgrep produces candidates, the model triages them, real ones are submitted as Findings. Changes no file. | When the checkout is analyzed. |
+| `watch` | Polls the Application's GitLab project and originates a **Scan mission** per finished pipeline on the branch. | Never on its own. The mission is canceled or the sandbox is torn down. |
 
 `watch` is the **Always-on agent** shape (gibson `CONTEXT.md`). It is the
 machine identity that starts scans: ADR-0063 admits a component as a mission
