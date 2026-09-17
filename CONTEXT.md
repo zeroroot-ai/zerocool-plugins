@@ -208,15 +208,15 @@ unbuilt `dist` would land in the type and run paths of every check.
   method): *subscription*, *Anthropic API key*, *third-party provider*
   (Bedrock, Vertex, Foundry). API key and third-party credentials come from
   the tenant provider configuration and the manifest `credentials` block,
-  injected at launch (gibson#1621, already built for `agent/claude`). A
+  injected at launch (already built for `agent/claude`). A
   subscription is never stored by the platform: the person signs in inside
   the sandbox, in the unmodified `claude` binary, through Anthropic's own
   flow, relayed through the console. One-shot instances cannot use a
   subscription (no person present). The driver spawns the CLI, never the
   Agent SDK, because the hosting exemption names the binary. Source: Claude
   Code docs, Legal and compliance, "Can customers offer Claude Code in their
-  products?" (read 2026-09-01). gibson#1621 "never on a subscription" is
-  superseded by this.
+  products?" (read 2026-09-01). This supersedes the earlier rule "never on a
+  subscription".
 - **Bank** — a declarative, daemon-reconciled pool of always-on Claude Code
   instances: owner, desired count, login shape, image and model, repo
   template, idle policy, spill policy (queue or ephemeral launch when no
