@@ -157,9 +157,20 @@ Before each turn the driver puts that dispatch's grant in force with
 the member base grant. A stdio server that Claude Code spawns per session
 cannot swap a grant per turn, which is why the transport is HTTP.
 
+`/turn` is authenticated. The Claude Code child shares the sandbox's network
+namespace and has a shell, so an open control plane would let it install or
+drop any grant it has seen. The driver mints one random bearer token per
+process, starts the server with it in `GIBSON_TURN_TOKEN`, and sends it as
+`Authorization: Bearer` on every `POST` and `DELETE /turn`. The token is a
+`GIBSON_` name, so the child environment never carries it. After the server
+answers `/healthz`, the driver sends one unauthenticated `POST /turn` and
+requires a 401. A server that accepts it is not the control the design
+names, and the driver refuses to run under it.
+
 `ZEROCOOL_MCP_BIN` names the server bin (default `gibson-mcp`).
 `ZEROCOOL_MCP_URL` attaches to a server that is already running instead of
-starting one.
+starting one. That path needs `GIBSON_TURN_TOKEN` set to the token the
+running server was started with, and the same 401 check applies.
 
 ## Subscription sign-in
 

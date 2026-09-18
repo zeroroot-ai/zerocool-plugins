@@ -7,6 +7,12 @@
 //
 //   FAKE_MCP_READY_AFTER_MS   answer /healthz only after this long (default 0)
 //   FAKE_MCP_EXIT             exit with this code instead of serving
+//   FAKE_MCP_OPEN_TURN        accept POST/DELETE /turn with no bearer token,
+//                             the shape of a server the driver must refuse
+//
+// POST and DELETE /turn require `Authorization: Bearer $GIBSON_TURN_TOKEN`,
+// the token the driver minted and put in this process's environment. No
+// token in the environment means every POST and DELETE answers 401.
 import { createServer } from "node:http"
 
 if (process.env.FAKE_MCP_EXIT) {
@@ -19,6 +25,8 @@ const listen = args[args.indexOf("--listen") + 1] ?? "127.0.0.1:0"
 const [host, port] = listen.split(":")
 const readyAfter = Number(process.env.FAKE_MCP_READY_AFTER_MS ?? 0)
 const started = Date.now()
+const token = process.env.GIBSON_TURN_TOKEN ?? ""
+const openTurn = process.env.FAKE_MCP_OPEN_TURN === "1"
 let turn = null
 
 createServer((req, res) => {
@@ -35,6 +43,10 @@ createServer((req, res) => {
       return json(200, { ok: true, sessions: 0 })
     }
     if (req.url === "/turn") {
+      if ((req.method === "POST" || req.method === "DELETE") && !openTurn) {
+        const auth = req.headers.authorization ?? ""
+        if (!token || auth !== `Bearer ${token}`) return json(401, { error: "the /turn control plane requires the driver's bearer token" })
+      }
       if (req.method === "DELETE") {
         turn = null
         return json(200, { job_id: null })

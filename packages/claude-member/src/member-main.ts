@@ -9,7 +9,7 @@ import { readMemberEnv, type MemberEnv } from "./env.js"
 import type { GitCredential } from "./git.js"
 import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
 import { HarnessInbox, harnessGrants, type SpecOptions } from "./harness-inbox.js"
-import { mcpGateway, startMcpServer, type McpServer } from "./mcp.js"
+import { assertTurnRequiresToken, mcpGateway, startMcpServer, TURN_TOKEN_ENV, type McpServer } from "./mcp.js"
 import { FileJobStore, JobTable } from "./job.js"
 import { Member } from "./member.js"
 import { typedValueString } from "./oneshot.js"
@@ -140,8 +140,17 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
 
   // The Gibson MCP server: its own process on a loopback port, holding the
   // member base grant. `ZEROCOOL_MCP_URL` attaches to one that is already
-  // running instead of starting a second.
+  // running instead of starting a second; whoever started it shares its
+  // /turn bearer token through GIBSON_TURN_TOKEN, and the server has to
+  // refuse an unauthenticated POST /turn just like one the driver starts.
   const running = env.mcpUrl
+  if (running && !opts.env[TURN_TOKEN_ENV]) {
+    throw new Error(
+      `${TURN_TOKEN_ENV} is not set. ZEROCOOL_MCP_URL attaches to a running Gibson MCP server, and its /turn ` +
+        "control plane is called only with the bearer token that server was started with.",
+    )
+  }
+  if (running) await assertTurnRequiresToken(running.replace(/\/mcp$/, ""))
   const mcp: McpServer | undefined = running
     ? undefined
     : await startMcpServer({
@@ -152,7 +161,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
         cwd: env.workspace,
         log,
       })
-  const gateway = mcp ?? mcpGateway(running.replace(/\/mcp$/, ""), { callbackEndpoint: env.callbackEndpoint, insecure: env.callbackInsecure, log })
+  const gateway = mcp ?? mcpGateway(running.replace(/\/mcp$/, ""), { token: opts.env[TURN_TOKEN_ENV]!, callbackEndpoint: env.callbackEndpoint, insecure: env.callbackInsecure, log })
 
   const member = new Member({
     env,

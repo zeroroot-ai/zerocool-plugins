@@ -62,7 +62,8 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
       AWS_BEARER_TOKEN_BEDROCK: "bedrock",
       GIBSON_CG_JWT: "base-grant",
       GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-  GIBSON_SANDBOX: "gvisor",
+      GIBSON_SANDBOX: "gvisor",
+      GIBSON_TURN_TOKEN: "turn-token-of-this-driver",
       ZEROCOOL_MCP_URL: "http://127.0.0.1:7455/mcp",
       GIT_ASKPASS: "/state/git-askpass.sh",
       ZEROCOOL_GIT_TOKEN: "glpat-secret",
@@ -72,6 +73,7 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
   )
   assert.equal(child.GIBSON_CG_JWT, undefined)
   assert.equal(child.GIBSON_CALLBACK_ENDPOINT, undefined)
+  assert.equal(child.GIBSON_TURN_TOKEN, undefined, "the /turn bearer token stays in the driver")
   assert.equal(child.ZEROCOOL_MCP_URL, undefined)
   assert.equal(child.ZEROCOOL_GIT_TOKEN, undefined)
   assert.equal(child.GIT_ASKPASS, undefined)
