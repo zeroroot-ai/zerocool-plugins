@@ -8,7 +8,7 @@ the same discipline `opencode-run.test.ts` follows).
 
 | File | Source |
 |---|---|
-| `auth-error-real.jsonl` | **Real.** Captured from `claude` 2.1.257 on this workstation. |
+| `auth-error-real.jsonl` | **Real.** Captured from `claude` 2.1.257. The `system/init` line is scrubbed (see below). |
 | `job-turn-synthetic.jsonl` | **`synthetic-until-captured`.** Hand-built from the real `system/init` and `result` shapes above, plus the event shapes the Claude Code docs document. |
 | `interrupted-turn-synthetic.jsonl` | **`synthetic-until-captured`.** The same turn cut off before its `result`, with one stray non-JSON line. |
 
@@ -23,11 +23,25 @@ claude -p --input-format stream-json --output-format stream-json --verbose \
 ```
 
 with `CLAUDE_CONFIG_DIR` pointed at a throwaway directory and a deliberately
-invalid `ANTHROPIC_API_KEY`. It carries the real `system/init` (with
+invalid `ANTHROPIC_API_KEY`. It carries the real `system/init` field set (with
 `mcp_servers`, `capabilities`, `plugins`, `apiKeySource`,
 `claude_code_version`), the real `system/status` and `system/api_retry`
 shapes, and the real `result` shape with `total_cost_usd`, `num_turns`,
 `duration_ms`, `permission_denials` and `modelUsage`.
+
+The `system/init` line describes the machine that ran the capture. A raw
+capture carries the working directory, the local tool, slash command, skill
+and agent inventory, and the messaging socket path. None of that belongs in a
+public repository, and the parser reads none of it beyond the field names. So
+every fixture's `system/init` line is scrubbed before it is committed:
+
+- `cwd` is `/work`, or a path under `/workspace/` in a synthetic job turn.
+- `tools` is the four built-in tools, plus the MCP tools of the run.
+- `slash_commands`, `skills` and `agents` are empty.
+- `messaging_socket_path` is absent.
+
+Every other field keeps the bytes the CLI printed. `events.test.ts` fails on a
+fixture that carries a machine path or a socket path.
 
 The two synthetic files carry what that run could not produce without a paid
 key: an MCP tool call, the permission prompt tool answering, a subagent
@@ -51,7 +65,8 @@ own login.
    question, and redirect stdout to
    `test/fixtures/claude-code-<version>/job-turn-real.jsonl`.
 5. Delete the throwaway config directory.
-6. Replace `job-turn-synthetic.jsonl` with the real capture, drop the
+6. Scrub the `system/init` line as the list above says. Change no other line.
+7. Replace `job-turn-synthetic.jsonl` with the real capture, drop the
    `synthetic-until-captured` row from the table above, and update
    `PINNED_CLAUDE_CODE_VERSION` in `src/version.ts` and the
    `@anthropic-ai/claude-code` pin in `tools/claude/package.json` (then
