@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
-import { gitlabRest, parsePipeline, TRIGGER_STATUS, type GitLabClient, type Pipeline } from "./gitlab.js"
+import { allowedGitLabHosts, gitlabRest, GITLAB_HOSTS_ENV, parsePipeline, resolveGitLabBaseUrl, TRIGGER_STATUS, type GitLabClient, type Pipeline } from "./gitlab.js"
 import {
   CHECKPOINT_KIND,
   checkpointText,
@@ -620,6 +620,30 @@ test("a GitLab error is raised rather than reported as no pipeline", async () =>
   await assert.rejects(client.latestFinishedPipeline("main"), /401 Unauthorized/)
 })
 
+test("the instance host comes from the connector configuration, and gitlab.url must match it", () => {
+  assert.deepEqual(allowedGitLabHosts({}), ["gitlab.com"], "the default is GitLab's public host")
+  assert.deepEqual(allowedGitLabHosts({ [GITLAB_HOSTS_ENV]: " GitLab.Example.com, gitlab.com " }), ["gitlab.example.com", "gitlab.com"])
+
+  assert.equal(resolveGitLabBaseUrl(undefined, ["gitlab.com"]), "https://gitlab.com")
+  assert.equal(resolveGitLabBaseUrl("", ["gitlab.example.com"]), "https://gitlab.example.com", "one allowed host is the default")
+  assert.equal(resolveGitLabBaseUrl("https://gitlab.example.com/", ["gitlab.example.com"]), "https://gitlab.example.com")
+  assert.equal(resolveGitLabBaseUrl("https://code.example.com/gitlab/", ["code.example.com"]), "https://code.example.com/gitlab", "a path prefix survives")
+  assert.equal(resolveGitLabBaseUrl("https://GitLab.com", ["gitlab.com"]), "https://gitlab.com", "host names compare case-insensitively")
+
+  assert.throws(() => resolveGitLabBaseUrl("http://attacker.example", ["gitlab.com"]), /is not https/, "plaintext never carries the token")
+  assert.throws(() => resolveGitLabBaseUrl("https://attacker.example", ["gitlab.com"]), /host "attacker.example" is not in ZEROCOOL_GITLAB_HOSTS/)
+  assert.throws(() => resolveGitLabBaseUrl("https://gitlab.com.attacker.example", ["gitlab.com"]), /not in ZEROCOOL_GITLAB_HOSTS/, "a suffix match is no match")
+  assert.throws(() => resolveGitLabBaseUrl("https://user:pw@gitlab.com", ["gitlab.com"]), /carries a credential/)
+  assert.throws(() => resolveGitLabBaseUrl("https://gitlab.com/?x=1", ["gitlab.com"]), /carries a credential, a query/)
+  assert.throws(() => resolveGitLabBaseUrl("not a url", ["gitlab.com"]), /is not a URL/)
+  assert.throws(() => resolveGitLabBaseUrl("", ["a.example", "b.example"]), /allows several hosts/, "no guessing among several")
+  assert.throws(() => resolveGitLabBaseUrl("https://gitlab.com", []), /names no GitLab host/)
+})
+
+test("the REST client refuses a plaintext base, whatever built it", () => {
+  assert.throws(() => gitlabRest({ projectPath: "g/p", token: "t", baseUrl: "http://attacker.example" }), /is not https/)
+})
+
 test("a pipeline row without an id or a commit is dropped, not guessed at", () => {
   assert.equal(parsePipeline({ sha: "abc" }), undefined)
   assert.equal(parsePipeline({ id: 1 }), undefined)
@@ -691,6 +715,19 @@ test("a watch dispatch with no application refuses rather than watch someone els
     }),
     /no `application`/,
   )
+})
+
+test("a watch dispatch whose gitlab.url is a plaintext or unlisted host refuses before it fetches the token", async () => {
+  let credentialAsked = 0
+  const deps = (over: Record<string, string>) => ({
+    env: over,
+    watch: { checkpoints: worldDouble().store, scans: scanDouble(), credential: async () => (credentialAsked++, "glpat-secret"), maxPolls: 1 },
+  })
+  const ctx = (url: string) => watchCtx({ application: "customer-portal", "gitlab.project": "g/p", "gitlab.url": url, "repository.url": "https://gitlab.com/g/p.git", "image.ref": "img@sha256:0" })
+  await assert.rejects(runDispatch(ctx("http://attacker.example"), deps({})), /is not https/)
+  await assert.rejects(runDispatch(ctx("https://attacker.example"), deps({})), /not in ZEROCOOL_GITLAB_HOSTS/)
+  await assert.rejects(runDispatch(ctx("https://gitlab.com"), deps({ [GITLAB_HOSTS_ENV]: "gitlab.example.com" })), /not in ZEROCOOL_GITLAB_HOSTS/, "the operator's list wins over the default")
+  assert.equal(credentialAsked, 0, "the token is never fetched for a host that was refused")
 })
 
 test("a watch dispatch with no project refuses rather than poll nothing", async () => {

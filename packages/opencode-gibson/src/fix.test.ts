@@ -750,6 +750,14 @@ test("a fix dispatch with no application refuses rather than work someone else's
   )
 })
 
+test("a fix dispatch whose gitlab.url is not an allowed https host refuses before it fetches the token", async () => {
+  let credentialAsked = 0
+  const deps = { fix: { status: statusWriter(), planner: bumpPlanner(), workspace: workspace(), credential: async () => (credentialAsked++, SENTINEL), findings: { findings: async () => [] } } }
+  await assert.rejects(runDispatch(fixCtx({ ...FULL_CONTEXT, "gitlab.url": "http://attacker.example" }), deps), /is not https/)
+  await assert.rejects(runDispatch(fixCtx({ ...FULL_CONTEXT, "gitlab.url": "https://attacker.example" }), deps), /not in ZEROCOOL_GITLAB_HOSTS/)
+  assert.equal(credentialAsked, 0, "the tenant's token is never resolved for a refused host")
+})
+
 test("a fix dispatch with no project refuses rather than have nowhere to push", async () => {
   await assert.rejects(
     runDispatch(fixCtx({ application: "customer-portal" }), {

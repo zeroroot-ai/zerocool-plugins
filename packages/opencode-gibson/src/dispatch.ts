@@ -83,7 +83,7 @@ import {
   type FixPlanner,
   type Workspace,
 } from "./fix.js"
-import { gitlabRest, gitlabRestWriter, type GitLabClient, type GitLabWriter } from "./gitlab.js"
+import { allowedGitLabHosts, gitlabRest, gitlabRestWriter, resolveGitLabBaseUrl, type GitLabClient, type GitLabWriter } from "./gitlab.js"
 import { runOpencode } from "./opencode-run.js"
 import type { SemgrepRunner } from "./semgrep.js"
 import {
@@ -281,6 +281,8 @@ export interface DispatchDeps {
   watch?: WatchDeps
   /** Fix seams: no GitLab, no graph and no checkout in a test. */
   fix?: FixDeps
+  /** The component's environment, where the connector configuration lives. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv
 }
 
 /**
@@ -436,7 +438,8 @@ export async function runSourceAnalysisDispatch(ctx: DispatchContext, deps: Disp
  *   `zerocool.task`        selector, "watch"
  *   `application`          the Application this watch follows (required)
  *   `gitlab.project`       `group/project` on the instance (required)
- *   `gitlab.url`           instance base url; defaults to gitlab.com
+ *   `gitlab.url`           instance base url, https, host in ZEROCOOL_GITLAB_HOSTS;
+ *                          defaults to the one allowed host
  *   `gitlab.ref`           branch to watch; defaults to `main`
  *   `gitlab.credential`    tenant secret holding the project access token
  *   `repository.url`       clone url the Scan mission checks out (required)
@@ -467,6 +470,9 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
         "project to poll.",
     )
   }
+  // The host the tenant's token is sent to is checked before the token is
+  // fetched, against the connector configuration and never the mission node.
+  const gitlabBaseUrl = w.gitlab ? undefined : resolveGitLabBaseUrl(ctx.taskContext["gitlab.url"], allowedGitLabHosts(deps.env ?? process.env))
   // Checked here, not at the first trigger. The checked-in Scan mission requires
   // all seven of its parameters — CUE refuses an incomplete render rather than
   // substituting an empty string — so a watch missing one is already broken. It
@@ -498,7 +504,7 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
       gitlabRest({
         projectPath,
         token: await (w.credential ?? harnessCredential(harness as TaskHarness))(credentialName),
-        ...(ctx.taskContext["gitlab.url"] ? { baseUrl: ctx.taskContext["gitlab.url"] } : {}),
+        baseUrl: gitlabBaseUrl,
       })
     const checkpoints: WatchCheckpoints = w.checkpoints ?? worldCheckpoints(harness as TaskHarness, application)
     const scans: ScanLauncher =
@@ -566,7 +572,8 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
  *   `zerocool.task`        selector, "fix"
  *   `application`          the Application whose Findings are worked (required)
  *   `gitlab.project`       `group/project` on the instance (required)
- *   `gitlab.url`           instance base url; defaults to gitlab.com
+ *   `gitlab.url`           instance base url, https, host in ZEROCOOL_GITLAB_HOSTS;
+ *                          defaults to the one allowed host
  *   `gitlab.ref`           branch merge requests target; defaults to `main`
  *   `gitlab.credential`    tenant secret holding the project access token
  *   `repository.commit`    the commit the Scan ran against — what the status lands on
@@ -594,6 +601,8 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
         "project to open a merge request against.",
     )
   }
+  // Same check as the watch: the host is the connector's choice, not the node's.
+  const gitlabBaseUrl = f.gitlab ? undefined : resolveGitLabBaseUrl(ctx.taskContext["gitlab.url"], allowedGitLabHosts(deps.env ?? process.env))
   // No default planner and no default workspace: see FixDeps. A Fix that
   // cannot change anything or cannot test what it changed must not report a
   // clean pass over a backlog it never touched.
@@ -614,7 +623,7 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
       gitlabRestWriter({
         projectPath,
         token: await (f.credential ?? harnessCredential(harness as TaskHarness))(credentialName),
-        ...(ctx.taskContext["gitlab.url"] ? { baseUrl: ctx.taskContext["gitlab.url"] } : {}),
+        baseUrl: gitlabBaseUrl,
       })
     const findings = f.findings ?? harnessFindingSource(taskKnowledge(harness as TaskHarness))
     const status =

@@ -30,6 +30,69 @@ export const TRIGGER_STATUS = "success"
 /** GitLab's public host, when a tenant names no other instance. */
 export const GITLAB_DEFAULT_URL = "https://gitlab.com"
 
+/**
+ * The connector configuration that says which GitLab hosts a tenant's token
+ * may be sent to: a comma-separated list of host names in the component's
+ * environment, set by the operator, never by a mission node. Default:
+ * `gitlab.com`.
+ */
+export const GITLAB_HOSTS_ENV = "ZEROCOOL_GITLAB_HOSTS"
+
+/** Read the allow list from the environment. */
+export function allowedGitLabHosts(env: NodeJS.ProcessEnv): string[] {
+  const raw = env[GITLAB_HOSTS_ENV] ?? ""
+  const hosts = raw
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0)
+  return hosts.length > 0 ? hosts : ["gitlab.com"]
+}
+
+/**
+ * The instance base URL a dispatch may use, checked against the allow list.
+ *
+ * `gitlab.url` comes from the mission node's task context, and the token it
+ * would be sent with is the tenant's project access token. So the value is
+ * not trusted on its own: the scheme must be https, the host must be one the
+ * connector configuration names, and the URL carries no credential, query or
+ * fragment. An empty `gitlab.url` means the one allowed host, and is refused
+ * when the allow list names several, because guessing would pick a host the
+ * mission author did not.
+ */
+export function resolveGitLabBaseUrl(requested: string | undefined, allowedHosts: string[]): string {
+  const allowed = allowedHosts.map((h) => h.toLowerCase())
+  if (allowed.length === 0) throw new Error(`${GITLAB_HOSTS_ENV} names no GitLab host, so no token can be sent anywhere`)
+  const wanted = (requested ?? "").trim()
+  if (!wanted) {
+    if (allowed.length === 1) return `https://${allowed[0]}`
+    throw new Error(`gitlab.url is not set and ${GITLAB_HOSTS_ENV} allows several hosts (${allowed.join(", ")}); the task context must name one`)
+  }
+  let url: URL
+  try {
+    url = new URL(wanted)
+  } catch {
+    throw new Error(`gitlab.url ${JSON.stringify(wanted)} is not a URL`)
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`gitlab.url ${JSON.stringify(wanted)} is not https; the tenant's token travels only over https`)
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error(`gitlab.url ${JSON.stringify(wanted)} carries a credential, a query or a fragment; only scheme, host and path are read`)
+  }
+  const host = url.hostname.toLowerCase()
+  if (!allowed.includes(host)) {
+    throw new Error(`gitlab.url host ${JSON.stringify(host)} is not in ${GITLAB_HOSTS_ENV} (${allowed.join(", ")}); the connector configuration names the hosts a token may be sent to`)
+  }
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "")
+}
+
+/** Both clients take the base through here, so a caller cannot hand them a plaintext host. */
+function httpsBase(baseUrl: string | undefined): string {
+  const base = (baseUrl || GITLAB_DEFAULT_URL).replace(/\/+$/, "")
+  if (!base.startsWith("https://")) throw new Error(`GitLab base url ${JSON.stringify(base)} is not https`)
+  return base
+}
+
 /** One pipeline, reduced to what a trigger decision and a Scan mission need. */
 export interface Pipeline {
   /** GitLab's own pipeline id. Monotonic per project, and the checkpoint key. */
@@ -60,7 +123,7 @@ export interface GitLabRestOptions {
   projectPath: string
   /** The project access token, resolved from the tenant secret store. */
   token: string
-  /** The instance. Defaults to {@link GITLAB_DEFAULT_URL}. */
+  /** The instance, https only. Defaults to {@link GITLAB_DEFAULT_URL}. Resolve it with {@link resolveGitLabBaseUrl}. */
   baseUrl?: string
   /** Injectable transport. Defaults to the global `fetch`. */
   fetch?: typeof globalThis.fetch
@@ -104,7 +167,7 @@ export function parsePipeline(raw: unknown): Pipeline | undefined {
  * request.
  */
 export function gitlabRest(opts: GitLabRestOptions): GitLabClient {
-  const base = (opts.baseUrl || GITLAB_DEFAULT_URL).replace(/\/+$/, "")
+  const base = httpsBase(opts.baseUrl)
   const project = encodeURIComponent(opts.projectPath)
   const doFetch = opts.fetch ?? globalThis.fetch
 
@@ -189,7 +252,7 @@ export interface GitLabWriter {
  * code — never a header.
  */
 export function gitlabRestWriter(opts: GitLabRestOptions): GitLabWriter {
-  const base = (opts.baseUrl || GITLAB_DEFAULT_URL).replace(/\/+$/, "")
+  const base = httpsBase(opts.baseUrl)
   const project = encodeURIComponent(opts.projectPath)
   const doFetch = opts.fetch ?? globalThis.fetch
   const api = `${base}/api/v4/projects/${project}`
