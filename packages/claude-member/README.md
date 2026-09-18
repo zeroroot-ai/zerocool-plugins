@@ -46,6 +46,7 @@ The daemon sets these when it launches a member sandbox.
 | `GIBSON_CG_JWT` | yes | the member base grant |
 | `GIBSON_CALLBACK_ENDPOINT` | yes | the harness endpoint, `host:port` or a URL |
 | `GIBSON_CALLBACK_INSECURE` | no | `1` dials plaintext, for a local daemon |
+| `GIBSON_SANDBOX` | yes | `gvisor`. The daemon sets it when the sandbox runs under gVisor. See below. |
 | `GIBSON_INSTANCE_MODE` | no | `member` (default) or `one-shot` |
 | `GIBSON_MISSION_ID` | no | the mission the member runs under |
 | `ZEROCOOL_LOGIN_SHAPE` | no | `api-key` (default), `subscription`, `bedrock`, `vertex`, `foundry` |
@@ -65,6 +66,16 @@ The daemon sets these when it launches a member sandbox.
 The provider credential (`ANTHROPIC_API_KEY`, or the cloud provider's
 variables) reaches the Claude Code child and nothing else. The driver never
 reads it, never logs it and never writes it to disk.
+
+### The sandbox marker
+
+The driver runs Claude Code with `--dangerously-skip-permissions` on every
+turn. The gVisor sandbox and the per-turn grant are the controls that make
+that safe, so the driver starts only where the sandbox is. `GIBSON_SANDBOX`
+is the daemon's statement that it launched this process under gVisor. The
+driver refuses to start when the marker is absent or carries another value,
+and `claudeArgs` refuses to build an argv without it. This package ships a
+bin, and the same code must not run prompt-free on a laptop.
 
 ## What the Claude child sees
 

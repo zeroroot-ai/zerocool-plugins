@@ -14,6 +14,7 @@ const env = readMemberEnv({
   GIBSON_BANK_ID: "bank-1",
   GIBSON_CG_JWT: "base-grant",
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
   ZEROCOOL_CLAUDE_MODEL: "claude-opus-4-6",
   ZEROCOOL_STATE_DIR: "/state",
 })

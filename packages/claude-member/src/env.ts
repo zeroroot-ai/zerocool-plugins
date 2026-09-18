@@ -30,6 +30,14 @@ export const MEMBER_ENV = {
   instanceMode: "GIBSON_INSTANCE_MODE",
   /** The mission the member was originated under (ADR-0063). */
   missionId: "GIBSON_MISSION_ID",
+  /**
+   * The sandbox marker. The daemon sets it to `gvisor` when it launches the
+   * sandbox under gVisor. Required: the driver runs Claude Code with permission
+   * prompts off, and the sandbox is the control that makes that safe. Without
+   * the marker the driver refuses to start, so the same code path cannot run
+   * on a laptop with the prompts off.
+   */
+  sandbox: "GIBSON_SANDBOX",
   /** `api-key`, `subscription`, `bedrock`, `vertex` or `foundry`. */
   loginShape: "ZEROCOOL_LOGIN_SHAPE",
   /** The model passed as `--model`. Empty leaves it to Claude Code. */
@@ -59,6 +67,9 @@ export const MEMBER_ENV = {
 } as const
 
 export type InstanceMode = "member" | "one-shot"
+/** The one value `GIBSON_SANDBOX` may carry. */
+export type SandboxMarker = "gvisor"
+export const SANDBOX_MARKER: SandboxMarker = "gvisor"
 export type LoginShape = "api-key" | "subscription" | "bedrock" | "vertex" | "foundry"
 
 export interface MemberEnv {
@@ -69,6 +80,7 @@ export interface MemberEnv {
   callbackInsecure: boolean
   instanceMode: InstanceMode
   missionId: string
+  sandbox: SandboxMarker
   loginShape: LoginShape
   model: string
   jobCap: number
@@ -110,6 +122,14 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
   if (!LOGIN_SHAPES.includes(shapeRaw as LoginShape)) {
     throw new Error(`${MEMBER_ENV.loginShape} must be one of ${LOGIN_SHAPES.join(", ")}, got ${JSON.stringify(shapeRaw)}`)
   }
+  const sandbox = env[MEMBER_ENV.sandbox]
+  if (sandbox !== SANDBOX_MARKER) {
+    throw new Error(
+      `${MEMBER_ENV.sandbox} is ${sandbox === undefined ? "not set" : JSON.stringify(sandbox)}, expected ${JSON.stringify(SANDBOX_MARKER)}. ` +
+        "The driver runs Claude Code with permission prompts off, so it starts only inside the gVisor sandbox " +
+        "the daemon launches. The daemon sets this marker on that launch. Refusing to start.",
+    )
+  }
   const stateDir = env[MEMBER_ENV.stateDir] ?? join(homedir(), ".zerocool")
   const budget = env[MEMBER_ENV.maxBudgetUsd]
   return {
@@ -120,6 +140,7 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
     callbackInsecure: env[MEMBER_ENV.callbackInsecure] === "1",
     instanceMode: modeRaw,
     missionId: env[MEMBER_ENV.missionId] ?? "",
+    sandbox,
     loginShape: shapeRaw as LoginShape,
     model: env[MEMBER_ENV.model] ?? "",
     jobCap: positiveInt(env, MEMBER_ENV.jobCap, 1),

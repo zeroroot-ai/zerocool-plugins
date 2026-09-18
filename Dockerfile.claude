@@ -13,7 +13,10 @@
 # with inside the sandbox.
 #
 # Non-root: Claude Code refuses --dangerously-skip-permissions as root, and the
-# gVisor sandbox is the permission boundary.
+# gVisor sandbox is the permission boundary. The daemon states that boundary
+# with GIBSON_SANDBOX=gvisor on the launch; the driver refuses to start
+# without it (packages/claude-member/src/env.ts). The image does not set the
+# marker itself: an image run outside gVisor must not claim the sandbox.
 #
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
 # zerocool-plugins#13): the base image by digest, and the Claude Code CLI plus

@@ -22,6 +22,7 @@ function memberEnv(over: Record<string, string> = {}): MemberEnv {
     GIBSON_BANK_ID: "bank-1",
     GIBSON_CG_JWT: "base-grant",
     GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
     ZEROCOOL_HEARTBEAT_MS: "10000",
     ...over,
   })

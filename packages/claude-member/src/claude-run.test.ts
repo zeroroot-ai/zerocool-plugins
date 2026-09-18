@@ -13,7 +13,7 @@ const FAKE = fileURLToPath(new URL("../test/bin/fake-claude.mjs", import.meta.ur
 const fixture = (name: string): string => fileURLToPath(new URL(`../test/fixtures/claude-code-2.1.257/${name}`, import.meta.url))
 
 test("a one-shot run puts the goal on argv and keeps no session file", () => {
-  const args = claudeArgs({ goal: "find secrets", cwd: "/w", model: "claude-opus-4-6", maxTurns: 50, maxBudgetUsd: 5, sessionPersistence: false, allowedTools: ["mcp__gibson__*"], mcpServers: { gibson: { command: "node", args: ["/app/dist/server.js"] } } })
+  const args = claudeArgs({ goal: "find secrets", cwd: "/w", sandbox: "gvisor", model: "claude-opus-4-6", maxTurns: 50, maxBudgetUsd: 5, sessionPersistence: false, allowedTools: ["mcp__gibson__*"], mcpServers: { gibson: { command: "node", args: ["/app/dist/server.js"] } } })
   assert.deepEqual(args.slice(0, 2), ["-p", "find secrets"])
   assert.ok(args.includes("--no-session-persistence"))
   assert.ok(args.includes("--dangerously-skip-permissions"))
@@ -25,7 +25,7 @@ test("a one-shot run puts the goal on argv and keeps no session file", () => {
 })
 
 test("a turn reads stream-json on stdin, keeps its session, and resumes it", () => {
-  const args = claudeArgs({ input: "next step", cwd: "/w", resume: "sess-1", permissionPromptTool: "mcp__gibson__ask", mcpServers: { gibson: { type: "http", url: "http://127.0.0.1:7455/mcp" } } })
+  const args = claudeArgs({ input: "next step", cwd: "/w", sandbox: "gvisor", resume: "sess-1", permissionPromptTool: "mcp__gibson__ask", mcpServers: { gibson: { type: "http", url: "http://127.0.0.1:7455/mcp" } } })
   assert.equal(args[args.indexOf("--input-format") + 1], "stream-json")
   assert.equal(args[args.indexOf("--resume") + 1], "sess-1")
   assert.equal(args[args.indexOf("--permission-prompt-tool") + 1], "mcp__gibson__ask")
@@ -36,7 +36,15 @@ test("a turn reads stream-json on stdin, keeps its session, and resumes it", () 
 
 test("exactly one of goal and input is set", () => {
   assert.throws(() => claudeArgs({ cwd: "/w" } as ClaudeRunOptions), /exactly one of goal/)
-  assert.throws(() => claudeArgs({ cwd: "/w", goal: "a", input: "b" }), /exactly one of goal/)
+  assert.throws(() => claudeArgs({ cwd: "/w", goal: "a", input: "b", sandbox: "gvisor" }), /exactly one of goal/)
+})
+
+test("permission prompts are off only under the sandbox marker, and there is no run without it", () => {
+  const under = claudeArgs({ goal: "g", cwd: "/w", sandbox: "gvisor" })
+  assert.ok(under.includes("--dangerously-skip-permissions"))
+  assert.throws(() => claudeArgs({ goal: "g", cwd: "/w" }), /no sandbox marker/, "no marker, no argv")
+  assert.throws(() => claudeArgs({ goal: "g", cwd: "/w", sandbox: "docker" as never }), /no sandbox marker/)
+  assert.throws(() => spawnClaude({ goal: "g", cwd: "/w", bin: FAKE, env: {} }), /no sandbox marker/, "the spawn refuses before any process starts")
 })
 
 test("the stdin message is one stream-json user message", () => {
@@ -51,7 +59,7 @@ test("a .js bin runs under node, anything else is a bin on PATH", () => {
 })
 
 test("spawnClaude replays a real capture and reports what the turn produced", async () => {
-  const r = await spawnClaude({ input: "hi", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl") } }).done
+  const r = await spawnClaude({ input: "hi", sandbox: "gvisor", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl") } }).done
   assert.equal(r.exitCode, 0)
   assert.equal(r.sawResult, true)
   assert.equal(r.costUsd, 0.4231)
@@ -63,7 +71,7 @@ test("the input reaches the child as one stream-json line and stdin then closes"
   const dir = await mkdtemp(join(tmpdir(), "zerocool-claude-"))
   try {
     const record = join(dir, "calls.jsonl")
-    await spawnClaude({ input: "the next input", cwd: dir, bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl"), CLAUDE_FAKE_RECORD: record } }).done
+    await spawnClaude({ input: "the next input", sandbox: "gvisor", cwd: dir, bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl"), CLAUDE_FAKE_RECORD: record } }).done
     const call = JSON.parse((await readFile(record, "utf8")).trim()) as { stdin: string; argv: string[] }
     assert.equal(call.stdin, userMessageLine("the next input"))
     assert.ok(call.argv.includes("--input-format"))
@@ -74,7 +82,7 @@ test("the input reaches the child as one stream-json line and stdin then closes"
 
 test("every event line reaches the console callback as it arrives", async () => {
   const lines: string[] = []
-  await spawnClaude({ input: "hi", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl") }, onEvent: (line) => lines.push(line) }).done
+  await spawnClaude({ input: "hi", sandbox: "gvisor", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl") }, onEvent: (line) => lines.push(line) }).done
   assert.equal(lines.length, 14)
   assert.equal((JSON.parse(lines[0]!) as { subtype: string }).subtype, "init")
 })
@@ -82,7 +90,7 @@ test("every event line reaches the console callback as it arrives", async () => 
 test("an interrupt ends the turn with a result, the way SIGINT does", async () => {
   let running!: () => void
   const started = new Promise<void>((r) => (running = r))
-  const handle = spawnClaude({ input: "hi", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl"), CLAUDE_FAKE_HANG_MS: "5000" }, onEvent: () => running() })
+  const handle = spawnClaude({ input: "hi", sandbox: "gvisor", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("job-turn-synthetic.jsonl"), CLAUDE_FAKE_HANG_MS: "5000" }, onEvent: () => running() })
   await started
   handle.interrupt()
   const r = await handle.done
@@ -94,7 +102,7 @@ test("an interrupt ends the turn with a result, the way SIGINT does", async () =
 test("SIGTERM leaves the turn unfinished with no result, and the driver sees that", async () => {
   let running!: () => void
   const started = new Promise<void>((r) => (running = r))
-  const handle = spawnClaude({ input: "hi", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("interrupted-turn-synthetic.jsonl"), CLAUDE_FAKE_HANG_MS: "5000" }, onEvent: () => running() })
+  const handle = spawnClaude({ input: "hi", sandbox: "gvisor", cwd: process.cwd(), bin: FAKE, env: { ...process.env, CLAUDE_FAKE_FIXTURE: fixture("interrupted-turn-synthetic.jsonl"), CLAUDE_FAKE_HANG_MS: "5000" }, onEvent: () => running() })
   await started
   handle.kill()
   const r = await handle.done
@@ -104,5 +112,5 @@ test("SIGTERM leaves the turn unfinished with no result, and the driver sees tha
 })
 
 test("a missing bin rejects with the bin name instead of hanging", async () => {
-  await assert.rejects(spawnClaude({ input: "hi", cwd: process.cwd(), bin: "/nonexistent/claude" }).done, /cannot run \/nonexistent\/claude/)
+  await assert.rejects(spawnClaude({ input: "hi", sandbox: "gvisor", cwd: process.cwd(), bin: "/nonexistent/claude" }).done, /cannot run \/nonexistent\/claude/)
 })

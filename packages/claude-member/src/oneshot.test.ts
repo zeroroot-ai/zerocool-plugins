@@ -17,6 +17,7 @@ const memberEnv = readMemberEnv({
   GIBSON_BANK_ID: "one-shot",
   GIBSON_CG_JWT: "dispatch-grant",
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
 })
 
 function dispatch(context: Record<string, unknown> = {}): SandboxDispatch {
@@ -122,6 +123,7 @@ function oneTurn(result: Partial<{ isError: boolean; text: string }>) {
 const launch = (over: Record<string, string> = {}): NodeJS.ProcessEnv => ({
   GIBSON_CG_JWT: "dispatch-grant",
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
   GIBSON_MISSION_ID: "m-1",
   GIBSON_MISSION_RUN_ID: "run-1",
   GIBSON_AGENT_RUN_ID: "ar-1",
