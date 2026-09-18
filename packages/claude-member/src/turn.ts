@@ -54,6 +54,7 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
     appendSystemPrompt: turnSystemPrompt(spec, req.worktrees),
     maxTurns: spec.constraints.maxTurns ?? env.maxTurns,
     sessionPersistence: true,
+    sandbox: env.sandbox,
     bin: env.claudeBin,
     env: claudeChildEnv(deps.processEnv, { CLAUDE_CONFIG_DIR: env.claudeConfigDir }),
   }

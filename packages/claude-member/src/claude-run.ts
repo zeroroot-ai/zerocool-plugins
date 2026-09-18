@@ -2,6 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 import { spawn, type ChildProcess } from "node:child_process"
+import { SANDBOX_MARKER, type SandboxMarker } from "./env.js"
 import { LineSplitter, parseEventLine, summarizeEvents, type ClaudeEvent, type TurnSummary } from "./events.js"
 
 /**
@@ -46,6 +47,12 @@ export interface ClaudeRunOptions {
   permissionPromptTool?: string
   /** Continue this Claude Code session. Omitted on the first turn. */
   resume?: string
+  /**
+   * The sandbox marker from the launch (`GIBSON_SANDBOX`). The run puts
+   * `--dangerously-skip-permissions` on argv only under it, and refuses to
+   * build an argv without it. See `env.ts`.
+   */
+  sandbox?: SandboxMarker
   /** One-shot runs keep no session file. Turns need one for `--resume`. */
   sessionPersistence?: boolean
   timeoutMs?: number
@@ -79,14 +86,23 @@ export function claudeArgs(opts: ClaudeRunOptions): string[] {
   if ((opts.goal === undefined) === (opts.input === undefined)) {
     throw new Error("claudeArgs: set exactly one of goal (argv prompt) and input (stream-json on stdin)")
   }
+  // Permission prompts are off for the whole run. The gVisor sandbox and the
+  // per-turn grant are the controls (glossary, Permission posture), and the
+  // launch marker is the proof the sandbox is there. No marker, no argv: this
+  // package ships a bin, and the same code must not run prompt-free on a
+  // laptop. Claude Code refuses the flag as root, so the image runs as an
+  // unprivileged user.
+  if (opts.sandbox !== SANDBOX_MARKER) {
+    throw new Error(
+      `claudeArgs: no sandbox marker (expected ${JSON.stringify(SANDBOX_MARKER)}). Claude Code runs with permission ` +
+        "prompts off only inside the sandbox the daemon launches. Refusing to build the run.",
+    )
+  }
   const args = ["-p"]
   if (opts.goal !== undefined) args.push(opts.goal)
   else args.push("--input-format", "stream-json")
   args.push("--output-format", "stream-json", "--verbose", "--include-partial-messages")
   if (opts.sessionPersistence === false) args.push("--no-session-persistence")
-  // The gVisor sandbox and the per-turn grant are the controls (glossary,
-  // Permission posture). Claude Code refuses this flag as root, so the image
-  // runs as an unprivileged user.
   args.push("--dangerously-skip-permissions")
   if (opts.resume) args.push("--resume", opts.resume)
   if (opts.model) args.push("--model", opts.model)

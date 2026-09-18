@@ -10,6 +10,7 @@ const launch: NodeJS.ProcessEnv = {
   GIBSON_BANK_ID: "bank-1",
   GIBSON_CG_JWT: "base-grant",
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
 }
 
 test("readMemberEnv reads the launch contract and defaults the rest", () => {
@@ -27,12 +28,18 @@ test("readMemberEnv reads the launch contract and defaults the rest", () => {
   assert.equal(env.staleLimitMs, 24 * 60 * 60 * 1000)
 })
 
-test("a launch with no member, bank, grant or endpoint fails with the reason", () => {
-  for (const key of Object.values({ m: "GIBSON_MEMBER_ID", b: "GIBSON_BANK_ID", g: "GIBSON_CG_JWT", e: "GIBSON_CALLBACK_ENDPOINT" })) {
+test("a launch with no member, bank, grant, endpoint or sandbox marker fails with the reason", () => {
+  for (const key of Object.values({ m: "GIBSON_MEMBER_ID", b: "GIBSON_BANK_ID", g: "GIBSON_CG_JWT", e: "GIBSON_CALLBACK_ENDPOINT", s: "GIBSON_SANDBOX" })) {
     const broken = { ...launch }
     delete broken[key]
     assert.throws(() => readMemberEnv(broken), new RegExp(`${key} is not set`), `${key} must be required`)
   }
+})
+
+test("the sandbox marker must say gvisor: any other value refuses to start", () => {
+  assert.throws(() => readMemberEnv({ ...launch, GIBSON_SANDBOX: "docker" }), /GIBSON_SANDBOX is "docker", expected "gvisor"/)
+  assert.throws(() => readMemberEnv({ ...launch, GIBSON_SANDBOX: "" }), /GIBSON_SANDBOX is ""/)
+  assert.equal(readMemberEnv(launch).sandbox, "gvisor")
 })
 
 test("an unknown instance mode or login shape is refused, never guessed", () => {
@@ -55,6 +62,7 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
       AWS_BEARER_TOKEN_BEDROCK: "bedrock",
       GIBSON_CG_JWT: "base-grant",
       GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+  GIBSON_SANDBOX: "gvisor",
       ZEROCOOL_MCP_URL: "http://127.0.0.1:7455/mcp",
       GIT_ASKPASS: "/state/git-askpass.sh",
       ZEROCOOL_GIT_TOKEN: "glpat-secret",
