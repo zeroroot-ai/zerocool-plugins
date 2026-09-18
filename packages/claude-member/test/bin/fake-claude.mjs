@@ -23,6 +23,9 @@ if (!fixture) {
   process.exit(2)
 }
 
+// The driver writes one stream-json line and closes stdin. The replay waits
+// for that close, so a slow runner cannot record an empty stdin. A run with
+// no stdin (stdio "ignore") reads EOF at once.
 let stdin = ""
 process.stdin.on("data", (d) => {
   stdin += d.toString()
@@ -62,7 +65,7 @@ process.on("SIGTERM", () => {
   finish(143)
 })
 
-setTimeout(() => {
+process.stdin.on("end", () => {
   replay()
   if (hang > 0) {
     setTimeout(() => {
@@ -71,4 +74,4 @@ setTimeout(() => {
   } else {
     finish(Number(process.env.CLAUDE_FAKE_EXIT ?? 0))
   }
-}, 10)
+})
