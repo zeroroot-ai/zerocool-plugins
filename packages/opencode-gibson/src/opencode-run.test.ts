@@ -3,8 +3,9 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 
-import { createLineStreamer, opencodeArgs, parseOpencodeEvents } from "./opencode-run.js"
+import { createLineStreamer, opencodeArgs, opencodeChildEnv, parseOpencodeEvents, runOpencode } from "./opencode-run.js"
 
 /**
  * The fixture below is REAL output, not a hand-written guess: it is what
@@ -74,6 +75,65 @@ test("parseOpencodeEvents reports empty output distinguishably from unparsable o
   assert.equal(parseOpencodeEvents("").events, 0)
   assert.equal(parseOpencodeEvents("not json at all").events, 0)
   assert.equal(parseOpencodeEvents(`{"type":"step_start","sessionID":"s1"}`).events, 1)
+})
+
+test("the opencode child never sees the launcher's grant, enrollment token or task", () => {
+  const child = opencodeChildEnv(
+    {
+      PATH: "/usr/bin",
+      HOME: "/home/agent",
+      LANG: "C.UTF-8",
+      XDG_CONFIG_HOME: "/home/agent/.config",
+      OPENCODE_CONFIG: "/etc/opencode.json",
+      GIBSON_PLATFORM_URL: "https://api.example:30443",
+      GIBSON_HOST_KEY_PATH: "/home/agent/.zerocool/host.key",
+      GIBSON_CG_JWT: "component-grant",
+      GIBSON_BOOTSTRAP_TOKEN: "one-time-enrollment",
+      GIBSON_AGENT_TASK_B64: "e30=",
+      GIBSON_TURN_TOKEN: "driver-secret",
+      ZEROCOOL_OPENCODE_BIN: "/opt/opencode",
+      ANTHROPIC_API_KEY: "sk-ant-operator",
+      GITLAB_TOKEN: "glpat-secret",
+      SOME_OTHER_SECRET: "nope",
+    },
+    { GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: "task-grant" },
+  )
+  assert.equal(child.GIBSON_CG_JWT, undefined, "the component grant stays in the launcher")
+  assert.equal(child.GIBSON_BOOTSTRAP_TOKEN, undefined, "the enrollment token stays in the launcher")
+  assert.equal(child.GIBSON_AGENT_TASK_B64, undefined, "the launch task is read once, by the launcher")
+  assert.equal(child.GIBSON_TURN_TOKEN, undefined)
+  assert.equal(child.GITLAB_TOKEN, undefined)
+  assert.equal(child.SOME_OTHER_SECRET, undefined, "the allow list drops what it does not name")
+  assert.equal(child.GIBSON_CALLBACK_ENDPOINT, "gibson:50001", "the child contract arrives through extra")
+  assert.equal(child.GIBSON_CALLBACK_TOKEN, "task-grant")
+  assert.equal(child.GIBSON_PLATFORM_URL, "https://api.example:30443", "addressing passes")
+  assert.equal(child.GIBSON_HOST_KEY_PATH, "/home/agent/.zerocool/host.key")
+  assert.equal(child.PATH, "/usr/bin")
+  assert.equal(child.LANG, "C.UTF-8")
+  assert.equal(child.XDG_CONFIG_HOME, "/home/agent/.config")
+  assert.equal(child.OPENCODE_CONFIG, "/etc/opencode.json")
+  assert.equal(child.ZEROCOOL_OPENCODE_BIN, "/opt/opencode")
+  assert.equal(child.ANTHROPIC_API_KEY, "sk-ant-operator", "opencode reads its own provider credential")
+})
+
+test("runOpencode spawns the child with the allow-listed environment, not the launcher's", async () => {
+  const bin = fileURLToPath(new URL("../test/bin/fake-opencode-env.mjs", import.meta.url))
+  const prev = { cg: process.env.GIBSON_CG_JWT, boot: process.env.GIBSON_BOOTSTRAP_TOKEN }
+  process.env.GIBSON_CG_JWT = "component-grant"
+  process.env.GIBSON_BOOTSTRAP_TOKEN = "one-time-enrollment"
+  try {
+    const run = await runOpencode({ goal: "print env", dir: process.cwd(), bin, env: { GIBSON_CALLBACK_TOKEN: "task-grant" } })
+    const seen = JSON.parse(run.text) as Record<string, string | undefined>
+    assert.equal(seen.GIBSON_CG_JWT, undefined)
+    assert.equal(seen.GIBSON_BOOTSTRAP_TOKEN, undefined)
+    assert.equal(seen.GIBSON_CALLBACK_TOKEN, "task-grant")
+    assert.ok(seen.PATH, "the child can still find binaries")
+  } finally {
+    if (prev.cg === undefined) delete process.env.GIBSON_CG_JWT
+    else process.env.GIBSON_CG_JWT = prev.cg
+    if (prev.boot === undefined) delete process.env.GIBSON_BOOTSTRAP_TOKEN
+    else process.env.GIBSON_BOOTSTRAP_TOKEN = prev.boot
+  }
 })
 
 test("opencodeArgs runs unattended, in the workspace, as JSON", () => {

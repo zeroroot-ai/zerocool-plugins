@@ -115,7 +115,7 @@ export interface OpencodeRunOptions {
   sessionId?: string
   /** Hard deadline. The child is killed when it elapses. */
   timeoutMs?: number
-  /** Extra environment for the child, merged over the parent's. */
+  /** Extra environment for the child, merged over the allow-listed parent environment. */
   env?: NodeJS.ProcessEnv
   /** Binary to run. Overridable for tests and for a pinned install. */
   bin?: string
@@ -164,6 +164,81 @@ export function createLineStreamer(onLine: (line: string) => void): {
   }
 }
 
+/**
+ * Environment names and prefixes the opencode child may see. Everything else
+ * is dropped, so the launcher's component grant (`GIBSON_CG_JWT`), the
+ * one-time enrollment token (`GIBSON_BOOTSTRAP_TOKEN`) and the launch task
+ * (`GIBSON_AGENT_TASK_B64`) never reach a process that runs with `--auto`
+ * and has a shell. `knowledge-source.ts` states the child contract: it reads
+ * `GIBSON_CALLBACK_ENDPOINT` and `GIBSON_CALLBACK_TOKEN`, which the caller
+ * passes in `opts.env`, and nothing of the launch environment.
+ *
+ * `GIBSON_` names are listed one by one and never by prefix: the grant and
+ * the token share that prefix with the addressing the child plugin reads.
+ * The provider credential passes through because opencode itself reads it
+ * for a model that is not served through the Gibson shim, the same posture
+ * `claude-member/src/env.ts` takes for Claude Code.
+ */
+const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "TZ",
+  "TERM",
+  "TMPDIR",
+  "NO_PROXY",
+  "no_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "CLOUD_ML_REGION",
+  // Addressing the child plugin reads (index.ts, mcp-config.ts). No secret.
+  "GIBSON_PLATFORM_URL",
+  "GIBSON_DAEMON_URL",
+  "GIBSON_HOST_KEY_PATH",
+  "GIBSON_AGENT_MODE",
+  "GIBSON_SHIM_PORT",
+  "GIBSON_TARGET_ID",
+  "GIBSON_CA_CERT",
+  "GIBSON_OPENCODE_SESSION_ID",
+]
+
+const CHILD_ENV_ALLOW_PREFIX: readonly string[] = [
+  "LANG",
+  "LC_",
+  "XDG_",
+  "NODE_",
+  "SSL_CERT_",
+  "OPENCODE_",
+  "ZEROCOOL_",
+  "ANTHROPIC_",
+  "OPENAI_",
+  "AWS_",
+  "GOOGLE_",
+  "AZURE_",
+]
+
+/**
+ * The environment the opencode child gets: the allow list above from `parent`,
+ * then `extra` on top. `extra` is the per-dispatch grant from
+ * `dispatchChildEnv`, which is the only way a `GIBSON_CALLBACK_*` name reaches
+ * the child.
+ */
+export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(parent)) {
+    if (v === undefined) continue
+    if (!CHILD_ENV_ALLOW_EXACT.includes(k) && !CHILD_ENV_ALLOW_PREFIX.some((p) => k.startsWith(p))) continue
+    out[k] = v
+  }
+  for (const [k, v] of Object.entries(extra)) {
+    if (v !== undefined) out[k] = v
+  }
+  return out
+}
+
 /** Build the argv for a headless run. Exported so a test can assert it. */
 export function opencodeArgs(opts: OpencodeRunOptions): string[] {
   const args = ["run", "--format", "json", "--dir", opts.dir]
@@ -193,7 +268,7 @@ export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRun
   return await new Promise<OpencodeRunResult>((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.dir,
-      env: { ...process.env, ...opts.env },
+      env: opencodeChildEnv(process.env, opts.env),
       stdio: ["ignore", "pipe", "pipe"],
       ...(opts.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs, killSignal: "SIGTERM" as const } : {}),
     })
