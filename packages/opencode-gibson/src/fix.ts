@@ -8,10 +8,17 @@ import type { FileChange, GitLabWriter, MergeRequest } from "./gitlab.js"
  *
  * After a Scan mission lands, the agent works the Application's open Findings
  * in priority order. For each one it can act on it rewrites the repository,
- * runs the repository's own tests, and only then opens a merge request set to
- * merge itself when the pipeline succeeds. It records the scan verdict on the
- * commit as `gibson/scan` and posts one note saying what it fixed, what it did
- * not, and why.
+ * runs the repository's own tests, and only then opens a merge request for a
+ * person to review. It records the scan verdict on the commit as
+ * `gibson/scan` and posts one note saying what it fixed, what it did not, and
+ * why.
+ *
+ * A PERSON MERGES, UNLESS THE APPLICATION OPTED IN. The planner is steered by
+ * the Finding and by the repository content it triaged, which is the
+ * untrusted input of this whole task. So a merge request is never armed to
+ * merge itself by default. `autoMerge` arms `merge_when_pipeline_succeeds`
+ * on the requests one pass opens, and it is set only from the Application's
+ * explicit `fix.auto_merge` opt-in in the task context.
  *
  * THE ORDER IS TESTS, THEN PUSH. A fix that breaks the build is worse than the
  * Finding: it stops every other fix behind it. So the change is applied to a
@@ -163,6 +170,8 @@ export interface RunFixOptions {
   pipelineUrl?: string
   /** Cap on merge requests opened in one pass, so a backlog cannot flood review. */
   maxMergeRequests?: number
+  /** Arm auto-merge on the merge requests this pass opens. Default false. See the module note. */
+  autoMerge?: boolean
   onEvent?: (e: FixEvent) => void
 }
 
@@ -245,7 +254,8 @@ export async function runFix(opts: RunFixOptions): Promise<FixSummary> {
     try {
       const branch = fixBranch(finding)
       await opts.gitlab.commitToBranch(branch, opts.targetRef, `${plan.summary}\n\n${plan.detail}`, changes)
-      const mr = await opts.gitlab.openMergeRequest(branch, opts.targetRef, plan.summary, mergeRequestBody(finding, plan))
+      const autoMerge = opts.autoMerge === true
+      const mr = await opts.gitlab.openMergeRequest(branch, opts.targetRef, plan.summary, mergeRequestBody(finding, plan, autoMerge), { autoMerge })
       emit({ type: "fix.mr", findingId: finding.id, iid: mr.iid, webUrl: mr.webUrl })
       opened++
       await opts.status.markFixing(finding.id, mr)
@@ -331,8 +341,8 @@ export function statusDescription(summary: FixSummary): string {
   return `${fixing} merge request(s) opened, ${merged} merged, ${unfixed} left for a human`
 }
 
-/** The merge request description. Names the Finding it closes and how. */
-export function mergeRequestBody(finding: FixableFinding, plan: FixPlan): string {
+/** The merge request description. Names the Finding it closes, how, and who merges. */
+export function mergeRequestBody(finding: FixableFinding, plan: FixPlan, autoMerge = false): string {
   return [
     plan.detail,
     "",
@@ -341,9 +351,10 @@ export function mergeRequestBody(finding: FixableFinding, plan: FixPlan): string
     `Where: ${finding.placeLabel} \`${finding.placeKey}\``,
     `Severity: ${finding.severity}${finding.priority ? ` · priority ${finding.priority}` : ""}`,
     "",
-    "Opened by the Gibson always-on agent. It merges itself when the pipeline",
-    "succeeds. The finding is marked fixed on merge and verified only by a",
-    "later rescan.",
+    autoMerge
+      ? "Opened by the Gibson always-on agent. This Application opted in to auto-merge, so it merges itself when the pipeline succeeds."
+      : "Opened by the Gibson always-on agent for review. A person merges it.",
+    "The finding is marked fixed on merge and verified only by a later rescan.",
   ].join("\n")
 }
 

@@ -219,6 +219,12 @@ export interface MergeRequest {
   state: string
 }
 
+/** What {@link GitLabWriter.openMergeRequest} may be told beyond the request itself. */
+export interface OpenMergeRequestOptions {
+  /** Arm `merge_when_pipeline_succeeds`. Default false: a person merges. */
+  autoMerge?: boolean
+}
+
 /** One file the Fix rewrote, as the commit API wants it. */
 export interface FileChange {
   path: string
@@ -233,8 +239,12 @@ export interface GitLabWriter {
    * commit is not a state this can leave behind.
    */
   commitToBranch(branch: string, startRef: string, message: string, changes: FileChange[]): Promise<string>
-  /** Open a merge request set to merge itself when its pipeline succeeds. */
-  openMergeRequest(branch: string, targetRef: string, title: string, description: string): Promise<MergeRequest>
+  /**
+   * Open a merge request for a person to review. Auto-merge on a green
+   * pipeline is armed only when `opts.autoMerge` is true, which the Fix sets
+   * from the Application's explicit opt-in and nothing else.
+   */
+  openMergeRequest(branch: string, targetRef: string, title: string, description: string, opts?: OpenMergeRequestOptions): Promise<MergeRequest>
   /** The current state of a merge request, so a later pass can see it merged. */
   mergeRequestState(iid: number): Promise<MergeRequest>
   /** Post a note on a merge request. */
@@ -304,7 +314,7 @@ export function gitlabRestWriter(opts: GitLabRestOptions): GitLabWriter {
       return sha
     },
 
-    async openMergeRequest(branch, targetRef, title, description) {
+    async openMergeRequest(branch, targetRef, title, description, opts) {
       const created = asMergeRequest(
         await call("POST", "/merge_requests", {
           source_branch: branch,
@@ -315,14 +325,20 @@ export function gitlabRestWriter(opts: GitLabRestOptions): GitLabWriter {
         }),
         branch,
       )
-      // Auto-merge is a separate call, and a refusal is not fatal: the merge
-      // request is open and correct either way, and a human can merge it. A
-      // thrown error here would lose a good merge request over a race with the
-      // pipeline that has not started yet.
-      try {
-        await call("PUT", `/merge_requests/${created.iid}/merge`, { merge_when_pipeline_succeeds: true })
-      } catch {
-        // Reported by the caller through the note, not swallowed silently.
+      // The merge request is open for a person. Machine-written code lands on
+      // the customer's branch by itself only where the Application opted in:
+      // anything that steers the planner, including the repository content it
+      // triaged, would otherwise land as soon as CI went green.
+      if (opts?.autoMerge === true) {
+        // Auto-merge is a separate call, and a refusal is not fatal: the merge
+        // request is open and correct either way, and a human can merge it. A
+        // thrown error here would lose a good merge request over a race with
+        // the pipeline that has not started yet.
+        try {
+          await call("PUT", `/merge_requests/${created.iid}/merge`, { merge_when_pipeline_succeeds: true })
+        } catch {
+          // Reported by the caller through the note, not swallowed silently.
+        }
       }
       return created
     },
