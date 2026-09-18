@@ -45,6 +45,9 @@ test("every install path pins the Gibson MCP server to the version tools/hosts p
   const tools = JSON.parse(await read("tools/hosts/package.json")) as { dependencies: Record<string, string> }
   const pin = tools.dependencies["@zeroroot-ai/gibson-mcp"]!
   assert.match(pin, EXACT, "tools/hosts/package.json pins an exact version")
+  // The agent image installs the same server from tools/claude. One version everywhere.
+  const image = JSON.parse(await read("tools/claude/package.json")) as { dependencies: Record<string, string> }
+  assert.equal(image.dependencies["@zeroroot-ai/gibson-mcp"], pin, "tools/claude/package.json must carry the tools/hosts pin")
   for (const site of GIBSON_MCP_SITES) {
     const found = specs(await read(site), "gibson-mcp")
     assert.ok(found.length > 0, `${site}: names @zeroroot-ai/gibson-mcp with a version`)
@@ -69,5 +72,5 @@ test("the reader catches a floating tag, so this guard can fail", () => {
   assert.deepEqual(specs(floating, "gibson-mcp"), ["latest"])
   assert.doesNotMatch("latest", EXACT)
   assert.doesNotMatch("^0.2.0", EXACT)
-  assert.deepEqual(specs("npx --package @zeroroot-ai/gibson-mcp@0.2.0 gibson-mcp", "gibson-mcp"), ["0.2.0"])
+  assert.deepEqual(specs("npx --package @zeroroot-ai/gibson-mcp@0.2.1 gibson-mcp", "gibson-mcp"), ["0.2.1"])
 })
