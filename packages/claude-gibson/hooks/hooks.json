@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "npx",
-            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@latest", "zerocool-claude-hook"],
+            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@0.6.0", "zerocool-claude-hook"],
             "timeout": 30,
             "statusMessage": "Loading Gibson context"
           }
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "npx",
-            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@latest", "zerocool-claude-hook"],
+            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@0.6.0", "zerocool-claude-hook"],
             "timeout": 60
           }
         ]
