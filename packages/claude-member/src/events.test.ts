@@ -45,6 +45,30 @@ test("the real capture: api_retry and the failed result are read, not guessed", 
   assert.match(summary.text, /401 API key is invalid/)
 })
 
+/**
+ * A capture's `system/init` line names the machine it ran on. The scrub in
+ * test/fixtures/README.md removes that before the file is committed, and this
+ * test keeps the scrub from being skipped on the next recapture.
+ */
+test("every fixture's system/init line is scrubbed of the capture machine", () => {
+  const leaks = (line: string): string[] => {
+    const init = JSON.parse(line) as Record<string, unknown>
+    const found: string[] = []
+    const cwd = String(init.cwd)
+    if (cwd !== "/work" && !cwd.startsWith("/workspace/")) found.push(`cwd=${cwd}`)
+    if ("messaging_socket_path" in init) found.push("messaging_socket_path")
+    for (const key of ["slash_commands", "skills", "agents"]) {
+      if (Array.isArray(init[key]) && (init[key] as unknown[]).length > 0) found.push(key)
+    }
+    return found
+  }
+  for (const name of ["auth-error-real.jsonl", "job-turn-synthetic.jsonl", "interrupted-turn-synthetic.jsonl"]) {
+    assert.deepEqual(leaks(fixture(name).split("\n")[0]!), [], `${name} carries the capture machine`)
+  }
+  const raw = JSON.stringify({ type: "system", subtype: "init", cwd: "/home/someone/src", slash_commands: ["private-skill"], messaging_socket_path: "/tmp/x.sock" })
+  assert.deepEqual(leaks(raw), ["cwd=/home/someone/src", "messaging_socket_path", "slash_commands"], "the check can fail")
+})
+
 test("a full turn: text, tool calls, cost, and the session id", () => {
   const summary = summarizeEvents(parseEvents(fixture("job-turn-synthetic.jsonl")))
   assert.equal(summary.sawResult, true)
