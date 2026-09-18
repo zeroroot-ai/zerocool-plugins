@@ -94,13 +94,13 @@ function workspace(testVerdict: { ok: boolean; output: string } = { ok: true, ou
 /** A GitLab writer that records every call and never touches a network. */
 function writer(over: Partial<GitLabWriter> = {}): GitLabWriter & {
   commits: { branch: string; message: string; changes: FileChange[] }[]
-  mrs: { branch: string; title: string; description: string }[]
+  mrs: { branch: string; title: string; description: string; autoMerge: boolean }[]
   notes: { iid: number; body: string }[]
   statuses: { sha: string; state: CommitStatusState; description: string }[]
 } {
   const rec = {
     commits: [] as { branch: string; message: string; changes: FileChange[] }[],
-    mrs: [] as { branch: string; title: string; description: string }[],
+    mrs: [] as { branch: string; title: string; description: string; autoMerge: boolean }[],
     notes: [] as { iid: number; body: string }[],
     statuses: [] as { sha: string; state: CommitStatusState; description: string }[],
   }
@@ -111,8 +111,8 @@ function writer(over: Partial<GitLabWriter> = {}): GitLabWriter & {
       rec.commits.push({ branch, message, changes })
       return "sha-of-" + branch
     },
-    openMergeRequest: async (branch, _target, title, description) => {
-      rec.mrs.push({ branch, title, description })
+    openMergeRequest: async (branch, _target, title, description, o) => {
+      rec.mrs.push({ branch, title, description, autoMerge: o?.autoMerge === true })
       return { iid: nextIid++, webUrl: `https://gitlab.example/mr/${nextIid}`, state: "opened" }
     },
     mergeRequestState: async (iid) => ({ iid, webUrl: "", state: "opened" }),
@@ -460,17 +460,31 @@ test("the writer refuses to commit an empty change set", async () => {
   await assert.rejects(() => w.commitToBranch("b", "main", "m", []), /empty change set/)
 })
 
-test("a merge request that opens but cannot auto-merge is still returned", async () => {
-  let n = 0
-  const fetchStub = (async (url: unknown) => {
-    n++
-    if (String(url).endsWith("/merge")) return new Response("conflict", { status: 405, statusText: "Not Allowed" })
+test("the writer opens a merge request for a person and never arms auto-merge by default", async () => {
+  const calls: { method: string; url: string }[] = []
+  const fetchStub = (async (url: unknown, init: RequestInit) => {
+    calls.push({ method: String(init.method), url: String(url) })
     return new Response(JSON.stringify({ iid: 12, web_url: "u", state: "opened" }), { status: 200 })
   }) as unknown as typeof globalThis.fetch
   const w = gitlabRestWriter({ projectPath: "g/p", token: SENTINEL, fetch: fetchStub })
   const mr: MergeRequest = await w.openMergeRequest("b", "main", "t", "d")
+  assert.equal(mr.iid, 12)
+  assert.deepEqual(calls.map((c) => c.method), ["POST"], "one call: the merge request, nothing armed")
+  assert.ok(!calls.some((c) => c.url.endsWith("/merge")), "merge_when_pipeline_succeeds is never set without the opt-in")
+})
+
+test("with the opt-in, a merge request that opens but cannot auto-merge is still returned", async () => {
+  const calls: { method: string; url: string }[] = []
+  const fetchStub = (async (url: unknown, init: RequestInit) => {
+    calls.push({ method: String(init.method), url: String(url) })
+    if (String(url).endsWith("/merge")) return new Response("conflict", { status: 405, statusText: "Not Allowed" })
+    return new Response(JSON.stringify({ iid: 12, web_url: "u", state: "opened" }), { status: 200 })
+  }) as unknown as typeof globalThis.fetch
+  const w = gitlabRestWriter({ projectPath: "g/p", token: SENTINEL, fetch: fetchStub })
+  const mr: MergeRequest = await w.openMergeRequest("b", "main", "t", "d", { autoMerge: true })
   assert.equal(mr.iid, 12, "a refused auto-merge does not lose the merge request")
-  assert.ok(n >= 2, "auto-merge was attempted")
+  assert.deepEqual(calls.map((c) => c.method), ["POST", "PUT"], "auto-merge was attempted, once, after the request opened")
+  assert.ok(calls[1]!.url.endsWith("/merge_requests/12/merge"))
 })
 
 test("a merge request without an iid is refused rather than half-used", async () => {
@@ -714,10 +728,44 @@ test("the fix dispatch reads, fixes and reports, driven end to end", async () =>
     "priority order is the point: the P1 is worked before the P4, so a merge-request cap " +
       "defers what matters least rather than whatever the graph happened to return first",
   )
+  assert.equal(gl.mrs.length, 2)
+  assert.ok(gl.mrs.every((m) => m.autoMerge === false), "no opt-in in the task context, so a person merges")
+  assert.ok(gl.mrs.every((m) => m.description.includes("A person merges it")), "the description says who merges")
+  assert.ok(!gl.mrs.some((m) => m.description.includes("merges itself")))
 
   const written = JSON.stringify({ gl, lines, outcome })
   assert.equal(written.includes(SENTINEL), false, "the grant reaches nothing the dispatch writes")
   assert.equal(/glpat-/.test(written), false, "and no token-shaped string does either")
+})
+
+test("the fix dispatch arms auto-merge only on the Application's explicit opt-in", async () => {
+  const gl = writer()
+  const outcome = await runDispatch(fixCtx({ ...FULL_CONTEXT, "fix.auto_merge": "true" }), {
+    fix: {
+      gitlab: gl,
+      status: statusWriter(),
+      planner: bumpPlanner(),
+      workspace: workspace(),
+      credential: async () => SENTINEL,
+      findings: harnessFindingSource({ applicationFindings: async () => [read({ findingId: "brain-1", priority: "P2", severity: "high" })] }),
+    },
+  })
+  assert.equal(outcome.metadata?.fixing, "1")
+  assert.deepEqual(gl.mrs.map((m) => m.autoMerge), [true])
+  assert.ok(gl.mrs[0]!.description.includes("opted in to auto-merge"), "the description says the Application opted in")
+
+  const off = writer()
+  await runDispatch(fixCtx({ ...FULL_CONTEXT, "fix.auto_merge": "yes" }), {
+    fix: {
+      gitlab: off,
+      status: statusWriter(),
+      planner: bumpPlanner(),
+      workspace: workspace(),
+      credential: async () => SENTINEL,
+      findings: harnessFindingSource({ applicationFindings: async () => [read({ findingId: "brain-1", priority: "P2", severity: "high" })] }),
+    },
+  })
+  assert.deepEqual(off.mrs.map((m) => m.autoMerge), [false], "only the literal true opts in")
 })
 
 test("a fix dispatch whose read is rejected fails the run", async () => {

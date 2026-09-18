@@ -579,6 +579,8 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
  *   `repository.commit`    the commit the Scan ran against — what the status lands on
  *   `pipeline.url`         the pipeline page, linked from the commit status
  *   `fix.max_merge_requests`  cap on merge requests opened in one pass
+ *   `fix.auto_merge`       `true` arms merge-when-pipeline-succeeds on the merge
+ *                          requests this pass opens. Default off: a person merges.
  */
 export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = {}): Promise<AgentOutcome> {
   const f = deps.fix ?? {}
@@ -635,6 +637,7 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
       application,
       commit,
       targetRef,
+      autoMerge: ctx.taskContext["fix.auto_merge"] === "true",
       findings,
       status,
       planner: f.planner,
