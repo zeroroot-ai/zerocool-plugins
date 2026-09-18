@@ -17,7 +17,7 @@
  * which Dependabot bumps. `pins.test.ts` in claude-gibson fails when the two
  * differ or when any install path floats again.
  */
-export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.2.0"
+export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.2.1"
 
 export interface OpencodeMcpLocal {
   type: "local"

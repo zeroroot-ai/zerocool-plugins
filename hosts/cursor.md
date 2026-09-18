@@ -8,7 +8,7 @@ every project. Add the Gibson server:
   "mcpServers": {
     "gibson": {
       "command": "npx",
-      "args": ["--yes", "--package", "@zeroroot-ai/gibson-mcp@0.2.0", "gibson-mcp", "--transport", "stdio"],
+      "args": ["--yes", "--package", "@zeroroot-ai/gibson-mcp@0.2.1", "gibson-mcp", "--transport", "stdio"],
       "env": {
         "GIBSON_PLATFORM_URL": "https://api.example:30443"
       }
