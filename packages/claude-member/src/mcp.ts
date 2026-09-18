@@ -2,6 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 import { spawn, type ChildProcess } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import { createServer } from "node:net"
 import { resolveBin } from "./claude-run.js"
 import type { McpGateway } from "./inbox.js"
@@ -24,6 +25,17 @@ import { trimTrailingSlashes } from "./text.js"
  * server falls back to its base grant. A stdio server that Claude Code
  * spawns per session cannot do this, which is why the transport is HTTP.
  *
+ * THE CONTROL PLANE IS AUTHENTICATED. The Claude Code child shares the
+ * sandbox's network namespace, has a shell and runs with permission prompts
+ * off, so an open `/turn` would let it install or drop any grant string it
+ * has seen with one `curl`. The driver mints one random bearer token per
+ * process, hands it to the server in `GIBSON_TURN_TOKEN` at spawn, and sends
+ * it as `Authorization: Bearer` on every `POST` and `DELETE /turn`. The
+ * token is a `GIBSON_` name, so `claudeChildEnv` never passes it to the
+ * child. After `/healthz` the driver also proves the server enforces it: an
+ * unauthenticated `POST /turn` must answer 401. A server that accepts it is
+ * not the control the design names, and the driver refuses to run under it.
+ *
  * A CHILD PROCESS, NOT A LIBRARY IMPORT. The slice was written as a library
  * import. `@zeroroot-ai/gibson-mcp` cannot be a build-time dependency yet:
  * it is not on npm, and its git tag declares `@zeroroot-ai/sdk` as
@@ -34,6 +46,8 @@ import { trimTrailingSlashes } from "./text.js"
  */
 export const MCP_PATH = "/mcp"
 export const DEFAULT_MCP_HOST = "127.0.0.1"
+/** The environment name the server reads its `/turn` bearer token from. */
+export const TURN_TOKEN_ENV = "GIBSON_TURN_TOKEN"
 
 export class McpError extends Error {}
 
@@ -55,6 +69,31 @@ export async function freePort(host = DEFAULT_MCP_HOST): Promise<number> {
   })
 }
 
+/** One random bearer token for one driver process. */
+export function mintTurnToken(): string {
+  return randomBytes(32).toString("base64url")
+}
+
+/**
+ * Prove the server refuses an unauthenticated `POST /turn`. Called once after
+ * the server is ready and before any grant is put in force.
+ */
+export async function assertTurnRequiresToken(base: string, doFetch: typeof globalThis.fetch = globalThis.fetch): Promise<void> {
+  const url = `${trimTrailingSlashes(base)}/turn`
+  const res = await doFetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ job_id: "unauthenticated-probe", grant: "unauthenticated-probe" }),
+  })
+  if (res.status !== 401) {
+    throw new McpError(
+      `the MCP server answered ${res.status} to an unauthenticated POST /turn, expected 401. ` +
+        "The per-turn grant control plane must require the driver's bearer token, because the Claude Code child " +
+        "shares this network namespace. Refusing to run under this server.",
+    )
+  }
+}
+
 /** The body the server reads on `POST /turn`. Snake case: it is the wire. */
 export interface TurnBody {
   job_id: string
@@ -69,7 +108,7 @@ export interface McpServerOptions {
   /** The harness endpoint the server reports through, on the turn's grant. */
   callbackEndpoint: string
   insecure: boolean
-  /** The server's own environment: the base grant and the endpoint. */
+  /** The server's own environment: the base grant and the endpoint. The driver adds the turn token. */
   env: NodeJS.ProcessEnv
   cwd: string
   host?: string
@@ -89,12 +128,23 @@ export interface McpServer extends McpGateway {
   stop(): Promise<void>
 }
 
+export interface McpGatewayOptions {
+  /** The bearer token `/turn` requires. The server was started with it in `GIBSON_TURN_TOKEN`. */
+  token: string
+  callbackEndpoint?: string
+  insecure?: boolean
+  fetch?: typeof globalThis.fetch
+  log?: (line: string) => void
+}
+
 /** The gateway over an already-running server. */
-export function mcpGateway(base: string, opts: { callbackEndpoint?: string; insecure?: boolean; fetch?: typeof globalThis.fetch; log?: (line: string) => void }): McpGateway {
+export function mcpGateway(base: string, opts: McpGatewayOptions): McpGateway {
+  if (!opts.token) throw new McpError("mcpGateway: no turn token. The /turn control plane is never called unauthenticated.")
   const doFetch = opts.fetch ?? globalThis.fetch
   const log = opts.log ?? (() => {})
   const root = trimTrailingSlashes(base)
   const url = `${root}/turn`
+  const auth = { authorization: `Bearer ${opts.token}` }
   return {
     url: `${root}${MCP_PATH}`,
     async useGrant(jobId: string, grant: string): Promise<void> {
@@ -104,14 +154,14 @@ export function mcpGateway(base: string, opts: { callbackEndpoint?: string; inse
         ...(opts.callbackEndpoint ? { callback_endpoint: opts.callbackEndpoint } : {}),
         ...(opts.insecure ? { insecure: true } : {}),
       }
-      const res = await doFetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      const res = await doFetch(url, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(body) })
       if (!res.ok) {
         // The grant is never in the message: this text reaches the console.
         throw new McpError(`POST /turn for job ${jobId} answered ${res.status}`)
       }
     },
     async release(jobId: string): Promise<void> {
-      const res = await doFetch(url, { method: "DELETE" })
+      const res = await doFetch(url, { method: "DELETE", headers: auth })
       if (!res.ok) log(`mcp: DELETE /turn after job ${jobId} answered ${res.status}`)
     },
   }
@@ -132,10 +182,11 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServer>
   const doFetch = opts.fetch ?? globalThis.fetch
   const base = `http://${host}:${port}`
 
+  const token = mintTurnToken()
   const { command, prefix } = resolveBin(opts.bin)
   const child: ChildProcess = spawn(command, [...prefix, "--transport", "http", "--listen", `${host}:${port}`], {
     cwd: opts.cwd,
-    env: opts.env,
+    env: { ...opts.env, [TURN_TOKEN_ENV]: token },
     stdio: ["ignore", "pipe", "pipe"],
   })
   const stderr: string[] = []
@@ -167,9 +218,16 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServer>
     child.kill("SIGTERM")
     throw new McpError(`the MCP server did not answer ${base}/healthz within ${opts.readyTimeoutMs ?? 30_000}ms: ${stderr.join("").trim().slice(0, 500)}`)
   }
-  log(`mcp: serving ${base}${MCP_PATH}`)
+  try {
+    await assertTurnRequiresToken(base, doFetch)
+  } catch (e) {
+    child.kill("SIGTERM")
+    throw e
+  }
+  log(`mcp: serving ${base}${MCP_PATH}, /turn under the driver's bearer token`)
 
   const gateway = mcpGateway(base, {
+    token,
     callbackEndpoint: opts.callbackEndpoint,
     insecure: opts.insecure,
     ...(opts.fetch ? { fetch: opts.fetch } : {}),
