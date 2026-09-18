@@ -9,10 +9,15 @@
  * the `config` hook, so a user configures nothing.
  *
  * The command is the published package, not a path inside this plugin: the
- * server is shared by every host and released on the SDK train, so pinning it
- * to whatever this plugin happens to bundle would freeze the tool set.
+ * server is shared by every host and released on the SDK train.
+ *
+ * The version is exact. `npx --yes` runs whatever the registry serves with no
+ * prompt, so a floating tag would run one compromised publish on every
+ * machine at session start. The pin is the one in tools/hosts/package.json,
+ * which Dependabot bumps. `pins.test.ts` in claude-gibson fails when the two
+ * differ or when any install path floats again.
  */
-export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@latest"
+export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.2.0"
 
 export interface OpencodeMcpLocal {
   type: "local"

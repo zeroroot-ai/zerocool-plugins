@@ -61,7 +61,7 @@ function readCodexToml(toml: string): { command: string; args: string[]; env: Re
 /** What every snippet must say, whatever the host's file format. */
 function assertGibsonServer(server: { command: string; args: string[]; env?: Record<string, string> }, host: string): void {
   assert.equal(server.command, "npx", `${host}: the snippet runs the published server`)
-  assert.ok(server.args.some((a) => a.startsWith("@zeroroot-ai/gibson-mcp")), `${host}: names the shared package`)
+  assert.ok(server.args.some((a) => /^@zeroroot-ai\/gibson-mcp@\d+\.\d+\.\d+$/.test(a)), `${host}: names the shared package at an exact version`)
   assert.ok(server.args.includes("gibson-mcp"), `${host}: names the bin`)
   assert.deepEqual(server.args.slice(-2), ["--transport", "stdio"], `${host}: a host that spawns the server speaks stdio`)
   assert.ok(server.args.includes("--yes"), `${host}: npx must not stop to ask`)

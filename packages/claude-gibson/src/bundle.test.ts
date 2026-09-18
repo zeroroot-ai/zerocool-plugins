@@ -19,7 +19,7 @@ test("the plugin spawns the Gibson MCP server over stdio, and nothing of its own
   assert.deepEqual(Object.keys(mcp.mcpServers), ["gibson"], "one server, the shared one")
   const gibson = mcp.mcpServers.gibson!
   assert.equal(gibson.command, "npx")
-  assert.ok(gibson.args.includes("@zeroroot-ai/gibson-mcp@latest"), "the tools come from the shared package")
+  assert.ok(gibson.args.some((a) => /^@zeroroot-ai\/gibson-mcp@\d+\.\d+\.\d+$/.test(a)), "the tools come from the shared package, at an exact version")
   assert.ok(gibson.args.includes("gibson-mcp"))
   assert.deepEqual(gibson.args.slice(-2), ["--transport", "stdio"], "a host that spawns the server speaks stdio")
   assert.ok(!JSON.stringify(mcp).includes("zerocool-claude-mcp"), "the in-package server is gone, not deprecated")
