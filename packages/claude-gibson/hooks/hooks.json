@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx",
-            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@0.6.0", "zerocool-claude-hook"],
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/zerocool-claude-hook.mjs"],
             "timeout": 30,
             "statusMessage": "Loading Gibson context"
           }
@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx",
-            "args": ["--yes", "--package", "@zeroroot-ai/zerocool-claude@0.6.0", "zerocool-claude-hook"],
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/zerocool-claude-hook.mjs"],
             "timeout": 60
           }
         ]

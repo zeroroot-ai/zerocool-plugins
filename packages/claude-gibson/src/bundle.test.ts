@@ -25,13 +25,14 @@ test("the plugin spawns the Gibson MCP server over stdio, and nothing of its own
   assert.ok(!JSON.stringify(mcp).includes("zerocool-claude-mcp"), "the in-package server is gone, not deprecated")
 })
 
-test("the hooks are the two a host adapter keeps, and they run this package's hook bin", async () => {
+test("the hooks are the two a host adapter keeps, and they run this package's hook entry", async () => {
   const hooks = (await bundle("hooks/hooks.json")) as { hooks: Record<string, { hooks: { command: string; args: string[] }[] }[]> }
   assert.deepEqual(Object.keys(hooks.hooks).sort(), ["SessionEnd", "SessionStart"])
   for (const event of Object.values(hooks.hooks)) {
     for (const entry of event) {
       for (const hook of entry.hooks) {
-        assert.ok(hook.args.includes("zerocool-claude-hook"), "the hook bin, not a tool")
+        assert.equal(hook.command, "node")
+        assert.ok(hook.args.some((a) => a.endsWith("/hooks/zerocool-claude-hook.mjs")), "the hook entry, not a tool")
       }
     }
   }
