@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.4.0...claude-member-v0.4.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **claude-member:** default the state dir to the sandbox scratch path ([#76](https://github.com/zeroroot-ai/zerocool-plugins/issues/76)) ([2a21b1f](https://github.com/zeroroot-ai/zerocool-plugins/commit/2a21b1faefd9b0708d2ebd291726d508e4023270))
+
 ## [0.4.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.3.2...claude-member-v0.4.0) (2026-09-20)
 
 
