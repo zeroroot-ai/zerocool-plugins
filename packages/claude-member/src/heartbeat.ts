@@ -48,13 +48,19 @@ export function memberStatusMessage(status: MemberStatus): WireMemberStatus {
 }
 
 /**
- * `MemberStatus` has no field for an expiring subscription login, and the
- * person still has to act on it, so it rides on the health message.
+ * `MemberStatus` has no field for an expiring subscription login or for the
+ * last RPC failure, and a person still has to act on both, so they ride on
+ * the health message.
  */
 export function healthMessage(status: MemberStatus): string {
-  if (status.state === "needs_sign_in") return "waiting for a person to sign in"
-  if (status.signInExpiresInDays >= 0) return `sign-in expires in ${status.signInExpiresInDays} days`
-  return `${status.jobsInFlight} of ${status.cap} jobs in flight`
+  const base = status.state === "needs_sign_in" ? "waiting for a person to sign in" : status.signInExpiresInDays >= 0 ? `sign-in expires in ${status.signInExpiresInDays} days` : `${status.jobsInFlight} of ${status.cap} jobs in flight`
+  return status.lastError ? `${base}; last error: ${status.lastError}` : base
+}
+
+/** `healthy`, `degraded` while the member carries a survived RPC failure, `unhealthy` when dead. */
+export function healthStatus(status: MemberStatus): "healthy" | "degraded" | "unhealthy" {
+  if (status.state === "dead") return "unhealthy"
+  return status.lastError ? "degraded" : "healthy"
 }
 
 export interface ComponentHeartbeatOptions {
@@ -74,7 +80,7 @@ export class ComponentHeartbeat implements StatusReporter {
   async reportStatus(status: MemberStatus): Promise<void> {
     await this.opts.component.heartbeat({
       instanceId: this.opts.instanceId,
-      healthStatus: status.state === "dead" ? "unhealthy" : "healthy",
+      healthStatus: healthStatus(status),
       healthMessage: healthMessage(status),
       member: memberStatusMessage(status),
     })

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MemberState as WireMemberState } from "@zeroroot-ai/sdk/gen/gibson/bank/v1/bank_pb.js"
-import { ComponentHeartbeat, healthMessage, memberStatusMessage, wireMemberState } from "./heartbeat.js"
+import { ComponentHeartbeat, healthMessage, healthStatus, memberStatusMessage, wireMemberState } from "./heartbeat.js"
 import type { MemberStatus } from "./inbox.js"
 
 const status = (over: Partial<MemberStatus> = {}): MemberStatus => ({
@@ -16,6 +16,7 @@ const status = (over: Partial<MemberStatus> = {}): MemberStatus => ({
   jobs: [],
   claudeCodeVersion: "2.1.257",
   signInExpiresInDays: -1,
+  lastError: "",
   ...over,
 })
 
@@ -41,6 +42,13 @@ test("the health message carries what MemberStatus has no field for", () => {
   assert.equal(healthMessage(status({ state: "needs_sign_in" })), "waiting for a person to sign in")
   assert.equal(healthMessage(status({ signInExpiresInDays: 3 })), "sign-in expires in 3 days")
   assert.equal(healthMessage(status({ jobsInFlight: 1 })), "1 of 2 jobs in flight")
+  assert.equal(healthMessage(status({ jobsInFlight: 1, lastError: "pull: [unavailable] daemon restarting" })), "1 of 2 jobs in flight; last error: pull: [unavailable] daemon restarting")
+})
+
+test("a survived RPC failure reads as degraded, never as unhealthy", () => {
+  assert.equal(healthStatus(status()), "healthy")
+  assert.equal(healthStatus(status({ lastError: "heartbeat: [invalid_argument] nope" })), "degraded")
+  assert.equal(healthStatus(status({ state: "dead" })), "unhealthy")
 })
 
 test("the heartbeat names the member instance and reports healthy", async () => {

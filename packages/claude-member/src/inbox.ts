@@ -122,6 +122,12 @@ export interface MemberStatus {
    * login still works, and `MemberState` has no arm for it.
    */
   signInExpiresInDays: number
+  /**
+   * The last RPC failure the member survived, or empty. `MemberStatus` on
+   * the wire has no field for it, so it rides on the heartbeat's health
+   * message, and the health status reads `degraded` while it is set.
+   */
+  lastError: string
 }
 
 /** The heartbeat (glossary, Member status). */

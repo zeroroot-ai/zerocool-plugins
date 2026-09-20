@@ -7,8 +7,10 @@ import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import { Code, ConnectError } from "@connectrpc/connect"
 import type { ClaudeHandle, ClaudeRunOptions } from "./claude-run.js"
 import { readMemberEnv, type MemberEnv } from "./env.js"
+import { ComponentHeartbeat } from "./heartbeat.js"
 import { staticGrants, type DeliverableReport, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobTable, MemoryJobStore, type JobSpec } from "./job.js"
 import { Member, type MemberDeps } from "./member.js"
@@ -479,4 +481,123 @@ test("stopping the member archives every live job and reports that it is stoppin
   await run
   assert.ok(sessions.blobs.has("job-1"), "archived on the way out")
   assert.ok(inbox.states.some((s) => s.detail === "member stopping"))
+})
+
+/** Timers whose sleeps are short but whose requested lengths are recorded, so a backoff is testable. */
+function fastTimers(): { timers: MemberDeps["timers"]; sleeps: number[] } {
+  const sleeps: number[] = []
+  const timers: MemberDeps["timers"] = {
+    setTimeout: ((fn: () => void, ms: number) => {
+      sleeps.push(ms)
+      return setTimeout(fn, Math.min(ms, 5))
+    }) as typeof setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+  }
+  return { timers, sleeps }
+}
+
+test("a heartbeat the daemon refuses is logged once, carried as degraded, and the member keeps heartbeating", async () => {
+  const requests: { healthStatus: string; healthMessage: string }[] = []
+  let refusals = 0
+  const component = {
+    heartbeat: async (r: { healthStatus: string; healthMessage: string }) => {
+      requests.push({ healthStatus: r.healthStatus, healthMessage: r.healthMessage })
+      if (refusals < 3) {
+        refusals += 1
+        throw new ConnectError("context.mission_run_id is required to identify the calling member", Code.InvalidArgument)
+      }
+      return {}
+    },
+  } as never
+  const lines: string[] = []
+  const { m, rec } = member({
+    status: new ComponentHeartbeat({ component, instanceId: "mem-1" }),
+    env: memberEnv({ ZEROCOOL_HEARTBEAT_MS: "10" }),
+    log: (l) => lines.push(l),
+  })
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle(8)
+    assert.ok(requests.length >= 6, `the member kept heartbeating through the refusals: ${requests.length} requests`)
+    assert.equal(refusals, 3)
+    assert.equal(requests[0]!.healthStatus, "healthy")
+    assert.equal(requests[3]!.healthStatus, "degraded", "the first heartbeat after a refusal carries it")
+    assert.match(requests[3]!.healthMessage, /last error: heartbeat: \[invalid_argument\] context\.mission_run_id is required/)
+    assert.equal(requests[4]!.healthStatus, "healthy", "the failure clears once the heartbeat lands")
+    assert.equal(m.status().lastError, "")
+    const heartbeatLines = lines.filter((l) => l.startsWith("heartbeat:"))
+    assert.ok(heartbeatLines.length <= 3, `at most three lines for three identical refusals: ${JSON.stringify(heartbeatLines)}`)
+    assert.deepEqual(heartbeatLines, [
+      "heartbeat: [invalid_argument] context.mission_run_id is required to identify the calling member; the member keeps running",
+      "heartbeat: recovered",
+    ])
+  } finally {
+    ac.abort()
+    await run
+  }
+  assert.equal(rec.calls.length, 0)
+})
+
+test("a pull the daemon refuses backs off like the inbox, and the member runs the job once the pull lands", async () => {
+  const { timers, sleeps } = fastTimers()
+  const lines: string[] = []
+  const { m, inbox, rec } = member({ timers, log: (l) => lines.push(l) })
+  let refusals = 0
+  const pull = inbox.pull.bind(inbox)
+  inbox.pull = async () => {
+    if (refusals < 3) {
+      refusals += 1
+      throw new ConnectError("context.mission_run_id is required to identify the calling member", Code.InvalidArgument)
+    }
+    return pull()
+  }
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle(8)
+    assert.equal(refusals, 3)
+    assert.deepEqual(sleeps.slice(0, 3), [500, 1000, 2000], "the inbox backoff shape, doubling from 500 ms")
+    assert.equal(rec.calls.length, 1, "the job ran once the pull landed")
+    assert.ok(sleeps.slice(3).every((ms) => ms === 5), "after the pull lands the loop is back on the idle poll")
+    assert.deepEqual(
+      lines.filter((l) => l.startsWith("pull:")),
+      ["pull: [invalid_argument] context.mission_run_id is required to identify the calling member; the member keeps running", "pull: recovered"],
+    )
+  } finally {
+    ac.abort()
+    rec.finish[0]?.()
+    await run
+  }
+})
+
+test("a failure in the loop body is survived too, and run resolves only on stop", async () => {
+  const { timers, sleeps } = fastTimers()
+  const lines: string[] = []
+  const { m, table, rec } = member({ timers, log: (l) => lines.push(l) })
+  let refusals = 0
+  const abandonStale = table.abandonStale.bind(table)
+  table.abandonStale = async (ms: number) => {
+    if (refusals < 2) {
+      refusals += 1
+      throw new Error("store unavailable")
+    }
+    return abandonStale(ms)
+  }
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle(6)
+    assert.equal(refusals, 2)
+    assert.deepEqual(sleeps.slice(0, 2), [500, 1000], "a loop failure backs off the same way")
+    assert.equal(m.status().state, "idle", "still alive")
+    assert.deepEqual(lines.filter((l) => l.startsWith("loop:")), ["loop: store unavailable; the member keeps running", "loop: recovered"])
+  } finally {
+    ac.abort()
+    await run
+  }
+  assert.equal(rec.calls.length, 0)
 })

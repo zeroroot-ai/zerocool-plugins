@@ -85,7 +85,7 @@ async function platform(pki: TestPki): Promise<Platform> {
   }
 }
 
-const status = (): MemberStatus => ({ memberId: "mem-1", bankId: "bank-1", state: "idle", jobsInFlight: 0, cap: 1, jobs: [], claudeCodeVersion: "2.1.257", signInExpiresInDays: -1 })
+const status = (): MemberStatus => ({ memberId: "mem-1", bankId: "bank-1", state: "idle", jobsInFlight: 0, cap: 1, jobs: [], claudeCodeVersion: "2.1.257", signInExpiresInDays: -1, lastError: "" })
 
 const memberEnv = (endpoint: string, stateDir: string) => ({
   memberId: "mem-1",
