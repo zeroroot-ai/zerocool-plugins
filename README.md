@@ -16,7 +16,7 @@ The tools come from one package, `@zeroroot-ai/gibson-mcp`, and every host runs
 it the same way:
 
 ```sh
-npx --package @zeroroot-ai/gibson-mcp@0.2.1 gibson-mcp --transport stdio
+npx --package @zeroroot-ai/gibson-mcp@0.3.0 gibson-mcp --transport stdio
 ```
 
 Two hosts get a bundle that runs it for you, because they have a hook surface:

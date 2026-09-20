@@ -5,6 +5,6 @@
   "dependencies": {
     "@google/gemini-cli": "0.58.0",
     "@openai/codex": "0.153.4",
-    "@zeroroot-ai/gibson-mcp": "0.2.1"
+    "@zeroroot-ai/gibson-mcp": "0.3.0"
   }
 }
