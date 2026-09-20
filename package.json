@@ -9,8 +9,8 @@
     "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1",
-    "oxlint": "^1.81.0",
+    "@types/node": "^26.6.1",
+    "oxlint": "^1.83.0",
     "typescript": "^7.0.2"
   }
 }
