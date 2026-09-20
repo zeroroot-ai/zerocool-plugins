@@ -40,7 +40,40 @@ export interface PlatformTrust {
   ca: string[]
 }
 
-const BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/g
+const BEGIN = "-----BEGIN "
+const END = "-----END "
+const MARKER_END = "-----"
+
+/** One PEM block: its label and its full text, begin line to end line. */
+interface PemBlock {
+  label: string
+  text: string
+}
+
+/**
+ * Split a PEM into its blocks with one pass over the lines. This input
+ * arrives off the environment the daemon set, and a regex with a lazy body
+ * and a backreference is polynomial on it (CodeQL). A line scan is linear.
+ */
+export function pemBlocks(pem: string): PemBlock[] {
+  const out: PemBlock[] = []
+  let open: { label: string; lines: string[] } | undefined
+  for (const raw of pem.split("\n")) {
+    const line = raw.trimEnd()
+    if (!open) {
+      if (line.startsWith(BEGIN) && line.endsWith(MARKER_END)) {
+        open = { label: line.slice(BEGIN.length, -MARKER_END.length), lines: [line] }
+      }
+      continue
+    }
+    open.lines.push(line)
+    if (line === `${END}${open.label}${MARKER_END}`) {
+      out.push({ label: open.label, text: open.lines.join("\n") })
+      open = undefined
+    }
+  }
+  return out
+}
 
 /**
  * The certificate blocks of a PEM. Refuses an empty value, a value with no
@@ -49,22 +82,21 @@ const BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----[\s\S]*?-----END \1-----/g
  */
 export function certificateBlocks(pem: string): string[] {
   if (!pem.trim()) throw new Error(`${PLATFORM_CA_ENV} is set but empty. It carries the platform CA as PEM, or it is unset.`)
-  const blocks = [...pem.matchAll(BLOCK)]
+  const blocks = pemBlocks(pem)
   if (blocks.length === 0) {
     throw new Error(`${PLATFORM_CA_ENV} is not PEM: no -----BEGIN CERTIFICATE----- block. It carries the platform CA as PEM.`)
   }
   const out: string[] = []
-  for (const m of blocks) {
-    const [block, kind] = m
-    if (kind !== "CERTIFICATE") {
-      throw new Error(`${PLATFORM_CA_ENV} carries a ${kind} block. It carries certificates only, never a key.`)
+  for (const { label, text } of blocks) {
+    if (label !== "CERTIFICATE") {
+      throw new Error(`${PLATFORM_CA_ENV} carries a ${label} block. It carries certificates only, never a key.`)
     }
     try {
-      new X509Certificate(block)
+      new X509Certificate(text)
     } catch (e) {
       throw new Error(`${PLATFORM_CA_ENV} carries a certificate block that does not parse: ${(e as Error).message}`)
     }
-    out.push(block)
+    out.push(text)
   }
   return out
 }

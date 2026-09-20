@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { createSecureServer, type Http2SecureServer } from "node:http2"
 import { tmpdir } from "node:os"
@@ -15,7 +16,7 @@ import { HarnessInbox } from "./harness-inbox.js"
 import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
 import type { JobInput, MemberStatus } from "./inbox.js"
 import { openHarness, specOptionsFor } from "./member-main.js"
-import { certificateBlocks, childEnv, EXTRA_CA_CERTS_ENV, PLATFORM_CA_ENV, PLATFORM_CA_FILE, platformTrust, writePlatformCa } from "./platform-ca.js"
+import { certificateBlocks, childEnv, EXTRA_CA_CERTS_ENV, pemBlocks, PLATFORM_CA_ENV, PLATFORM_CA_FILE, platformTrust, writePlatformCa } from "./platform-ca.js"
 
 /**
  * The platform CA end to end (zerocool-plugins#73): a self-signed test CA, a
@@ -36,7 +37,7 @@ function mintPki(dir: string): TestPki {
   ssl(["req", "-x509", "-new", ...ec, "-keyout", "ca.key", "-out", "ca.pem", "-days", "2", "-subj", "/CN=zerocool test CA", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign"])
   ssl(["req", "-new", ...ec, "-keyout", "leaf.key", "-out", "leaf.csr", "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"])
   ssl(["x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "leaf.pem", "-days", "2", "-copy_extensions", "copy"])
-  const read = (name: string) => execFileSync("cat", [join(dir, name)]).toString("utf8")
+  const read = (name: string) => readFileSync(join(dir, name), "utf8")
   return { caPem: read("ca.pem"), leafKey: read("leaf.key"), leafPem: read("leaf.pem") }
 }
 
@@ -139,6 +140,12 @@ test("an empty value, a value that is not PEM, or a key is refused with the reas
     await assert.rejects(writePlatformCa(leafKey, dir), /PRIVATE KEY block/)
     await assert.rejects(writePlatformCa(`${caPem}${leafKey}`, dir), /PRIVATE KEY block/)
     assert.equal(certificateBlocks(`${caPem}\n${caPem}`).length, 2, "a bundle of certificates is fine")
+    assert.deepEqual(pemBlocks("-----BEGIN CERTIFICATE-----\nabc\n"), [], "a block with no end line is not a block")
+    assert.deepEqual(pemBlocks("-----BEGIN CERTIFICATE-----\nabc\n-----END PRIVATE KEY-----\n"), [], "the end line must match the begin line")
+    const many = "-----BEGIN  -----\n".repeat(50_000)
+    const started = Date.now()
+    assert.deepEqual(pemBlocks(many), [])
+    assert.ok(Date.now() - started < 1000, "the scan is linear on a hostile input")
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
