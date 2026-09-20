@@ -17,7 +17,7 @@
 // node_modules.
 import { spawn } from "node:child_process"
 
-const VERSION = "0.6.0" // x-release-please-version
+const VERSION = "0.6.1" // x-release-please-version
 const PACKAGE = `@zeroroot-ai/zerocool-claude@${VERSION}`
 const BIN = "zerocool-claude-hook"
 
