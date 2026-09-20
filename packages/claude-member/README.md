@@ -55,14 +55,14 @@ The daemon sets these when it launches a member sandbox.
 | `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1 |
 | `ZEROCOOL_WORKSPACE` | no | workspace root, default `/workspace` |
 | `ZEROCOOL_WORKSPACE_CAP_BYTES` | no | clone cache cap, default 20 GiB |
-| `ZEROCOOL_STATE_DIR` | no | driver state, default `~/.zerocool` |
+| `ZEROCOOL_STATE_DIR` | no | driver state. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. See below. |
 | `ZEROCOOL_CLAUDE_BIN` | no | the `claude` bin, default `claude` |
 | `ZEROCOOL_CLAUDE_MAX_TURNS` | no | `--max-turns` per turn, default 200 |
 | `ZEROCOOL_CLAUDE_MAX_BUDGET_USD` | no | `--max-budget-usd` per turn |
 | `ZEROCOOL_MCP_URL` | no | the localhost Gibson MCP server URL |
 | `ZEROCOOL_JOB_STALE_LIMIT_MS` | no | idle limit before `abandoned`, default 24h |
 | `ZEROCOOL_HEARTBEAT_MS` | no | heartbeat cadence, default 30s |
-| `CLAUDE_CONFIG_DIR` | no | Claude Code's own config dir, per member |
+| `CLAUDE_CONFIG_DIR` | no | Claude Code's own config dir, per member. Default `<state dir>/claude-config` |
 
 The provider credential (`ANTHROPIC_API_KEY`, or the cloud provider's
 variables) reaches the Claude Code child and nothing else. The driver never
@@ -77,6 +77,24 @@ is the daemon's statement that it launched this process under gVisor. The
 driver refuses to start when the marker is absent or carries another value,
 and `claudeArgs` refuses to build an argv without it. This package ships a
 bin, and the same code must not run prompt-free on a laptop.
+
+### The state directory
+
+The driver keeps its state in one directory: `platform-ca.pem`, `jobs.json`
+and the Claude config dir. A setec sandbox mounts a read-only root
+filesystem. Its writable paths are `/tmp`, the scratch volume every sandbox
+gets, and `/workspace` on a session sandbox. The home directory is on the
+root filesystem, so nothing can be written there.
+
+When `ZEROCOOL_STATE_DIR` is unset and `GIBSON_SANDBOX` is `gvisor`, the
+state dir is `/tmp/zerocool`. The image sets the same value. Outside the
+sandbox the default is `~/.zerocool`. The choice is made from the marker
+alone, never from a probe: a fallback that depends on what happens to be
+writable would hide a misconfiguration.
+
+At start, before anything is written, the driver creates the state dir and
+writes one probe file to it. When that fails, the driver refuses to start
+with one line that names `ZEROCOOL_STATE_DIR`, the path and the reason.
 
 ### The platform CA
 

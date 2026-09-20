@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
+import { mkdir, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -48,7 +49,7 @@ export const MEMBER_ENV = {
   workspace: "ZEROCOOL_WORKSPACE",
   /** Clone cache cap in bytes. Default 20 GiB. */
   workspaceCapBytes: "ZEROCOOL_WORKSPACE_CAP_BYTES",
-  /** The driver's state directory. Default `~/.zerocool`. */
+  /** The driver's state directory. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. */
   stateDir: "ZEROCOOL_STATE_DIR",
   /** The `claude` bin. A `.js` path runs under node. Default `claude`. */
   claudeBin: "ZEROCOOL_CLAUDE_BIN",
@@ -70,6 +71,12 @@ export type InstanceMode = "member" | "one-shot"
 /** The one value `GIBSON_SANDBOX` may carry. */
 export type SandboxMarker = "gvisor"
 export const SANDBOX_MARKER: SandboxMarker = "gvisor"
+/**
+ * The state directory under the sandbox. A setec sandbox has a read-only
+ * root filesystem, and `/tmp` is the scratch volume every sandbox mounts, so
+ * the home directory is never writable there and `/tmp` always is.
+ */
+export const SANDBOX_STATE_DIR = "/tmp/zerocool"
 export type LoginShape = "api-key" | "subscription" | "bedrock" | "vertex" | "foundry"
 
 export interface MemberEnv {
@@ -112,6 +119,38 @@ function positiveInt(env: NodeJS.ProcessEnv, name: string, dflt: number): number
   return n
 }
 
+/**
+ * Where the driver keeps its state when `ZEROCOOL_STATE_DIR` is unset. Under
+ * the sandbox marker it is the scratch path, deterministically. Anywhere else
+ * it is the home directory. Never a probe: a fallback that depends on what
+ * happens to be writable hides a misconfiguration.
+ */
+export function defaultStateDir(env: NodeJS.ProcessEnv): string {
+  return env[MEMBER_ENV.sandbox] === SANDBOX_MARKER ? SANDBOX_STATE_DIR : join(homedir(), ".zerocool")
+}
+
+/**
+ * Make sure the state directory exists and takes a write, before anything is
+ * written to it. The platform CA, the job table and the Claude config dir
+ * all live there, and the first of them to fail would otherwise surface as a
+ * stack trace from deep inside a write. Fails with one line that names the
+ * variable and the path.
+ */
+export async function ensureStateDir(stateDir: string): Promise<void> {
+  const probe = join(stateDir, ".write-probe")
+  try {
+    await mkdir(stateDir, { recursive: true, mode: 0o700 })
+    await writeFile(probe, "", { mode: 0o600 })
+    await rm(probe, { force: true })
+  } catch (e) {
+    const reason = (e as NodeJS.ErrnoException).code ?? (e as Error).message
+    throw new Error(
+      `${MEMBER_ENV.stateDir}: cannot write to ${stateDir} (${reason}). The driver keeps platform-ca.pem, jobs.json and ` +
+        `the Claude config dir there. Set ${MEMBER_ENV.stateDir} to a writable path. Under the sandbox that is ${SANDBOX_STATE_DIR}.`,
+    )
+  }
+}
+
 /** Read and validate the member contract. */
 export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
   const modeRaw = env[MEMBER_ENV.instanceMode] ?? "member"
@@ -130,7 +169,7 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
         "the daemon launches. The daemon sets this marker on that launch. Refusing to start.",
     )
   }
-  const stateDir = env[MEMBER_ENV.stateDir] ?? join(homedir(), ".zerocool")
+  const stateDir = env[MEMBER_ENV.stateDir] || defaultStateDir(env)
   const budget = env[MEMBER_ENV.maxBudgetUsd]
   return {
     memberId: required(env, MEMBER_ENV.memberId, "A member sandbox is launched for one bank member."),

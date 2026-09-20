@@ -41,13 +41,19 @@ RUN pnpm -r build
 RUN pnpm --filter @zeroroot-ai/zerocool-claude-member deploy --prod --legacy /app
 
 FROM node:26.8.1-trixie-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS runtime
+# State lives under /tmp. The setec sandbox this image is built for mounts a
+# read-only root filesystem, and /tmp is the scratch volume every sandbox
+# gets, so /home/claude is never writable there. The driver defaults to the
+# same path under the sandbox marker and refuses to start when the state dir
+# takes no write (packages/claude-member/src/env.ts). The Claude config dir
+# sits inside it: the subscription login dies with the sandbox, as documented.
 ENV NODE_ENV=production \
     ZEROCOOL_CLAUDE_BIN=claude \
     ZEROCOOL_MCP_BIN=gibson-mcp \
     ZEROCOOL_AGENT_NAME=claude \
-    CLAUDE_CONFIG_DIR=/home/claude/.claude \
+    CLAUDE_CONFIG_DIR=/tmp/zerocool/claude-config \
     CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-    ZEROCOOL_STATE_DIR=/home/claude/.zerocool \
+    ZEROCOOL_STATE_DIR=/tmp/zerocool \
     ZEROCOOL_WORKSPACE=/workspace
 # The npm node bundles is whatever node shipped that day; npm 10's bundled
 # tar, minimatch, glob and friends carried fixed CVEs (Trivy, #13).
@@ -90,7 +96,7 @@ RUN echo "apt refresh ${APT_CACHE_BUST}" >/dev/null \
  && gibson-mcp --version
 COPY --from=build /app /app
 RUN useradd -u 65532 -m -d /home/claude claude \
- && mkdir -p /workspace /home/claude/.claude /home/claude/.zerocool \
+ && mkdir -p /workspace \
  && chown -R 65532:65532 /workspace /app /home/claude
 WORKDIR /workspace
 USER 65532:65532

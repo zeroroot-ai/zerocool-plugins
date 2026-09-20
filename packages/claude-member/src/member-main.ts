@@ -5,7 +5,7 @@
 import { callbackBaseUrl, openTaskHarness, type TaskHarness } from "@zeroroot-ai/sdk"
 import type { JobSpec as WireJobSpec } from "@zeroroot-ai/sdk/gen/gibson/job/v1/job_pb.js"
 import type { Credential } from "@zeroroot-ai/sdk/gen/gibson/harness/v1/harness_callback_pb.js"
-import { readMemberEnv, type MemberEnv } from "./env.js"
+import { ensureStateDir, readMemberEnv, type MemberEnv } from "./env.js"
 import type { GitCredential } from "./git.js"
 import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
 import { HarnessInbox, harnessGrants, type SpecOptions } from "./harness-inbox.js"
@@ -116,6 +116,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
   const log = opts.log ?? ((l: string) => process.stderr.write(`[zerocool-claude-member] ${l}\n`))
   const env: MemberEnv = readMemberEnv(opts.env)
   if (env.loginShape === "subscription") assertSubscriptionOnly(opts.env)
+  await ensureStateDir(env.stateDir)
 
   // The platform CA, when the edge chains to a private root. Every transport
   // below trusts it, and every child gets the file, never the PEM.

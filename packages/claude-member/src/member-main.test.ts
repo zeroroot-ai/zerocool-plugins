@@ -2,6 +2,9 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import type { Credential } from "@zeroroot-ai/sdk/gen/gibson/harness/v1/harness_callback_pb.js"
 import type { JobSpec as WireJobSpec } from "@zeroroot-ai/sdk/gen/gibson/job/v1/job_pb.js"
@@ -38,15 +41,21 @@ test("the resolver raises the daemon's refusal with the credential name", async 
 })
 
 test("a member with no platform url refuses to start, because the bank would never learn its state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-main-"))
   const env = {
     GIBSON_MEMBER_ID: "mem-1",
     GIBSON_BANK_ID: "bank-1",
     GIBSON_CG_JWT: "base-grant",
     GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-  GIBSON_SANDBOX: "gvisor",
+    GIBSON_SANDBOX: "gvisor",
+    ZEROCOOL_STATE_DIR: join(dir, "state"),
   }
   const harness = { client: {}, transport: undefined, endpoint: "gibson:50001", context: {}, token: () => "base-grant", expiresAt: () => 0, stop: () => {} } as never
-  await assert.rejects(runMember({ env, harness }, new AbortController().signal), new RegExp(`${PLATFORM_URL_ENV} is not set`))
+  try {
+    await assert.rejects(runMember({ env, harness }, new AbortController().signal), new RegExp(`${PLATFORM_URL_ENV} is not set`))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test("a subscription member refuses to start with an Anthropic key set", async () => {
