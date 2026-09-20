@@ -2,11 +2,10 @@
 // Copyright 2026 Zero Root AI
 
 import { createClient, type Client } from "@connectrpc/connect"
-import { createGrpcTransport } from "@connectrpc/connect-node"
-import { grantInterceptor } from "@zeroroot-ai/sdk"
 import { ComponentService } from "@zeroroot-ai/sdk"
 import { MemberState as WireMemberState, type MemberStatus as WireMemberStatus } from "@zeroroot-ai/sdk/gen/gibson/bank/v1/bank_pb.js"
 import type { MemberState, MemberStatus, StatusReporter } from "./inbox.js"
+import { platformTransport, type PlatformTrust } from "./platform-ca.js"
 import { trimTrailingSlashes } from "./text.js"
 
 /**
@@ -88,11 +87,10 @@ export class ComponentHeartbeat implements StatusReporter {
  * Native gRPC, not the Connect protocol: the daemon's public surface is gRPC
  * behind Envoy, and Envoy carries no grpc_web filter, so a Connect request
  * comes back 415 after passing authentication. Ext-authz reads the grant from
- * the `x-capability-grant` header, which `grantInterceptor` sets.
+ * the `x-capability-grant` header, which `grantInterceptor` sets. With a
+ * platform CA (`trust`) the transport verifies the edge against it as well as
+ * the public roots.
  */
-export function openComponentClient(platformURL: string, token: () => string): Client<typeof ComponentService> {
-  return createClient(
-    ComponentService,
-    createGrpcTransport({ baseUrl: trimTrailingSlashes(platformURL), interceptors: [grantInterceptor(token)] }),
-  )
+export function openComponentClient(platformURL: string, token: () => string, trust?: PlatformTrust): Client<typeof ComponentService> {
+  return createClient(ComponentService, platformTransport(trimTrailingSlashes(platformURL), token, trust))
 }

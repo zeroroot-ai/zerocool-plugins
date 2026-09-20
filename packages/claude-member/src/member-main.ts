@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-import { openTaskHarness, type TaskHarness } from "@zeroroot-ai/sdk"
+import { callbackBaseUrl, openTaskHarness, type TaskHarness } from "@zeroroot-ai/sdk"
 import type { JobSpec as WireJobSpec } from "@zeroroot-ai/sdk/gen/gibson/job/v1/job_pb.js"
 import type { Credential } from "@zeroroot-ai/sdk/gen/gibson/harness/v1/harness_callback_pb.js"
 import { readMemberEnv, type MemberEnv } from "./env.js"
@@ -13,6 +13,7 @@ import { assertTurnRequiresToken, mcpGateway, startMcpServer, TURN_TOKEN_ENV, ty
 import { FileJobStore, JobTable } from "./job.js"
 import { Member } from "./member.js"
 import { typedValueString } from "./oneshot.js"
+import { childEnv, platformTransport, platformTrust, type PlatformTrust } from "./platform-ca.js"
 import { assertSubscriptionOnly, readAuthStatus } from "./signin.js"
 import { harnessSessionStore } from "./transcript.js"
 import { readClaudeVersion } from "./version.js"
@@ -91,6 +92,18 @@ export function credentialResolver(harness: TaskHarness): (name: string) => Prom
   }
 }
 
+/**
+ * The harness on the member base grant. The transport is built here rather
+ * than in the SDK, so the platform CA reaches it. The grant interceptor reads
+ * the harness's current token, so a renewal takes effect on the next call.
+ */
+export function openHarness(env: MemberEnv, trust: PlatformTrust | undefined): TaskHarness {
+  let harness: TaskHarness | undefined
+  const transport = platformTransport(callbackBaseUrl(env.callbackEndpoint, env.callbackInsecure), () => harness?.token() ?? env.baseGrant, trust)
+  harness = openTaskHarness({ endpoint: env.callbackEndpoint, token: env.baseGrant, insecure: env.callbackInsecure, transport })
+  return harness
+}
+
 export interface MemberMainOptions {
   env: NodeJS.ProcessEnv
   log?: (line: string) => void
@@ -104,9 +117,13 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
   const env: MemberEnv = readMemberEnv(opts.env)
   if (env.loginShape === "subscription") assertSubscriptionOnly(opts.env)
 
-  const harness =
-    opts.harness ??
-    openTaskHarness({ endpoint: env.callbackEndpoint, token: env.baseGrant, insecure: env.callbackInsecure })
+  // The platform CA, when the edge chains to a private root. Every transport
+  // below trusts it, and every child gets the file, never the PEM.
+  const trust = await platformTrust(opts.env, env.stateDir)
+  if (trust) log(`platform CA: ${trust.file}, trusted beside the public roots`)
+  const processEnv = childEnv(opts.env, trust)
+
+  const harness = opts.harness ?? openHarness(env, trust)
 
   const spec = specOptionsFor({ baseUrl: opts.env.ZEROCOOL_CONNECTOR_BASE_URL ?? "" })
   const inbox = new HarnessInbox({ harness, memberId: env.memberId, spec, log })
@@ -127,15 +144,15 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
     )
   }
   const status = new ComponentHeartbeat({
-    component: openComponentClient(platformURL, () => harness.token()),
+    component: openComponentClient(platformURL, () => harness.token(), trust),
     instanceId: env.memberId,
     log,
   })
 
-  const claudeCodeVersion = await readClaudeVersion(env.claudeBin, opts.env, env.workspace)
+  const claudeCodeVersion = await readClaudeVersion(env.claudeBin, processEnv, env.workspace)
   let signedIn = env.loginShape !== "subscription"
   if (!signedIn) {
-    signedIn = (await readAuthStatus(env.claudeBin, opts.env, env.workspace)).loggedIn
+    signedIn = (await readAuthStatus(env.claudeBin, processEnv, env.workspace)).loggedIn
   }
 
   // The Gibson MCP server: its own process on a loopback port, holding the
@@ -157,7 +174,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
         bin: opts.env.ZEROCOOL_MCP_BIN ?? "gibson-mcp",
         callbackEndpoint: env.callbackEndpoint,
         insecure: env.callbackInsecure,
-        env: opts.env,
+        env: processEnv,
         cwd: env.workspace,
         log,
       })
@@ -165,7 +182,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
 
   const member = new Member({
     env,
-    processEnv: opts.env,
+    processEnv,
     table,
     inbox,
     grants: harnessGrants(harness),
