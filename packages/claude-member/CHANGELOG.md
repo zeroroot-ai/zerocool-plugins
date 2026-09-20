@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.4.1...claude-member-v0.4.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **claude-member:** an RPC rejection never ends the member ([#78](https://github.com/zeroroot-ai/zerocool-plugins/issues/78)) ([1f3ea02](https://github.com/zeroroot-ai/zerocool-plugins/commit/1f3ea02161e9c5627d7e401daeec825ab7555054))
+
 ## [0.4.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.4.0...claude-member-v0.4.1) (2026-09-20)
 
 
