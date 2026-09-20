@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-import { readMemberEnv, type MemberEnv } from "./env.js"
+import { ensureStateDir, readMemberEnv, type MemberEnv } from "./env.js"
 import type { ClaudeEvent } from "./events.js"
 import type { McpGateway } from "./inbox.js"
 import { JobTable, MemoryJobStore } from "./job.js"
@@ -40,6 +40,7 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
   const grants = dispatchGrants(dispatch.grant)
   const inbox = new OneShotInbox(spec, dispatch.grant, `mission:${dispatch.missionId || "-"}`)
   const log = opts.log ?? (() => {})
+  await ensureStateDir(env.stateDir)
   // The Claude child verifies the platform edge against the same CA the
   // member shape hands out. The PEM itself stays in the driver.
   const processEnv = childEnv(opts.env, await platformTrust(opts.env, env.stateDir))

@@ -165,8 +165,14 @@ test("a launch with no grant or no task is refused, never run with a made-up tas
 })
 
 test("a task that names a repository needs a credential resolver, and says so", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-oneshot-"))
   const env = launch({
     GIBSON_AGENT_TASK_B64: Buffer.from(JSON.stringify({ id: "t-1", goal: "fix it", context: { "repository.url": { stringValue: "https://git.example/a/b.git" } } })).toString("base64"),
+    ZEROCOOL_STATE_DIR: join(dir, "state"),
   })
-  await assert.rejects(runOneShot({ env, claudeCodeVersion: "2.1.257" }), /no credential resolver was supplied/)
+  try {
+    await assert.rejects(runOneShot({ env, claudeCodeVersion: "2.1.257" }), /no credential resolver was supplied/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

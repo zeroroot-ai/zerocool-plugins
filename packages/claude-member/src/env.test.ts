@@ -2,8 +2,11 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises"
+import { homedir, tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
-import { claudeChildEnv, MEMBER_ENV, readMemberEnv } from "./env.js"
+import { claudeChildEnv, defaultStateDir, ensureStateDir, MEMBER_ENV, readMemberEnv, SANDBOX_STATE_DIR } from "./env.js"
 
 const launch: NodeJS.ProcessEnv = {
   GIBSON_MEMBER_ID: "mem-1",
@@ -26,6 +29,38 @@ test("readMemberEnv reads the launch contract and defaults the rest", () => {
   assert.equal(env.maxTurns, 200)
   assert.equal(env.maxBudgetUsd, undefined)
   assert.equal(env.staleLimitMs, 24 * 60 * 60 * 1000)
+  assert.equal(env.stateDir, SANDBOX_STATE_DIR, "under the sandbox the state dir is the scratch path, never the home dir")
+  assert.equal(env.claudeConfigDir, join(SANDBOX_STATE_DIR, "claude-config"))
+})
+
+test("the state dir defaults to the sandbox scratch path under the marker, and to the home dir elsewhere", () => {
+  assert.equal(SANDBOX_STATE_DIR, "/tmp/zerocool")
+  assert.equal(defaultStateDir({ GIBSON_SANDBOX: "gvisor" }), "/tmp/zerocool")
+  assert.equal(defaultStateDir({}), join(homedir(), ".zerocool"))
+  assert.equal(defaultStateDir({ GIBSON_SANDBOX: "docker" }), join(homedir(), ".zerocool"))
+  assert.equal(readMemberEnv({ ...launch, ZEROCOOL_STATE_DIR: "/data/state" }).stateDir, "/data/state", "an explicit value wins")
+  assert.equal(readMemberEnv({ ...launch, ZEROCOOL_STATE_DIR: "" }).stateDir, "/tmp/zerocool", "an empty value is unset")
+})
+
+test("the state dir is created and proven writable before anything is written", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-state-"))
+  try {
+    const nested = join(dir, "a", "b")
+    await ensureStateDir(nested)
+    assert.ok((await stat(nested)).isDirectory())
+    await ensureStateDir(nested)
+    // A path under a file cannot be a directory, on any account, root included.
+    const file = join(dir, "file")
+    await writeFile(file, "")
+    await assert.rejects(ensureStateDir(join(file, "zerocool")), (e: Error) => {
+      assert.match(e.message, /^ZEROCOOL_STATE_DIR: cannot write to .*\/file\/zerocool \(ENOTDIR\)/)
+      assert.match(e.message, /Under the sandbox that is \/tmp\/zerocool/)
+      assert.ok(!e.message.includes("\n"), "one line")
+      return true
+    })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test("a launch with no member, bank, grant, endpoint or sandbox marker fails with the reason", () => {
