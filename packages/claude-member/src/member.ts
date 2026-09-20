@@ -4,6 +4,7 @@
 import type { ClaudeRunResult } from "./claude-run.js"
 import type { MemberEnv } from "./env.js"
 import type { ClaudeEvent } from "./events.js"
+import { nextBackoff } from "./harness-inbox.js"
 import { memberState, type GrantSource, type Inbox, type JobInput, type McpGateway, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobError, JobTable, type JobRecord, type Verdict } from "./job.js"
 import { parseExpiryWarning, type SignInRelay } from "./signin.js"
@@ -23,6 +24,15 @@ import type { WorkspaceManager, Worktree } from "./workspace.js"
  *     result), persist, resolve.
  *
  * One process per active job, bounded by the cap. Idle jobs hold no process.
+ *
+ * AN RPC REJECTION NEVER ENDS THE MEMBER. The daemon refusing a heartbeat or
+ * a pull is a condition to report, not a reason to die: a member that exits
+ * on it is replaced by the reconciler, which starts a new one that hits the
+ * same refusal a minute later. So every RPC in the loop is caught, logged
+ * once per distinct failure, carried on the next heartbeat as `lastError`,
+ * and retried: the heartbeat on its own cadence, the pull with the inbox
+ * backoff (500 ms doubling to 30 s). `run` rejects on nothing the daemon
+ * says. It resolves on stop.
  */
 export interface MemberDeps {
   env: MemberEnv
@@ -79,6 +89,12 @@ export class Member {
   private signInExpiresInDays = -1
   /** True until the table is loaded, and again once a stop is in progress. */
   private launching = true
+  /** The last RPC failure survived, for the heartbeat. Cleared when the source succeeds. */
+  private lastError = ""
+  /** The failure last logged per source, so a repeat logs nothing. */
+  private readonly noted = new Map<string, string>()
+  /** The pull backoff in force, 0 while pulls succeed. */
+  private pullBackoff = 0
 
   constructor(private readonly deps: MemberDeps) {
     this.log = deps.log ?? (() => {})
@@ -103,7 +119,33 @@ export class Member {
       jobs: t.live().map((j) => j.jobId),
       claudeCodeVersion: this.deps.claudeCodeVersion,
       signInExpiresInDays: this.signInExpiresInDays,
+      lastError: this.lastError,
     }
+  }
+
+  /**
+   * Run one RPC and survive its rejection. A failure is logged once per
+   * distinct message per source, and again only after the source recovered.
+   * Returns whether the call succeeded.
+   */
+  private async survive(source: string, call: () => Promise<void>): Promise<boolean> {
+    try {
+      await call()
+    } catch (e) {
+      const message = (e as Error).message
+      this.lastError = `${source}: ${message}`
+      if (this.noted.get(source) !== message) {
+        this.noted.set(source, message)
+        this.log(`${source}: ${message}; the member keeps running`)
+      }
+      return false
+    }
+    if (this.noted.has(source)) {
+      this.noted.delete(source)
+      this.log(`${source}: recovered`)
+      if (this.lastError.startsWith(`${source}: `)) this.lastError = ""
+    }
+    return true
   }
 
   /** Run until `signal` aborts. Resolves after every turn ended and the table is saved. */
@@ -112,12 +154,11 @@ export class Member {
     for (const id of recovered) this.log(`job ${id}: recovered from a mid-turn restart, waiting for the next input`)
     this.launching = false
 
-    const heartbeat = this.timers.setInterval(() => {
-      void this.deps.status.reportStatus(this.status()).catch((e: Error) => this.log(`heartbeat: ${e.message}`))
-    }, this.deps.env.heartbeatMs)
+    const beat = () => this.survive("heartbeat", () => this.deps.status.reportStatus(this.status()))
+    const heartbeat = this.timers.setInterval(() => void beat(), this.deps.env.heartbeatMs)
     // The loop keeps the process alive; the heartbeat must not keep a dying one alive.
     ;(heartbeat as { unref?: () => void }).unref?.()
-    await this.deps.status.reportStatus(this.status()).catch((e: Error) => this.log(`heartbeat: ${e.message}`))
+    await beat()
 
     const subscription = this.deps.inbox.subscribe(async (input) => {
       this.enqueue(input)
@@ -133,9 +174,15 @@ export class Member {
 
     try {
       while (!this.stopping) {
-        await this.deps.table.abandonStale(this.deps.env.staleLimitMs).then((closed) => Promise.all(closed.map((j) => this.cleanupClosed(j, "abandoned"))))
-        const started = await this.schedule()
-        if (!started) await this.sleep(this.deps.idlePollMs ?? 1000, signal)
+        let started = false
+        // A failure anywhere in one iteration (a stale job's wrap-up, a pull)
+        // is survived like an RPC: the next iteration comes after the backoff.
+        const ok = await this.survive("loop", async () => {
+          await this.deps.table.abandonStale(this.deps.env.staleLimitMs).then((closed) => Promise.all(closed.map((j) => this.cleanupClosed(j, "abandoned"))))
+          started = await this.schedule()
+        })
+        if (!ok) this.pullBackoff = nextBackoff(this.pullBackoff)
+        if (!started) await this.sleep(this.pullBackoff || (this.deps.idlePollMs ?? 1000), signal)
       }
       await this.drain()
     } finally {
@@ -254,7 +301,15 @@ export class Member {
       return true
     }
     if (table.freeSlots === 0) return false
-    const pulled = await this.deps.inbox.pull()
+    let pulled: JobInput | undefined
+    const ok = await this.survive("pull", async () => {
+      pulled = await this.deps.inbox.pull()
+    })
+    if (!ok) {
+      this.pullBackoff = nextBackoff(this.pullBackoff)
+      return false
+    }
+    this.pullBackoff = 0
     if (!pulled) return false
     await this.turn(pulled)
     return true

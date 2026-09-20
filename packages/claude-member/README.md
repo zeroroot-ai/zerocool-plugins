@@ -148,6 +148,15 @@ the opencode dispatch uses: `repository.url`, `repository.branch`,
 | connector token | `HarnessCallbackService.GetCredential` under the base grant |
 | member status | `ComponentService.Heartbeat`, with `gibson.bank.v1.MemberStatus` |
 
+An RPC the daemon refuses never ends the member. A refused heartbeat is
+logged once per distinct failure and the heartbeat keeps its cadence. A
+refused pull is retried with the inbox backoff, 500 ms doubling to 30 s. The
+next heartbeat carries the failure: `health_status` reads `degraded` and
+`health_message` ends with `last error: <source>: <message>` until that
+source succeeds again. The driver exits on a configuration error before the
+first heartbeat (a missing variable, an unwritable state dir, no sandbox
+marker) and on a stop signal. Nothing the daemon says ends it.
+
 Each input carries the grant of its own dispatch. The driver puts that grant
 in force for the turn it runs and drops it after. A pulled job carries none,
 so its first turn runs on the member base grant.
