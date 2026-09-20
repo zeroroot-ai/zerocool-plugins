@@ -1,6 +1,6 @@
 {
   "name": "@zeroroot-ai/zerocool-claude",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Claude Code host adapter for Gibson (zerocool): the plugin bundle around the Gibson MCP server, plus SessionStart and SessionEnd hooks. The model stays on your Claude login.",
   "license": "Elastic-2.0",
   "repository": {
