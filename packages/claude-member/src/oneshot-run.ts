@@ -7,6 +7,7 @@ import type { McpGateway } from "./inbox.js"
 import { JobTable, MemoryJobStore } from "./job.js"
 import { Member } from "./member.js"
 import { dispatchGrants, jobSpecFromDispatch, OneShotInbox, OneShotStatus, oneShotMemberEnv, readDispatch, type OneShotOutcome } from "./oneshot.js"
+import { childEnv, platformTrust } from "./platform-ca.js"
 import { readClaudeVersion } from "./version.js"
 import { WorkspaceManager, type MergeRequestOpener } from "./workspace.js"
 
@@ -39,6 +40,9 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
   const grants = dispatchGrants(dispatch.grant)
   const inbox = new OneShotInbox(spec, dispatch.grant, `mission:${dispatch.missionId || "-"}`)
   const log = opts.log ?? (() => {})
+  // The Claude child verifies the platform edge against the same CA the
+  // member shape hands out. The PEM itself stays in the driver.
+  const processEnv = childEnv(opts.env, await platformTrust(opts.env, env.stateDir))
 
   if (spec.repositories.length > 0 && !opts.credential) {
     throw new Error(
@@ -63,13 +67,13 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
 
   const member = new Member({
     env,
-    processEnv: opts.env,
+    processEnv,
     table,
     inbox,
     grants,
     status: new OneShotStatus(),
     workspace,
-    claudeCodeVersion: opts.claudeCodeVersion ?? (await readClaudeVersion(env.claudeBin, opts.env, env.workspace)),
+    claudeCodeVersion: opts.claudeCodeVersion ?? (await readClaudeVersion(env.claudeBin, processEnv, env.workspace)),
     ...(opts.mcp ? { mcp: opts.mcp } : {}),
     ...(opts.onEvent ? { onEvent: (_jobId: string, line: string, event: ClaudeEvent | undefined) => opts.onEvent!(line, event) } : {}),
     ...(opts.spawn ? { spawn: opts.spawn } : {}),
