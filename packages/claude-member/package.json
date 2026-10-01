@@ -23,8 +23,8 @@
   },
   "dependencies": {
     "@zeroroot-ai/sdk": "^0.13.0",
-    "@connectrpc/connect": "^2.0.0",
-    "@connectrpc/connect-node": "^2.0.0"
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-node": "^2.2.0"
   },
   "bin": {
     "zerocool-claude-dispatch": "dist/sandbox.js",
