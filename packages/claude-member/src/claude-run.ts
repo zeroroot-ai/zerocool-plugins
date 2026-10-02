@@ -122,16 +122,6 @@ export function userMessageLine(text: string): string {
   return `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } })}\n`
 }
 
-/** Parse the NDJSON stream into the run result. */
-export function parseClaudeEvents(stdout: string): TurnSummary {
-  const events: ClaudeEvent[] = []
-  for (const line of stdout.split("\n")) {
-    const ev = parseEventLine(line)
-    if (ev) events.push(ev)
-  }
-  return summarizeEvents(events)
-}
-
 /** A `.js` bin runs under node; anything else is a bin on PATH. */
 export function resolveBin(bin: string): { command: string; prefix: string[] } {
   return bin.endsWith(".js") ? { command: process.execPath, prefix: [bin] } : { command: bin, prefix: [] }
@@ -187,13 +177,4 @@ export function spawnClaude(opts: ClaudeRunOptions): ClaudeHandle {
     kill: () => child.kill("SIGTERM"),
     pid: child.pid,
   }
-}
-
-/** Run to completion. Rejects on a non-zero exit or a turn with no result. */
-export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
-  const r = await spawnClaude(opts).done
-  if (r.exitCode !== 0) {
-    throw new Error(`claude exited ${r.exitCode ?? r.signal}: ${(r.text || "no output").slice(0, 2000)}`)
-  }
-  return r
 }

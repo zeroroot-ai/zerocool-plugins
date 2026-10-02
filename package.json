@@ -5,11 +5,14 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src packages/claude-gibson/src packages/claude-member/src --deny-warnings",
-    "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args"
+    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src packages/claude-gibson/src packages/claude-member/src --deny-warnings && pnpm knip && pnpm knip:selftest",
+    "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args",
+    "knip": "knip --treat-config-hints-as-errors",
+    "knip:selftest": "node tools/knip/selftest.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "knip": "6.39.0",
     "oxlint": "^1.85.0",
     "typescript": "^7.0.2"
   }

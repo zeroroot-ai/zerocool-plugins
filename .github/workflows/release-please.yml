@@ -65,7 +65,7 @@ jobs:
   # its identity to npm with a short-lived GitHub OIDC token, and npm accepts
   # it because each package's trusted publisher names this repo and this
   # workflow file. Provenance is attached by default. Requires npm >= 11.5.1,
-  # which Node 22 does not ship, so the job installs npm 11 first.
+  # which the Node pinned in .tool-versions bundles. The job asserts that.
   # Docs: https://docs.npmjs.com/trusted-publishers
   #
   # A package that does not exist on npm yet cannot have a trusted publisher.
@@ -102,13 +102,16 @@ jobs:
           node-version-file: .tool-versions
           registry-url: https://registry.npmjs.org
 
-      # tools/npm/package-lock.json pins npm 11 by hash (Scorecard
-      # Pinned-Dependencies, #13). Dependabot bumps it.
-      - name: Use npm 11 (trusted publishing needs 11.5.1 or later)
+      # The npm Node bundles publishes. Node 26 bundles npm 11.19 or later,
+      # and trusted publishing needs 11.5.1 or later. A Node pin in
+      # .tool-versions that bundles an older npm fails here, before the
+      # publish runs. There is no separate npm install: a hash-pinned npm
+      # of its own bundled undici and ip-address with open CVEs (#101).
+      - name: Assert the bundled npm supports trusted publishing
         run: |
-          npm ci --prefix tools/npm --no-audit --no-fund
-          echo "$PWD/tools/npm/node_modules/.bin" >> "$GITHUB_PATH"
-          tools/npm/node_modules/.bin/npm --version
+          version="$(npm --version)"
+          echo "npm ${version}"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm "+process.argv[1]+" is older than 11.5.1, which trusted publishing needs"); process.exit(1) }' "$version"
 
       - name: Install and build
         run: |

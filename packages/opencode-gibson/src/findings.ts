@@ -1,24 +1,17 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-import {
-  submitFinding,
-  type Finding,
-  type GibsonSession,
-  type TaskHarness,
-} from "@zeroroot-ai/sdk"
-import { appendFile, mkdir } from "node:fs/promises"
-import { dirname } from "node:path"
+import type { Finding, TaskHarness } from "@zeroroot-ai/sdk"
 
 /**
  * Findings — emit what the agent discovers into the tenant World
  * (zerocool-plugins#7).
  *
- * One code path, two backends. With a Gibson session a finding goes to the
- * tenant graph through `ComponentService.SubmitFinding` under the agent's
- * COMPONENT identity; standalone it is appended to a local JSONL log. The tool
- * the model sees is identical either way, so a prompt that works standalone
- * works on the platform.
+ * One code path, one backend: the callback service's `SubmitFinding` under
+ * the per-dispatch grant. The component-identity backend and the standalone
+ * JSONL log went with the `submit_finding` tool (ADR-0008): a model submits
+ * through the Gibson MCP server, and nothing in this package submits on a
+ * component identity or to a local file (zerocool-plugins#102).
  *
  * The agent decides what is a finding. Nothing here invents findings from file
  * edits or message traffic: a `file.edited` event is not a security finding, and
@@ -37,14 +30,6 @@ export interface FindingsBackend {
   submit(f: Finding): Promise<string>
   /** Where findings go, for the tool's result message. */
   describe(): string
-}
-
-/** Platform backend — findings land in the tenant knowledge graph. */
-export function gibsonFindingsBackend(session: GibsonSession): FindingsBackend {
-  return {
-    submit: (f) => submitFinding(session.clients.component, f),
-    describe: () => "the tenant Gibson graph",
-  }
 }
 
 /**
@@ -83,30 +68,8 @@ export function taskFindingsBackend(harness: TaskHarness): FindingsBackend {
   }
 }
 
-/**
- * Standalone backend — findings are appended as JSONL. The same Finding shape is
- * written, so a local log can be replayed into Gibson later.
- */
-export function localFindingsBackend(path: string): FindingsBackend {
-  return {
-    submit: async (f) => {
-      await mkdir(dirname(path), { recursive: true })
-      await appendFile(path, `${JSON.stringify(f)}\n`, "utf8")
-      return f.id
-    },
-    describe: () => path,
-  }
-}
-
 /** Provenance stamped onto every finding this session emits. */
 export interface SessionContext {
   /** opencode session ID, recorded as the finding's mission correlation. */
   sessionID?: string
 }
-
-/**
- * Build the `submit_finding` tool.
- *
- * `agent_name` is fixed to "zerocool" rather than exposed as an argument — a
- * model must not be able to attribute its findings to another agent.
- */

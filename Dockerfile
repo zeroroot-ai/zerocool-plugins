@@ -6,9 +6,9 @@
 # gitops as an external agent workload. See docs/adr/0006 + zerocool-plugins#33.
 #
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
-# zerocool-plugins#13): the base image by digest, the opencode CLI through
-# tools/opencode/package-lock.json (npm ci), and semgrep through
-# tools/semgrep/requirements.txt (pip --require-hashes). Dependabot bumps
+# zerocool-plugins#13): the base image by digest, the opencode CLI and the
+# Gibson MCP server through tools/opencode/package-lock.json (npm ci), and
+# semgrep through tools/semgrep/requirements.txt (pip --require-hashes). Dependabot bumps
 # each of them. The candidate list for a checkout must not change under a
 # Scan mission because a registry moved (zerocool-plugins#87).
 
@@ -33,30 +33,31 @@ RUN pnpm --filter @zeroroot-ai/zerocool deploy --prod --legacy /app
 FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS runtime
 ENV NODE_ENV=production \
     ZEROCOOL_OPENCODE_BIN=opencode \
+    ZEROCOOL_MCP_BIN=gibson-mcp \
     ZEROCOOL_SEMGREP_BIN=semgrep \
     SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0 \
     ZEROCOOL_AGENT_NAME=zerocool
-# The npm node bundles is whatever node shipped that day; npm 10's bundled
-# tar, minimatch, glob and friends carried fixed CVEs (Trivy, #13).
-# tools/npm/package-lock.json pins npm by hash. It replaces the bundled copy
-# before anything else installs, and it stays in the image because the MCP server is started through npx.
-COPY tools/npm/package.json tools/npm/package-lock.json /opt/npm/
-RUN cd /opt/npm \
- && npm ci --omit=dev --no-audit --no-fund \
- && cd / \
- && rm -rf /usr/local/lib/node_modules/npm \
- && mv /opt/npm/node_modules/npm /usr/local/lib/node_modules/npm \
- && rm -rf /opt/npm \
- && npm cache clean --force \
- && npm --version
-# The opencode CLI is the headless driver the agent spawns (ZEROCOOL_OPENCODE_BIN).
+# The opencode CLI is the headless driver the agent spawns (ZEROCOOL_OPENCODE_BIN),
+# and the Gibson MCP server is the one opencode spawns from it (ZEROCOOL_MCP_BIN,
+# packages/opencode-gibson/src/mcp-config.ts). Both come from one hash-pinned
+# lockfile, so the server is never fetched from the registry at run time.
+#
+# npm itself leaves the image once these installs are done. Every npm release
+# bundles its own copies of undici, ip-address and brace-expansion, and the
+# bundled copies lag their fixes by weeks (Trivy, #101). Nothing in this
+# image runs npm or npx after the build, so the runtime carries neither.
 COPY tools/opencode/package.json tools/opencode/package-lock.json /opt/opencode/
 RUN cd /opt/opencode \
  && npm ci --omit=dev --no-audit --no-fund \
  && npm cache clean --force \
  && ln -s /opt/opencode/node_modules/.bin/opencode /usr/local/bin/opencode \
- && opencode --version
+ && ln -s /opt/opencode/node_modules/.bin/gibson-mcp /usr/local/bin/gibson-mcp \
+ && opencode --version \
+ && gibson-mcp --version \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /root/.npm \
+ && test ! -e /usr/local/bin/npm -a ! -e /usr/local/bin/npx -a ! -e /usr/local/lib/node_modules/npm \
+ && node --version
 # semgrep (ZEROCOOL_SEMGREP_BIN): the candidate producer for source analysis.
 # git is what semgrep uses to list the files of a checkout; without it every
 # file in a git checkout is "not listed by git ls-files" and skipped.

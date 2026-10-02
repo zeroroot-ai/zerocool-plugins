@@ -16,8 +16,21 @@
  * machine at session start. The pin is the one in tools/hosts/package.json,
  * which Dependabot bumps. `pins.test.ts` in claude-gibson fails when the two
  * differ or when any install path floats again.
+ *
+ * The agent image carries no npm at all: every npm release bundles its own
+ * copies of undici and ip-address, and an image that carries npm carries
+ * their CVEs (zerocool-plugins#101). There the server is installed at build
+ * time from tools/opencode/package-lock.json, hash pinned, and
+ * `ZEROCOOL_MCP_BIN` names it, the same knob the Claude member driver reads.
  */
 export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.3.0"
+
+/** The command opencode spawns: the installed bin when the image names one, else the pinned package through npx. */
+export function gibsonMcpCommand(env: NodeJS.ProcessEnv = process.env): string[] {
+  const bin = env.ZEROCOOL_MCP_BIN
+  if (bin) return [bin, "--transport", "stdio"]
+  return ["npx", "--yes", "--package", GIBSON_MCP_PACKAGE, "gibson-mcp", "--transport", "stdio"]
+}
 
 export interface OpencodeMcpLocal {
   type: "local"
@@ -37,7 +50,7 @@ export function gibsonMcpServer(env: NodeJS.ProcessEnv = process.env): OpencodeM
   }
   return {
     type: "local",
-    command: ["npx", "--yes", "--package", GIBSON_MCP_PACKAGE, "gibson-mcp", "--transport", "stdio"],
+    command: gibsonMcpCommand(env),
     enabled: true,
     ...(Object.keys(environment).length > 0 ? { environment } : {}),
   }

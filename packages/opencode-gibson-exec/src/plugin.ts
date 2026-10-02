@@ -2,7 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
-import { selectHarness, type HarnessClient, type HarnessSelectionDeps } from "./harness.js"
+import { selectHarness, type HarnessSelectionDeps } from "./harness.js"
 
 import { toDevboxArgv } from "./command.js"
 import { isDevboxAbsent, runInDevbox, type DevboxExecCall, type DevboxResult } from "./devbox.js"
@@ -148,4 +148,3 @@ export async function execPlugin(input: PluginInput, deps: ExecPluginDeps = {}):
 
 /** Exported for the tests: the tool a Platform-mode plugin contributes. */
 export type { ToolContext, ToolDefinition }
-export type { HarnessClient }

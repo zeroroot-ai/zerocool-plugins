@@ -4,10 +4,10 @@
 export * from "./claude-run.js"
 export * from "./env.js"
 export * from "./events.js"
-// The git runner itself stays internal: an exported "run any argv" helper is a
+// `git.ts` stays internal: an exported "run any argv" helper is a
 // second-order command injection surface (CodeQL, zerocool-plugins#13). The
-// WorkspaceManager is the API; the types let a caller supply its own runner.
-export { GitError, scrub, type GitCredential, type GitResult, type GitRunner, type GitRunOptions } from "./git.js"
+// WorkspaceManager is the API. Its `git` option is the test seam for a runner,
+// and the tests reach the types through `git.ts` directly.
 export * from "./harness-inbox.js"
 export * from "./heartbeat.js"
 export * from "./inbox.js"

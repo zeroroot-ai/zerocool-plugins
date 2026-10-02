@@ -52,9 +52,11 @@ test("every install path pins the Gibson MCP server to the version tools/hosts p
   const tools = JSON.parse(await read("tools/hosts/package.json")) as { dependencies: Record<string, string> }
   const pin = tools.dependencies["@zeroroot-ai/gibson-mcp"]!
   assert.match(pin, EXACT, "tools/hosts/package.json pins an exact version")
-  // The agent image installs the same server from tools/claude. One version everywhere.
-  const image = JSON.parse(await read("tools/claude/package.json")) as { dependencies: Record<string, string> }
-  assert.equal(image.dependencies["@zeroroot-ai/gibson-mcp"], pin, "tools/claude/package.json must carry the tools/hosts pin")
+  // Both agent images install the same server at build time, hash pinned. One version everywhere.
+  for (const manifest of ["tools/claude/package.json", "tools/opencode/package.json"]) {
+    const image = JSON.parse(await read(manifest)) as { dependencies: Record<string, string> }
+    assert.equal(image.dependencies["@zeroroot-ai/gibson-mcp"], pin, `${manifest} must carry the tools/hosts pin`)
+  }
   for (const site of GIBSON_MCP_SITES) {
     const found = specs(await read(site), "gibson-mcp")
     assert.ok(found.length > 0, `${site}: names @zeroroot-ai/gibson-mcp with a version`)
