@@ -4,7 +4,7 @@
   "description": "The opencode CLI the zerocool agent image spawns (ZEROCOOL_OPENCODE_BIN) and the Gibson MCP server opencode spawns from it (ZEROCOOL_MCP_BIN). Installed with npm ci from this lockfile so both binaries are hash pinned. The server version is the tools/hosts pin; pins.test.ts in claude-gibson fails when they differ.",
   "dependencies": {
     "@zeroroot-ai/gibson-mcp": "0.3.0",
-    "opencode-ai": "1.18.32"
+    "opencode-ai": "1.18.33"
   },
   "allowScripts": {
     "opencode-ai": true
