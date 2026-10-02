@@ -1,0 +1,7 @@
+{
+  "name": "zerocool-knip-fixture",
+  "private": true,
+  "description": "A barrel with one unused export. tools/knip/selftest.mjs runs the repository knip configuration against it and fails unless knip reports the unused export.",
+  "type": "module",
+  "main": "index.ts"
+}

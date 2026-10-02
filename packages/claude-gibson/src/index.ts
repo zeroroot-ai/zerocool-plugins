@@ -6,6 +6,6 @@
 // The tools are not here. They come from the Gibson MCP server, which the
 // bundle's `.mcp.json` names. This package is the bundle around it: the
 // plugin manifest, the marketplace entry, and two hooks. The only bin is
-// the hook.
+// the hook, and it imports `hook-run.ts` itself: nothing reaches the hook
+// through this module.
 export * from "./state.js"
-export { runHook, type HookInput } from "./hook-run.js"

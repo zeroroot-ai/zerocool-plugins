@@ -30,6 +30,14 @@ test("the mcp entry omits an empty environment rather than writing an empty obje
   assert.equal(gibsonMcpServer({}).environment, undefined)
 })
 
+test("ZEROCOOL_MCP_BIN names the installed server, and the image path never reaches for npx", () => {
+  const server = gibsonMcpServer({ ZEROCOOL_MCP_BIN: "gibson-mcp", GIBSON_PLATFORM_URL: "https://api.example" })
+  assert.deepEqual(server.command, ["gibson-mcp", "--transport", "stdio"])
+  assert.ok(!server.command.includes("npx"), "the agent image carries no npm (#101)")
+  assert.deepEqual(server.environment, { GIBSON_PLATFORM_URL: "https://api.example" })
+  assert.equal(gibsonMcpServer({ ZEROCOOL_MCP_BIN: "" }).command[0], "npx", "an empty knob is no knob")
+})
+
 test("the plugin registers no tools of its own, in any posture", async () => {
   const saved = { url: process.env.GIBSON_PLATFORM_URL, tok: process.env.GIBSON_BOOTSTRAP_TOKEN }
   delete process.env.GIBSON_PLATFORM_URL

@@ -3,7 +3,7 @@
 
 import { lookup as dnsLookup } from "node:dns/promises"
 import { isIP } from "node:net"
-import { decodeToolInput, type GibsonClients, type ToolInvocation } from "@zeroroot-ai/sdk"
+import type { GibsonClients, ToolInvocation } from "@zeroroot-ai/sdk"
 
 /**
  * The http_probe tool zerocool serves to the fleet.
@@ -188,6 +188,3 @@ export async function httpProbeHandler(invocation: ToolInvocation, _clients?: Gi
     typeof invocation.input.timeout_ms === "number" ? invocation.input.timeout_ms : HTTP_PROBE_TIMEOUT_MS
   return probe(url, timeout)
 }
-
-/** Re-exported so a caller can decode a raw payload without importing the SDK directly. */
-export { decodeToolInput }

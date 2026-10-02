@@ -8,7 +8,7 @@ import { Code, ConnectError } from "@connectrpc/connect"
 
 import { startMirror } from "./mirror.js"
 import { decodeSnapshot } from "./snapshot.js"
-import type { SessionContextStore, StoredContext } from "./store.js"
+import { MAX_SESSION_ID_BYTES, type SessionContextStore, type StoredContext } from "./store.js"
 
 /**
  * The mirror, at the three points where it can go wrong silently.
@@ -96,6 +96,32 @@ test("an event checkpoints the session to the store", async () => {
   assert.equal(snapshot?.sessionId, "ses_1")
   assert.equal(snapshot?.messages.length, 1)
   assert.equal(snapshot?.writtenAt, 1000)
+})
+
+test("a session id over the daemon's key bound never reaches the store, and the mirror stays up", async () => {
+  const store = new FakeStore()
+  const { timers, run } = fakeTimers()
+  const warnings: string[] = []
+  const mirror = startMirror({ store, reader: reader(), debounceMs: 5, warn: (m) => warnings.push(m), timers })
+  const long = "ses_" + "x".repeat(MAX_SESSION_ID_BYTES)
+  assert.ok(Buffer.byteLength(long, "utf8") > MAX_SESSION_ID_BYTES)
+
+  mirror.touch(long)
+  mirror.touch(long)
+  assert.equal(await mirror.restore(long), undefined)
+  run()
+  await settle()
+
+  assert.deepEqual(store.puts, [], "the daemon refuses the key, so the mirror never ships it")
+  assert.deepEqual(store.gets, [])
+  assert.equal(warnings.length, 1, "one warning per refused session, not one per event")
+  assert.match(warnings[0]!, /over the 256-byte store key bound/)
+  assert.equal(mirror.active(), true, "one bad id does not stop the mirror for the sessions that fit")
+
+  mirror.touch("ses_1")
+  run()
+  await settle()
+  assert.equal(store.puts.length, 1, "a session that fits still checkpoints")
 })
 
 test("many events inside the window write once", async () => {

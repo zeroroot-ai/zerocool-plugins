@@ -55,19 +55,12 @@ ENV NODE_ENV=production \
     CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
     ZEROCOOL_STATE_DIR=/tmp/zerocool \
     ZEROCOOL_WORKSPACE=/workspace
-# The npm node bundles is whatever node shipped that day; npm 10's bundled
-# tar, minimatch, glob and friends carried fixed CVEs (Trivy, #13).
-# tools/npm/package-lock.json pins npm by hash. It replaces the bundled copy
-# before anything else installs, and it stays in the image so `claude` can start npx-based MCP servers a person adds.
-COPY tools/npm/package.json tools/npm/package-lock.json /opt/npm/
-RUN cd /opt/npm \
- && npm ci --omit=dev --no-audit --no-fund \
- && cd / \
- && rm -rf /usr/local/lib/node_modules/npm \
- && mv /opt/npm/node_modules/npm /usr/local/lib/node_modules/npm \
- && rm -rf /opt/npm \
- && npm cache clean --force \
- && npm --version
+# npm leaves the image once the install below is done. Every npm release
+# bundles its own copies of undici, ip-address and brace-expansion, and the
+# bundled copies lag their fixes by weeks (Trivy, #101). Nothing here runs
+# npm or npx after the build: the driver attaches exactly one MCP server,
+# over HTTP, under --strict-mcp-config (packages/claude-member/src/turn.ts),
+# so no npx-based server a person adds is ever started.
 COPY tools/claude/package.json tools/claude/package-lock.json /opt/claude/
 # APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
 #
@@ -93,7 +86,10 @@ RUN echo "apt refresh ${APT_CACHE_BUST}" >/dev/null \
  && ln -s /opt/claude/node_modules/.bin/claude /usr/local/bin/claude \
  && ln -s /opt/claude/node_modules/.bin/gibson-mcp /usr/local/bin/gibson-mcp \
  && claude --version \
- && gibson-mcp --version
+ && gibson-mcp --version \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /root/.npm \
+ && test ! -e /usr/local/bin/npm -a ! -e /usr/local/bin/npx -a ! -e /usr/local/lib/node_modules/npm \
+ && node --version
 COPY --from=build /app /app
 RUN useradd -u 65532 -m -d /home/claude claude \
  && mkdir -p /workspace \

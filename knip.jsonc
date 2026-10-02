@@ -1,0 +1,68 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Unused exports, types, files and dependencies fail `pnpm lint`
+  // (zerocool-plugins#102). The runner `runClaude` sat exported and
+  // unimported for weeks because nothing measured it. `pnpm knip:selftest`
+  // runs this same configuration against tools/knip/fixture, a barrel with
+  // one unused export, and fails unless knip reports it.
+  //
+  // Every package re-exports its modules from `src/index.ts`. A scanner that
+  // stops at the entry file calls every one of those exports "public API" and
+  // never reports it. `includeEntryExports` looks through the barrel: an
+  // export is used when a module in this repository imports it.
+  //
+  // An export that only its own file reads is a stray `export` keyword, not an
+  // unwired symbol. `ignoreExportsUsedInFile` keeps the report to the symbols
+  // with no consumer at all, which is the class ADR-0094 is about.
+  "includeEntryExports": true,
+  "ignoreExportsUsedInFile": true,
+  // tools/knip/fixture is scanned by the selftest only: no project pattern
+  // below reaches it, so the real run never sees the unused export it
+  // exists to carry.
+  // platform-ca.test.ts runs openssl to mint a test CA. It is a system tool,
+  // not a package.
+  "ignoreBinaries": ["openssl"],
+  "workspaces": {
+    ".": {
+      "entry": ["tools/knip/selftest.mjs"],
+      "project": ["tools/knip/*.mjs"]
+    },
+    "packages/*": {
+      // package.json `main`, `exports` and `bin` are entries on their own.
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/opencode-gibson": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts"],
+      // The semgrep fixture under test/fixtures is a scanned repository, not
+      // this package's code.
+      "ignore": ["test/fixtures/**"]
+    },
+    "packages/claude-member": {
+      "entry": ["src/**/*.test.ts", "test/bin/*.mjs"],
+      "project": ["src/**/*.ts", "test/bin/*.mjs"]
+    },
+    "packages/claude-gibson": {
+      "entry": ["src/**/*.test.ts", "hooks/*.mjs"],
+      "project": ["src/**/*.ts", "hooks/*.mjs"]
+    }
+  },
+  "rules": {
+    "files": "error",
+    "dependencies": "error",
+    "devDependencies": "error",
+    "unlisted": "error",
+    "unresolved": "error",
+    "binaries": "error",
+    "exports": "error",
+    "types": "error",
+    "nsExports": "error",
+    "nsTypes": "error",
+    "enumMembers": "error",
+    // Every opencode plugin entry exports the plugin under its name and as
+    // the default, and `entry-exports.test.ts` requires exactly that shape.
+    "duplicates": "off",
+    "optionalPeerDependencies": "off"
+  }
+}

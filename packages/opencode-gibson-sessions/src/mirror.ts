@@ -2,7 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 import { buildSnapshot, decodeSnapshot, type SessionReader, type SessionSnapshot } from "./snapshot.js"
-import { isConflict, isStoreAbsent, type SessionContextStore } from "./store.js"
+import { MAX_SESSION_ID_BYTES, isConflict, isStoreAbsent, type SessionContextStore } from "./store.js"
 
 /**
  * The mirror: opencode's session state, copied to the daemon store.
@@ -69,6 +69,25 @@ export function startMirror(opts: MirrorOptions): SessionMirror {
   const tracked = new Map<string, Tracked>()
   let running = true
   let warnedOther = false
+  const refused = new Set<string>()
+
+  /**
+   * The daemon refuses a key over `MAX_SESSION_ID_BYTES` on every call. A
+   * mirror that shipped such an id would warn once and then fail every
+   * checkpoint of that session, so the bound is applied here, once, the same
+   * way the blob cap is applied in `buildSnapshot`.
+   */
+  const withinKeyBound = (sessionId: string): boolean => {
+    if (Buffer.byteLength(sessionId, "utf8") <= MAX_SESSION_ID_BYTES) return true
+    if (!refused.has(sessionId)) {
+      refused.add(sessionId)
+      opts.warn(
+        `[zerocool-sessions] session id is ${Buffer.byteLength(sessionId, "utf8")} bytes, over the ` +
+          `${MAX_SESSION_ID_BYTES}-byte store key bound; this session stays on opencode's local disk`,
+      )
+    }
+    return false
+  }
 
   const state = (sessionId: string): Tracked => {
     let s = tracked.get(sessionId)
@@ -137,7 +156,7 @@ export function startMirror(opts: MirrorOptions): SessionMirror {
 
   return {
     touch(sessionId) {
-      if (!running || !sessionId) return
+      if (!running || !sessionId || !withinKeyBound(sessionId)) return
       const s = state(sessionId)
       if (s.writing) {
         s.again = true
@@ -147,7 +166,7 @@ export function startMirror(opts: MirrorOptions): SessionMirror {
     },
 
     async restore(sessionId) {
-      if (!running || !sessionId) return undefined
+      if (!running || !sessionId || !withinKeyBound(sessionId)) return undefined
       try {
         const current = await opts.store.get(sessionId)
         state(sessionId).etag = current.etag
