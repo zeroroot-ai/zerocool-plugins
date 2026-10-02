@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.5](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.4...opencode-gibson-v0.9.5) (2026-10-02)
+
+
+### Bug Fixes
+
+* delete the superseded claude runner, drop npm from both images, add knip ([#104](https://github.com/zeroroot-ai/zerocool-plugins/issues/104)) ([2394070](https://github.com/zeroroot-ai/zerocool-plugins/commit/2394070d80b8278de30a19c6833287bab4f9adc2)), closes [#102](https://github.com/zeroroot-ai/zerocool-plugins/issues/102)
+
 ## [0.9.4](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.3...opencode-gibson-v0.9.4) (2026-09-20)
 
 
