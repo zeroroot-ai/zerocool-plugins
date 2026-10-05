@@ -1,10 +1,10 @@
 name: agent-image
 # Build + cosign-sign the zerocool AGENT container image (kind=agent dispatched,
-# ADR-0006) from source, via the org's reusable image-build workflow — the same
+# ADR-0156) from source, via the org's reusable image-build workflow — the same
 # build-from-source + keyless-OIDC cosign convention gibson-images.yml uses.
 #
 # The image is an OUTBOUND dispatched worker (no listen port): gibson's platform
-# catalog (gibson ADR-0015) references it by digest, and gitops deploys it as an
+# catalog (ADR-0136) references it by digest, and gitops deploys it as an
 # external agent workload that registers with the daemon (GIBSON_PLATFORM_URL).
 #
 # Trigger discipline: push:main (sha-tagged) + the release tag

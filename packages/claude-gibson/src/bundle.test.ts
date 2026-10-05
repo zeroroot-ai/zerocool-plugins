@@ -9,7 +9,7 @@ import test from "node:test"
 /**
  * The bundle is what Claude Code reads: the MCP server it spawns, the hooks
  * it runs, and the manifest it shows. These files are the product, so they
- * are asserted rather than assumed (ADR-0008).
+ * are asserted rather than assumed (ADR-0158).
  */
 const bundle = async (name: string): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(fileURLToPath(new URL(`../${name}`, import.meta.url)), "utf8")) as Record<string, unknown>

@@ -37,7 +37,7 @@ import type { SessionContext } from "./findings.js"
  * THE TOOLS ARE NOT HERE. Every Gibson tool — findings, knowledge, delegation,
  * componentize, and one per RPC of every SDK service — comes from the Gibson
  * MCP server, which this plugin registers in opencode's own `mcp` block
- * (ADR-0008). opencode spawns it, so the tools reach the model the same way
+ * (ADR-0158). opencode spawns it, so the tools reach the model the same way
  * they reach Claude Code, Cursor and the rest, and a new SDK release adds
  * tools with no change here.
  *
@@ -137,7 +137,7 @@ export const GibsonPlugin: Plugin = async () => {
 
   return {
     // Zero-config LLM, and the one tool surface: inject both at config-load
-    // time (#6, ADR-0008).
+    // time (#6, ADR-0158).
     //
     // `shimUrl` is always live here, and that is a type-level guarantee rather
     // than a timing assumption: `Plugin` returns `Promise<Hooks>`, so opencode

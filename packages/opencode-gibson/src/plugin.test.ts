@@ -45,7 +45,7 @@ test("the plugin registers no tools of its own, in any posture", async () => {
   try {
     const { GibsonPlugin } = await import("./index.js")
     const hooks = await GibsonPlugin({} as never, {})
-    assert.equal(hooks.tool, undefined, "every tool comes from the MCP server (ADR-0008)")
+    assert.equal(hooks.tool, undefined, "every tool comes from the MCP server (ADR-0158)")
   } finally {
     if (saved.url) process.env.GIBSON_PLATFORM_URL = saved.url
     if (saved.tok) process.env.GIBSON_BOOTSTRAP_TOKEN = saved.tok

@@ -6,7 +6,7 @@
  * zerocool-dispatch — one sandboxed dispatched run, then exit.
  *
  * The third dispatched shape, and the one gibson launches (zerocool-plugins#57,
- * gibson#1596, gibson ADR-0016). `zerocool-agent` and `zerocool-serve` are long-lived
+ * gibson#1596, ADR-0116). `zerocool-agent` and `zerocool-serve` are long-lived
  * hosts that enroll once, keep a host key, and POLL the daemon for work. This is
  * the opposite: gibson runs an untrusted agent by launching an ephemeral setec
  * sandbox per mission run and injecting the run's credentials as environment. So

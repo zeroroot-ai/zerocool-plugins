@@ -2,7 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 /**
- * How opencode reaches the Gibson MCP server (ADR-0008, slice A7).
+ * How opencode reaches the Gibson MCP server (ADR-0158, slice A7).
  *
  * opencode spawns a local MCP server from its `mcp` block, the same way every
  * other host does from its own config file. The plugin writes that entry in

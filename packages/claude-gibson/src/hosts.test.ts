@@ -8,7 +8,7 @@ import test from "node:test"
 
 /**
  * The snippets in `hosts/` are the install path for every coding agent with
- * no bundle (ADR-0008, slice A8). They are the product for those hosts, so
+ * no bundle (ADR-0158, slice A8). They are the product for those hosts, so
  * their shape is asserted here. Cursor and Windsurf have no headless mode,
  * so this is the only check they get; Codex CLI and Gemini CLI are also
  * driven for real by `host-smoke.yml`.

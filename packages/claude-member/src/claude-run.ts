@@ -6,7 +6,7 @@ import { SANDBOX_MARKER, type SandboxMarker } from "./env.js"
 import { LineSplitter, parseEventLine, summarizeEvents, type ClaudeEvent, type TurnSummary } from "./events.js"
 
 /**
- * Run the unmodified `claude` CLI headless (ADR-0008 decision 4).
+ * Run the unmodified `claude` CLI headless (ADR-0158 decision 4).
  *
  * Two shapes share one argv builder:
  *
