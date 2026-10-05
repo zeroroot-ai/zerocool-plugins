@@ -4,10 +4,10 @@ name: agent-image
 # build-from-source + keyless-OIDC cosign convention gibson-images.yml uses.
 #
 # The image is an OUTBOUND dispatched worker (no listen port): gibson's platform
-# catalog (ADR-0015) references it by digest, and gitops deploys it as an
+# catalog (gibson ADR-0015) references it by digest, and gitops deploys it as an
 # external agent workload that registers with the daemon (GIBSON_PLATFORM_URL).
 #
-# Trigger discipline (ADR-0060): push:main (sha-tagged) + the release tag
+# Trigger discipline: push:main (sha-tagged) + the release tag
 # (release-please cuts `opencode-gibson-v*`; tag_pattern derives the semver
 # image tag from it) + workflow_dispatch for manual rebuild. No pull_request.
 on:

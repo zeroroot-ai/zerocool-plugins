@@ -178,7 +178,7 @@ unbuilt `dist` would land in the type and run paths of every check.
   Priority: dispatched grant wins. The server never mints identity (ADR-0045).
   Decided in [ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md).
 - **Claude Code instance** — one Claude Code process the daemon launched in an
-  ephemeral setec sandbox (ADR-0016), driven headless with stream-json on stdin
+  ephemeral setec sandbox (gibson ADR-0016), driven headless with stream-json on stdin
   and stdout. Two shapes from one image: *one-shot* (a goal, no stdin, ends with
   the result, like the opencode agent) and *session* (long-lived, takes turns
   until stopped). Both are one mission run and one sandbox. Blocker 6 does not
@@ -240,7 +240,7 @@ unbuilt `dist` would land in the type and run paths of every check.
   localhost inside the sandbox, holds the inbox subscription, and swaps the
   grant per turn. A stdio server Claude Code spawns cannot do this. ADR
   candidate: long-lived single-user sandbox, per-turn task grants, MCP over
-  localhost HTTP (amends ADR-0016's one-run-one-sandbox rule).
+  localhost HTTP (amends gibson ADR-0016's one-run-one-sandbox rule).
 - **Job** — the unit of work a member holds. Opened by the first structured
   input (a `Task` with typed fields: goal, repositories with connector ref
   and deliverable, credential names, input World node ids, acceptance,
@@ -290,7 +290,7 @@ unbuilt `dist` would land in the type and run paths of every check.
   wired as `--permission-prompt-tool`: the job enters `waiting` and the next
   input is the answer.
 - **Bank exit test** — `exit-test-bank.yml` in gibson, on `main` and on a
-  schedule, never on a PR (ADR-0012). Real model only, on a real key from a
+  schedule, never on a PR (ADR-0080). Real model only, on a real key from a
   repository secret; no stub Messages API. Asserts lifecycle and
   deliverables, not model text: two members reach `idle`; a job from a
   scanner-shaped test component turns one member `busy`; the worktree exists

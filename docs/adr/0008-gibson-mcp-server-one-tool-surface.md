@@ -51,7 +51,7 @@ reaches all six. A tool that lives in an opencode hook reaches one.
    3. *Human once.* Device-flow login inside the session, then the host key.
 
    The dispatched grant wins when it is present. The server never mints an
-   identity (gibson ADR-0045).
+   identity (ADR-0045).
 
 4. **The driver spawns the unmodified `claude` CLI, never the Agent SDK.** The
    Claude Code hosting terms name the binary and forbid changes to it. The
@@ -123,5 +123,5 @@ supplies its own API key or cloud provider credential.
 - zeroroot-ai/sdk-ts#56 to #60, the server slices.
 - zeroroot-ai/zerocool-plugins#102, #103, #104, the adapter slices.
 - [ADR-0005](0005-plugins-not-a-fork.md), [ADR-0007](0007-claude-code-plugin-session-is-a-live-mission.md).
-- gibson ADR-0027 (hard cut, no parallel paths), ADR-0045 (the server never
+- ADR-0027 (hard cut, no parallel paths), ADR-0045 (the server never
   mints identity).
