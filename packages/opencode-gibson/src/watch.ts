@@ -325,8 +325,10 @@ export interface ScanMissionInputs {
 /**
  * The seven parameters the checked-in Scan mission is rendered with.
  *
- * These names are the catalog's, not ours: `missioncatalog.Params.fields()` is
- * the one declaration of them, and the daemon REFUSES an unrecognised key
+ * These names are the catalog's, not ours: `scan.cue` in gibson's mission
+ * catalog is the one declaration of them, and gibson publishes them as
+ * `mission-params.json`. `contracts/gibson-mission-params.json` is the copy that
+ * `mission-params.test.ts` checks this function against. The daemon REFUSES an unrecognised key
  * rather than ignoring it. That refusal is the smuggling defence — `Params` has
  * no target or host field, so the runtime target binds from the mission's
  * `target_id` alone and a caller cannot point a scan at a host the tenant never
