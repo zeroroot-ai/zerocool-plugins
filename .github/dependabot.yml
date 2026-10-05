@@ -1,61 +1,115 @@
+# Dependabot config. It follows templates/dependabot.yml of zeroroot-ai/.github.
+# A patch or minor update is in one group and merges alone on a green merge
+# gate. A major update opens alone and waits for a person (D44).
+
 version: 2
 updates:
-  - package-ecosystem: npm
-    directory: /
+  - package-ecosystem: "npm"
+    directory: "/"
     schedule:
-      interval: weekly
-      day: tuesday
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
     groups:
-      patch-and-minor:
+      npm-deps:
+        patterns:
+          - "*"
         update-types:
-          - minor
-          - patch
-  # The hash-pinned tool manifests the images and the workflows install with
-  # npm ci (zerocool-plugins#13). The Claude Code version in tools/claude is
-  # the one the stream-json fixtures came from; a bump re-captures them by
-  # hand (packages/claude-member/test/fixtures/README.md), so Dependabot
-  # leaves that one package alone.
-  - package-ecosystem: npm
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "npm"
     directories:
-      - /tools/opencode
-      - /tools/claude
-      - /tools/hosts
-      - /tools/pnpm
+      - "/tools/opencode"
+      - "/tools/claude"
+      - "/tools/hosts"
+      - "/tools/pnpm"
     schedule:
-      interval: weekly
-      day: tuesday
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
     open-pull-requests-limit: 5
-    labels:
-      - dependencies
+    groups:
+      npm-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    # The hash-pinned tool manifests that the images and the workflows install with
+    # npm ci (zerocool-plugins#13). The Claude Code version in tools/claude is the one
+    # the stream-json fixtures came from. A bump captures them again by hand
+    # (packages/claude-member/test/fixtures/README.md). pnpm is bumped by hand with
+    # packageManager in the root package.json.
     ignore:
       - dependency-name: "@anthropic-ai/claude-code"
-      # Bumped by hand together with packageManager in the root package.json.
-      - dependency-name: pnpm
-  - package-ecosystem: pip
-    directory: /tools/semgrep
+      - dependency-name: "pnpm"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "pip"
+    directory: "/tools/semgrep"
     schedule:
-      interval: weekly
-      day: tuesday
-    open-pull-requests-limit: 2
-    labels:
-      - dependencies
-  - package-ecosystem: docker
-    directory: /
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      pip-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "docker"
+    directory: "/"
     schedule:
-      interval: weekly
-      day: tuesday
-    open-pull-requests-limit: 2
-    labels:
-      - dependencies
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: tuesday
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
     open-pull-requests-limit: 3
-    labels:
-      - dependencies
-      - github-actions
+    groups:
+      docker-deps:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      # The sub-actions of codeql-action must move together, also for a major
+      # update.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
+      actions-deps:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github/codeql-action*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
