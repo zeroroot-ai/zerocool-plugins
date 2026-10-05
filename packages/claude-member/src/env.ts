@@ -200,7 +200,7 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
  * Environment prefixes a Claude Code child may see. Everything else is dropped,
  * so no `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the
  * model's process. The provider credential passes through because Claude Code
- * itself reads it (ADR-0008, the hosting terms).
+ * itself reads it (ADR-0158, the hosting terms).
  */
 const CHILD_ENV_ALLOW: readonly string[] = [
   "PATH",

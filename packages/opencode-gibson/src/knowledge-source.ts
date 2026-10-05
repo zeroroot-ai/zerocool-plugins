@@ -36,7 +36,7 @@ export interface KnowledgeSourceDeps {
  * child as GIBSON_CALLBACK_ENDPOINT / GIBSON_CALLBACK_TOKEN. Reading with the
  * component's own grant instead is broader authority than the dispatch
  * intended and leaves no per-task attribution on anything the run reads — the
- * gap ADR-0006 recorded.
+ * gap ADR-0156 recorded.
  *
  * THESE TWO NAMES ARE THE CHILD CONTRACT, NOT THE LAUNCHER CONTRACT. The
  * launcher writes GIBSON_CG_JWT and GIBSON_AGENT_TASK_B64 into the sandbox,

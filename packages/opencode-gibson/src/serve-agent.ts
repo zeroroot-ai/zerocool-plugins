@@ -12,9 +12,9 @@
  * for as long as the dispatch allows.
  *
  * This is zerocool-plugins#33, Option B, per the owner decision of 2026-08-15.
- * It does not reopen ADR-0005: the driver is a bin in this package, not a fork
- * of opencode, which is exactly the carve-out ADR-0005 wrote. See
- * `docs/adr/0006-kind-agent-dispatched-shape.md`.
+ * It does not reopen ADR-0155: the driver is a bin in this package, not a fork
+ * of opencode, which is exactly the carve-out ADR-0155 wrote. See
+ * ADR-0156.
  *
  * Usage (after `gibson agent enroll --kind agent --name zerocool`):
  *

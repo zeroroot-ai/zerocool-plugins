@@ -1,6 +1,6 @@
 # Gibson in any coding agent
 
-One MCP server serves every host: `@zeroroot-ai/gibson-mcp` (ADR-0008). It
+One MCP server serves every host: `@zeroroot-ai/gibson-mcp` (ADR-0158). It
 exposes every RPC of every SDK service, every SDK helper, and every platform
 tool checked in for your tenant. A host is an adapter around it and holds no
 tools of its own.

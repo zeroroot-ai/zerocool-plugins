@@ -12,8 +12,8 @@ import { createHash } from "node:crypto"
  * A hook runs as its own process and cannot reach the server's session, so
  * the server writes one small file per working directory in `~/.zerocool/`:
  * the ambient knowledge block for SessionStart, and the live-mission
- * coordinates for SessionEnd (ADR-0007's consequence, now served by the
- * server, ADR-0008).
+ * coordinates for SessionEnd (ADR-0157's consequence, now served by the
+ * server, ADR-0158).
  *
  * This file is the read half of that format, kept here because a hook must
  * not depend on the server package: the format is the contract, not the

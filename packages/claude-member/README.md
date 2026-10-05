@@ -1,7 +1,7 @@
 # @zeroroot-ai/zerocool-claude-member
 
 The always-on Claude Code member driver for Gibson banks
-([ADR-0008](../../docs/adr/0008-gibson-mcp-server-one-tool-surface.md)).
+(ADR-0158).
 
 A **bank** is N Claude Code instances a person or a tenant asked for. The
 daemon keeps N **members** running in gVisor sandboxes. This package is the
@@ -10,7 +10,7 @@ process per active job, the **workspace manager**, and the status heartbeat.
 
 The driver spawns the unmodified `claude` CLI. It never uses the Agent SDK
 and never changes the binary, because the Claude Code hosting terms require
-both (ADR-0008).
+both (ADR-0158).
 
 ## What a job is
 

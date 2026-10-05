@@ -21,7 +21,7 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 |---|---|---|
 | **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
 | **`@zeroroot-ai/zerocool-exec`** (opt-in) | run the agent's shell commands in the setec **Devbox** through `DevboxExec`, by taking over opencode's `bash` tool id (#12) | invasive — changes where code runs |
-| **`@zeroroot-ai/zerocool-claude`** (Claude Code) | MCP server + hooks. The session is a **live mission** (one AGENT node naming this component, task grant from the dispatch). `remember` = `Observe(MemoryObservation)`, `recall`, `world_view`, findings, Gibson tools, delegation. **Never routes LLM**: the user's Claude subscription pays for the model. ADR-0007. | one install, needs `GIBSON_TARGET_ID` for the live posture |
+| **`@zeroroot-ai/zerocool-claude`** (Claude Code) | MCP server + hooks. The session is a **live mission** (one AGENT node naming this component, task grant from the dispatch). `remember` = `Observe(MemoryObservation)`, `recall`, `world_view`, findings, Gibson tools, delegation. **Never routes LLM**: the user's Claude subscription pays for the model. ADR-0157. | one install, needs `GIBSON_TARGET_ID` for the live posture |
 | **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror the session to the daemon **session-context store** on `session.updated`/`message.updated`, restore on start (#11) | invasive — changes where state lives |
 
 ## The store seam (#11)
@@ -163,11 +163,11 @@ unbuilt `dist` would land in the type and run paths of every check.
   Lives in `sdk-ts` as the workspace package `@zeroroot-ai/gibson-mcp`, built
   by the same generate step as the connect-es clients, released on the SDK train.
   Supersedes the Claude-only server in `packages/claude-gibson` (deleted, ADR-0027).
-  Decided in [ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md).
+  Decided in ADR-0158.
 - **Host adapter** — the thin per-host bundle around the Gibson MCP server:
   the Claude Code plugin (bundle + SessionStart/SessionEnd hooks), the opencode
   plugin (LLM provider shim, `system.transform`, `event`), and config snippets
-  for hosts with no hook surface. An adapter holds no tools of its own. Decided in [ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md).
+  for hosts with no hook surface. An adapter holds no tools of its own. Decided in ADR-0158.
 - **Check-in source** — how the Gibson MCP server gets its credential. Three,
   chosen by what is present at start, never mixed: (1) *dispatched grant*: the
   daemon launched the process, `GIBSON_CG_JWT` + callback endpoint are the only
@@ -176,9 +176,9 @@ unbuilt `dist` would land in the type and run paths of every check.
   earlier, the server checks in unattended with it once, host key thereafter;
   (3) *human once*: device-flow login in the session, host key thereafter.
   Priority: dispatched grant wins. The server never mints identity (ADR-0045).
-  Decided in [ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md).
+  Decided in ADR-0158.
 - **Claude Code instance** — one Claude Code process the daemon launched in an
-  ephemeral setec sandbox (gibson ADR-0016), driven headless with stream-json on stdin
+  ephemeral setec sandbox (ADR-0116), driven headless with stream-json on stdin
   and stdout. Two shapes from one image: *one-shot* (a goal, no stdin, ends with
   the result, like the opencode agent) and *session* (long-lived, takes turns
   until stopped). Both are one mission run and one sandbox. Blocker 6 does not
@@ -240,7 +240,7 @@ unbuilt `dist` would land in the type and run paths of every check.
   localhost inside the sandbox, holds the inbox subscription, and swaps the
   grant per turn. A stdio server Claude Code spawns cannot do this. ADR
   candidate: long-lived single-user sandbox, per-turn task grants, MCP over
-  localhost HTTP (amends gibson ADR-0016's one-run-one-sandbox rule).
+  localhost HTTP (amends ADR-0116's one-run-one-sandbox rule).
 - **Job** — the unit of work a member holds. Opened by the first structured
   input (a `Task` with typed fields: goal, repositories with connector ref
   and deliverable, credential names, input World node ids, acceptance,

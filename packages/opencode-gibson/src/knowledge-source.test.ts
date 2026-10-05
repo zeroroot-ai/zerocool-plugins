@@ -14,7 +14,7 @@ import { selectKnowledgeSource } from "./knowledge-source.js"
  * The failure this guards is silent: if a dispatched run quietly fell back to
  * the component grant, every read would still work and nobody would notice the
  * run held broader authority than its dispatch granted, with no per-task
- * attribution on anything it read. That is the gap ADR-0006 recorded, and it is
+ * attribution on anything it read. That is the gap ADR-0156 recorded, and it is
  * only visible if the wrong path is loud.
  */
 

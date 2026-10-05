@@ -15,7 +15,7 @@ import { WorkspaceManager, type MergeRequestOpener } from "./workspace.js"
  * Run one dispatched Task as a single auto-closed job (zerocool-plugins#111).
  *
  * The launch supplies the task, the per-dispatch grant and the callback
- * endpoint (gibson ADR-0016). That grant is both the member base grant and the
+ * endpoint (ADR-0116). That grant is both the member base grant and the
  * turn grant, because a one-shot run has exactly one dispatch. The turn runner,
  * the job table and the workspace manager are the member's, unchanged.
  */

@@ -1,7 +1,7 @@
 # Claude Code stream-json fixtures
 
 One directory per Claude Code version. The driver parses what the CLI really
-prints, so a fixture is only worth what its capture is worth (ADR-0006 rule,
+prints, so a fixture is only worth what its capture is worth (ADR-0156 rule,
 the same discipline `opencode-run.test.ts` follows).
 
 ## What is in `claude-code-2.1.257`

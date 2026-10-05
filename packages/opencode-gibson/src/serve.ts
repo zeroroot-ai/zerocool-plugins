@@ -11,7 +11,7 @@
  * it something to do.
  *
  * WHY kind=tool. Every kind receives dispatched work now — agent nodes included
- * (gibson#1197 / gibson ADR-0011) — so this is a choice, not a limitation. A tool is
+ * (gibson#1197 / ADR-0111) — so this is a choice, not a limitation. A tool is
  * the honest description of what this process offers: one named capability with
  * declared parameters, invoked by whoever needs it. Registering as an agent
  * would promise a goal-driven executor with its own reasoning loop, which is

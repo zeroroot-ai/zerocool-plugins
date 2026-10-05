@@ -9,7 +9,7 @@ import type { Finding, TaskHarness } from "@zeroroot-ai/sdk"
  *
  * One code path, one backend: the callback service's `SubmitFinding` under
  * the per-dispatch grant. The component-identity backend and the standalone
- * JSONL log went with the `submit_finding` tool (ADR-0008): a model submits
+ * JSONL log went with the `submit_finding` tool (ADR-0158): a model submits
  * through the Gibson MCP server, and nothing in this package submits on a
  * component identity or to a local file (zerocool-plugins#102).
  *
@@ -19,7 +19,7 @@ import type { Finding, TaskHarness } from "@zeroroot-ai/sdk"
  * to triage.
  *
  * The `submit_finding` tool the model calls lives in the Gibson MCP server now
- * (ADR-0008). What is left here is the backend the dispatched task kinds use
+ * (ADR-0158). What is left here is the backend the dispatched task kinds use
  * when they submit a finding themselves, with no model in the loop:
  * `source-analysis` triages semgrep candidates, and `dispatch` reports them
  * under the task grant.

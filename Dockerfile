@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# Container image for the zerocool AGENT (kind=agent dispatched shape, ADR-0006):
+# Container image for the zerocool AGENT (kind=agent dispatched shape, ADR-0156):
 # an OUTBOUND worker that registers with the Gibson daemon (GIBSON_PLATFORM_URL)
 # and drives opencode headless for each dispatched Task. It listens on no port.
-# Built from source; consumed by the Gibson platform catalog (gibson ADR-0015) and by
-# gitops as an external agent workload. See docs/adr/0006 + zerocool-plugins#33.
+# Built from source; consumed by the Gibson platform catalog (ADR-0136) and by
+# gitops as an external agent workload. See ADR-0156 + zerocool-plugins#33.
 #
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
 # zerocool-plugins#13): the base image by digest, the opencode CLI and the

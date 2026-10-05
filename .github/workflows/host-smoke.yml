@@ -1,7 +1,7 @@
 name: host-smoke
 
 # The config snippets in hosts/ are the install path for every coding agent
-# that has no bundle (ADR-0008, slice A8). A snippet that no longer starts the
+# that has no bundle (ADR-0158, slice A8). A snippet that no longer starts the
 # server is a broken install page, and nothing else in CI would notice.
 #
 # Codex CLI and Gemini CLI have a headless mode, so this workflow writes the

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# The zerocool Claude agent image (gibson#1706, ADR-0008, gibson ADR-0016).
+# The zerocool Claude agent image (gibson#1706, ADR-0158, ADR-0116).
 #
 # One image, two shapes, selected by the manifest command (gibson#1717):
 #
@@ -20,7 +20,7 @@
 #
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
 # zerocool-plugins#13): the base image by digest, and the Claude Code CLI plus
-# the Gibson MCP server (the one tool surface for every host, ADR-0008)
+# the Gibson MCP server (the one tool surface for every host, ADR-0158)
 # through tools/claude/package-lock.json (npm ci). The Claude Code version
 # there is the one the stream-json fixtures in packages/claude-member/test/
 # fixtures came from; a bump re-captures them (test/fixtures/README.md).

@@ -6,7 +6,7 @@ Claude Code, Cursor, Codex CLI, Gemini CLI and Windsurf.**
 Install a plugin and your coding agent gains Gibson. The tools are the same
 everywhere: one MCP server, `@zeroroot-ai/gibson-mcp`, exposing every RPC of
 every SDK service, every SDK helper and every platform tool checked in for
-your tenant ([ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md)).
+your tenant (ADR-0158).
 A host adapter adds what only that host can do: for opencode, the model
 routed through the harness.
 
@@ -42,8 +42,8 @@ The plugin is a bundle around the Gibson MCP server. Its `.mcp.json` spawns
 SessionStart injects the ambient knowledge block the server wrote, and
 SessionEnd checkpoints the transcript to the session store. It holds no tools
 and never routes model traffic: your Claude login pays for the model
-([ADR-0008](docs/adr/0008-gibson-mcp-server-one-tool-surface.md),
-[ADR-0007](docs/adr/0007-claude-code-plugin-session-is-a-live-mission.md)).
+(ADR-0158,
+ADR-0157).
 
 The server checks in on its own, and how depends on what is present when it
 starts. Set `GIBSON_PLATFORM_URL` and ask Claude for `gibson_status` to see
@@ -159,7 +159,7 @@ key (`~/.zerocool/host.key`) re-registers the host afterwards. Handlers receive
 the session's Gibson clients, so a served tool can call LLM, tools, findings and
 knowledge through the callback harness during a dispatched run.
 
-See [`CONTEXT.md`](CONTEXT.md) and [`docs/adr/`](docs/adr/).
+See [`CONTEXT.md`](CONTEXT.md). The ADRs live in the `docs` repo of the organization.
 
 ## License and history
 
