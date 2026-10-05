@@ -39,7 +39,7 @@ Two platform facts shape the design.
    person originates it: the MCP server builds a mission with one AGENT node
    that names this component and submits it through the CLI login session
    (`gibson mission submit`), because a component may originate a mission
-   only from inside one it was dispatched to (gibson ADR-0063). The daemon
+   only from inside one it was dispatched to (ADR-0063). The daemon
    dispatches the node to this component, which claims its own
    `agent_execute` dispatch and holds the task grant from then on. The session has parity with a dispatched agent: `Observe`,
    `WorldView`, `QueryNodes`, the session store, tools and delegation. The
@@ -64,7 +64,7 @@ Two platform facts shape the design.
   the task grant. Both fail open.
 - One mission per launch adds `mission.started` and `mission.done` events to
   the tenant Timeline and one Mission node to the graph per session. That is
-  the attribution ADR-0012 asks for, not noise.
+  the attribution gibson ADR-0012 asks for, not noise.
 - Platform work this depends on: gibson#1602 (a live node must not fail at the
   5-minute work-queue wait), gibson#1603 (the work grant's allowed list),
   gibson#1605 (ext-authz must accept a daemon-minted task grant as the sole

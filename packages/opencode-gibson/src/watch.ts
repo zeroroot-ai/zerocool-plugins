@@ -372,7 +372,7 @@ export interface HarnessScanLauncherOptions {
  * of the watch mission and inherits its tenant. Nothing in the request names a
  * parent, a tenant or an originator, so nothing here can widen them.
  *
- * THE MISSION IS NAMED, NOT BUILT (ADR-0018, gibson#1688). The Scan mission is
+ * THE MISSION IS NAMED, NOT BUILT (gibson ADR-0018, gibson#1688). The Scan mission is
  * checked into gibson's `missioncatalog` and that copy is authoritative; this
  * launcher sends its name and seven parameters. It used to build its own graph,
  * because `CreateMission` had no way to ask for the catalog's copy — two

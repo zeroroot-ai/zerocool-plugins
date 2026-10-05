@@ -15,7 +15,7 @@ must become a Gibson component (register, harness LLM, findings, World).
 It runs **off-cluster** (a customer's machine / CI), so it cannot use the
 in-cluster SPIFFE-mTLS path the dashboard uses. Gibson already has the off-cluster
 answer: the **Capability Grant Protocol** (`sdk/capabilitygrant`, ADR-0045 unified
-CG identity runtime / ADR-0036 CG-first agent identity) — the client-side,
+CG identity runtime) — the client-side,
 protocol-only (no server secrets) auth used by external agents today.
 
 ## Decision

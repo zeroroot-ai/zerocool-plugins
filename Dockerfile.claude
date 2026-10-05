@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# The zerocool Claude agent image (gibson#1706, ADR-0008, ADR-0016).
+# The zerocool Claude agent image (gibson#1706, ADR-0008, gibson ADR-0016).
 #
 # One image, two shapes, selected by the manifest command (gibson#1717):
 #

@@ -1,7 +1,7 @@
 name: node-ci
 
 # Thin caller for the canonical three-tier Node/pnpm CI
-# (zeroroot-ai/.github reusable-node-ci.yml; epic cicd-efficiency, ADR-0060).
+# (zeroroot-ai/.github reusable-node-ci.yml; epic cicd-efficiency).
 # This repo had NO CI at all until zerocool-plugins#29 — a `main` that did not
 # build from its own lockfile survived a week because nothing ever ran.
 #
@@ -16,7 +16,7 @@ name: node-ci
 # fork's CI now installs the same way ours does. The git URL itself is still
 # a stopgap — the durable fix is the npm publish tracked in #26.
 #
-# Pinned to release tag v2.2.0 per ADR-0060's blast-radius rule (never
+# Pinned to release tag v2.2.0 per the blast-radius rule (never
 # @main). v2.2.0 is the merge of zeroroot-ai/.github#242, which added the
 # private-git-deps seam.
 #
