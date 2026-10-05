@@ -5,15 +5,16 @@ Gibson interoperability.**
 Install a plugin, and opencode gains Gibson: LLM through the harness, tools,
 findings, the knowledge graph, delegation/missions — with a bootstrap key.
 
-## Three layers (all branded zerocool)
+## Two layers (all branded zerocool)
 
 1. **`@zeroroot-ai/sdk`** (repo [`sdk-ts`](https://github.com/zeroroot-ai/sdk-ts)) — the
    framework-agnostic TS Gibson SDK: connect-es bindings (BSR), Capability Grant
    auth, component register/heartbeat, the session singleton, the OpenAI-compat
    shim. Nothing opencode-specific. Any TS program can use it.
-2. **`zerocool-plugins`** (this repo) — the opencode plugins that import the SDK.
-3. **`zerocool`** (later) — a branded opencode **fork** that *inserts* these plugins
-   and carries any **core** patches for the one thing a plugin cannot do (#14).
+2. **`zerocool-plugins`** (this repo) — the host plugins that import the SDK.
+
+No fork of opencode exists (ADR-0155). `@opencode-ai/plugin` is a peer
+dependency, and this repo holds no opencode source.
 
 ## The collection
 
@@ -39,7 +40,7 @@ write carries an etag: an empty etag means create, a stale etag comes back
 cap is 8 MB.
 
 **It mirrors, it never replaces.** opencode owns its session format and its
-local disk. Replacing that storage needs the fork, not a plugin. So the plugin
+local disk. A plugin cannot replace that storage, and no fork exists. So the plugin
 copies, and a restore adopts the stored version instead of rebuilding the
 session.
 
@@ -98,7 +99,7 @@ still run on the host, so the agent can edit a file the Devbox build never
 sees. The Workspace\* RPCs do not close it — they resolve the calling
 component's mission harness and address the MISSION workspace, which is a
 different filesystem from the Devbox volume. Closing it needs Devbox-backed
-file tools on the same `DevboxExec` channel, or the fork.
+file tools on the same `DevboxExec` channel.
 
 ## Boundary — plugin vs core
 
@@ -108,8 +109,8 @@ The opencode plugin API is rich (`config`, `provider`, `auth`, `tool`, `event`,
 including zero-config LLM and Devbox execution.
 
 **The one thing that is not a plugin: #14 dispatched mode** — an external driver
-over opencode's server/SDK (`PollWork` → run opencode headless). Deferred to the
-`zerocool` fork.
+over opencode's server/SDK (`PollWork` → run opencode headless). A driver
+process serves it (ADR-0156), not a fork.
 
 A shared **Gibson session singleton** lives in `@zeroroot-ai/sdk` so multiple plugins
 share one Capability-Grant auth + one `RegisterComponent`.
