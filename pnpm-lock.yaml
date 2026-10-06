@@ -24,8 +24,8 @@ importers:
   packages/claude-gibson:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.15.0
+        version: 0.15.0
 
   packages/claude-member:
     dependencies:
@@ -36,14 +36,14 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.15.0
+        version: 0.15.0
 
   packages/opencode-gibson:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.15.0
+        version: 0.15.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -58,8 +58,8 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.15.0
+        version: 0.15.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -74,8 +74,8 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.14.0
-        version: 0.14.0
+        specifier: ^0.15.0
+        version: 0.15.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -644,8 +644,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@zeroroot-ai/sdk@0.14.0':
-    resolution: {integrity: sha512-kKj19kt43K+FTh8LI9ynotJBqc2nNHShCJm8zZwNG8nnx8bn70pTr2bt1hfbTkCqvoglgx/5EIvW8OjaMLzEYA==}
+  '@zeroroot-ai/sdk@0.15.0':
+    resolution: {integrity: sha512-B9YzSG1fSxhZucNOvG0JIkxzvPGfkFvJqWJFbKlxg4uHMqE6rtTDN9K2z7TVzSfVNqo7+n4k9gRX8Kr/2PDptQ==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -1138,7 +1138,7 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@zeroroot-ai/sdk@0.14.0':
+  '@zeroroot-ai/sdk@0.15.0':
     dependencies:
       '@bufbuild/protobuf': 2.16.0
       '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
