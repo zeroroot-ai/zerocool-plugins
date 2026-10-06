@@ -55,8 +55,25 @@ export interface SignInRelay {
   reportSignedIn(status: AuthStatus): Promise<void>
   /** The login failed for good: the CLI exited, or the deadline passed. */
   reportFailed(reason: string): Promise<void>
-  /** The login is close to expiry and the person should sign in again. */
-  reportExpiring?(daysLeft: number): Promise<void>
+}
+
+/**
+ * The relay the daemon reads. Each step is one JSON line on the stream the
+ * console already follows, keyed by `type` like every other console line.
+ * The daemon forwards these four types to the owner and stores none of them
+ * (gibson `internal/server/daemon/bank_signin.go`). The URL rides this line
+ * only, never a log line.
+ */
+export function consoleRelay(print: (line: Record<string, string>) => void, onSignedIn: (status: AuthStatus) => void): SignInRelay {
+  return {
+    reportPrompt: async (p) => print({ type: "sign_in", url: p.url, code_prompt: p.codePrompt }),
+    reportInvalidCode: async (message) => print({ type: "sign_in_invalid", message }),
+    reportSignedIn: async (status) => {
+      onSignedIn(status)
+      print({ type: "sign_in_done" })
+    },
+    reportFailed: async (error) => print({ type: "sign_in_failed", error }),
+  }
 }
 
 export class SignInError extends Error {}

@@ -14,7 +14,7 @@ import { FileJobStore, JobTable } from "./job.js"
 import { Member } from "./member.js"
 import { typedValueString } from "./oneshot.js"
 import { childEnv, platformTransport, platformTrust, type PlatformTrust } from "./platform-ca.js"
-import { assertSubscriptionOnly, readAuthStatus } from "./signin.js"
+import { assertSubscriptionOnly, consoleRelay, readAuthStatus, SignIn } from "./signin.js"
 import { harnessSessionStore } from "./transcript.js"
 import { readClaudeVersion } from "./version.js"
 import { WorkspaceManager } from "./workspace.js"
@@ -193,6 +193,23 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
     mcp: gateway,
     sessions: harnessSessionStore(harness),
     needsSignIn: () => !signedIn,
+    ...(env.loginShape === "subscription"
+      ? {
+          signIn: () =>
+            new SignIn({
+              bin: env.claudeBin,
+              env: processEnv,
+              cwd: env.workspace,
+              relay: consoleRelay(
+                (line) => opts.onEvent?.(JSON.stringify(line)),
+                () => {
+                  signedIn = true
+                },
+              ),
+              log,
+            }),
+        }
+      : {}),
     ...(opts.onEvent ? { onEvent: (_jobId: string, line: string) => opts.onEvent!(line) } : {}),
     log,
   })
