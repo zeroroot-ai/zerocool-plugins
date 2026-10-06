@@ -36,8 +36,10 @@ export async function runHook(input: HookInput, env: NodeJS.ProcessEnv, deps = {
       return JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: block } })
     }
     case "SessionEnd": {
-      const live = await readLive(dir, cwd)
-      if (!live || !input.transcript_path || !input.session_id) return ""
+      const read = await readLive(dir, cwd)
+      if (!read || !input.transcript_path || !input.session_id) return ""
+      if ("refused" in read) return JSON.stringify({ systemMessage: `zerocool: session checkpoint skipped: ${read.refused}` })
+      const live = read.state
       let data: Buffer
       try {
         data = await deps.readFile(input.transcript_path)

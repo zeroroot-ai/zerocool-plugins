@@ -2,11 +2,11 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
-import { mkdtemp, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { keyFor, readAmbient, readLive, stateDir, type LiveState } from "./state.js"
+import { endpointHost, keyFor, liveRefusal, readAmbient, readLive, stateDir, type LiveState } from "./state.js"
 
 /**
  * The server writes these files; this package only reads them. The test
@@ -43,7 +43,31 @@ test("the live mission reads back, and an unreadable file fails open", async () 
   assert.equal(await readLive(dir, "/w"), undefined)
   const live: LiveState = { missionId: "m", workId: "w", endpoint: "d:443", token: "t", insecure: false, writtenAt: 1 }
   await serverWrites(dir, "/w", { live })
-  assert.deepEqual(await readLive(dir, "/w"), live)
+  assert.deepEqual(await readLive(dir, "/w"), { state: live })
   await writeFile(join(dir, `live-${keyFor("/broken")}.json`), "{not json", "utf8")
   assert.equal(await readLive(dir, "/broken"), undefined, "a stale or half-written file must not break a session end")
+})
+
+test("a live state file that another user can read is refused", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zc-state-"))
+  const live: LiveState = { missionId: "m", workId: "w", endpoint: "d:443", token: "t", insecure: false, writtenAt: 1 }
+  await serverWrites(dir, "/w", { live })
+  await chmod(join(dir, `live-${keyFor("/w")}.json`), 0o644)
+  const read = await readLive(dir, "/w")
+  assert.ok(read && "refused" in read && /mode must be 0600/.test(read.refused))
+})
+
+test("the endpoint must be TLS, and TLS verification may be off only for loopback", () => {
+  const ok = { uid: 1000, mode: 0o100600 }
+  const live = (endpoint: string, insecure = false): LiveState => ({ missionId: "m", workId: "w", endpoint, token: "t", insecure, writtenAt: 1 })
+  assert.equal(liveRefusal(live("gibson.example:443"), ok, 1000), "")
+  assert.equal(liveRefusal(live("https://gibson.example"), ok, 1000), "")
+  assert.equal(liveRefusal(live("127.0.0.1:50001", true), ok, 1000), "")
+  assert.equal(liveRefusal(live("localhost:50001", true), ok, 1000), "")
+  assert.match(liveRefusal(live("attacker.example:443", true), ok, 1000), /not loopback/)
+  assert.match(liveRefusal(live("http://attacker.example"), ok, 1000), /not host:port or an https URL/)
+  assert.match(liveRefusal(live("attacker.example/path:443"), ok, 1000), /not host:port/)
+  assert.match(liveRefusal(live("d:443"), { uid: 0, mode: 0o100600 }, 1000), /another user/)
+  assert.equal(endpointHost("d:443"), "d")
+  assert.equal(endpointHost("d"), "", "a bare host names no port")
 })
