@@ -6,7 +6,6 @@ import { selectHarness, type HarnessSelectionDeps } from "./harness.js"
 
 import { toDevboxArgv } from "./command.js"
 import { isDevboxAbsent, runInDevbox, type DevboxExecCall, type DevboxResult } from "./devbox.js"
-import { runOnHost } from "./host.js"
 
 /**
  * `@zeroroot-ai/zerocool-exec` — the executor seam (zerocool-plugins#12).
@@ -47,8 +46,6 @@ import { runOnHost } from "./host.js"
 export interface ExecPluginDeps extends HarnessSelectionDeps {
   /** Where every line this plugin writes goes. Defaults to stderr. */
   log?: (message: string) => void
-  /** Defaults to `node:child_process.spawn` through `runOnHost`. */
-  onHost?: typeof runOnHost
 }
 
 /** opencode's tool-execute context, as this plugin reads it. */
@@ -88,7 +85,6 @@ const ARGS = {
 
 export async function execPlugin(input: PluginInput, deps: ExecPluginDeps = {}): Promise<Hooks> {
   const log = deps.log ?? ((m: string) => console.error(m))
-  const onHost = deps.onHost ?? runOnHost
 
   const selected = await selectHarness(deps)
   if (!selected.client) {
@@ -102,19 +98,28 @@ export async function execPlugin(input: PluginInput, deps: ExecPluginDeps = {}):
   let devboxGone = false
   log(`[zerocool-exec] shell commands run in the Gibson Devbox on the ${selected.mode} grant`)
 
+  // A Devbox that proved absent fails every later command of the session. The
+  // command never moves onto this host: the tool tells the model it runs in an
+  // isolated microVM, and the repository bytes it runs are untrusted. To run on
+  // this host, the operator starts opencode without this plugin.
+  const devboxGoneError = (reason: string): Error =>
+    new Error(
+      `bash: the Gibson Devbox is not available (${reason}). The command did not run. ` +
+        "To run commands on this host, start opencode without the zerocool exec plugin.",
+    )
+  let goneReason = ""
+
   const run = async (command: string, context: ToolContext): Promise<DevboxResult> => {
     const argv = toDevboxArgv(command)
-    if (devboxGone) return onHost(argv, { cwd: context.directory, signal: context.abort })
+    if (devboxGone) throw devboxGoneError(goneReason)
     try {
       return await runInDevbox(exec, { sessionId: context.sessionID, argv, signal: context.abort })
     } catch (e) {
       if (!isDevboxAbsent(e)) throw e
       devboxGone = true
-      log(
-        `[zerocool-exec] the Gibson Devbox is not available (${(e as Error).message}); ` +
-          "commands run on this host for the rest of the session",
-      )
-      return onHost(argv, { cwd: context.directory, signal: context.abort })
+      goneReason = (e as Error).message
+      log(`[zerocool-exec] the Gibson Devbox is not available (${goneReason}); shell commands fail for the rest of the session`)
+      throw devboxGoneError(goneReason)
     }
   }
 
@@ -126,7 +131,7 @@ export async function execPlugin(input: PluginInput, deps: ExecPluginDeps = {}):
       if (!command) throw new Error("bash: command is required")
 
       const result = await run(command, context)
-      const where = devboxGone ? "this host" : "the Gibson Devbox"
+      const where = "the Gibson Devbox"
       if (result.outcome === "unknown" || result.outcome === "error") {
         // Never report an outcome the stream did not carry. "the command
         // succeeded" and "the connection dropped" must not look alike.
