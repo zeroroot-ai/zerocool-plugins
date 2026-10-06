@@ -87,6 +87,9 @@ export const GibsonPlugin: Plugin = async () => {
     return standalone()
   }
 
+  // The catalog holds an agent named "zerocool". A token-enrolled host checks in
+  // under its own name, so the default differs from every catalog name.
+  const agentName = process.env.GIBSON_AGENT_NAME ?? "zerocool-opencode"
   let session: GibsonSession | undefined
   let shim: RunningShim | undefined
   try {
@@ -95,9 +98,9 @@ export const GibsonPlugin: Plugin = async () => {
       daemonURL: process.env.GIBSON_DAEMON_URL,
       bootstrapToken,
       hostKeyPath,
-      agentName: "zerocool",
+      agentName,
       agentMode: process.env.GIBSON_AGENT_MODE ?? "autonomous",
-      agent: { name: "zerocool", version: "0.0.0", capabilities: ["code"] },
+      agent: { name: agentName, version: "0.0.0", capabilities: ["code"] },
     })
     shim = await startCompletionsShim({
       component: session.clients.component,

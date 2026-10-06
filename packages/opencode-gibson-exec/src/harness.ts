@@ -139,7 +139,7 @@ export async function selectHarness(deps: HarnessSelectionDeps = {}): Promise<Se
     platformURL,
     daemonURL: env.GIBSON_DAEMON_URL,
     hostKeyPath,
-    agentName: env.GIBSON_AGENT_NAME ?? "zerocool",
+    agentName: env.GIBSON_AGENT_NAME ?? "zerocool-opencode",
   })
   return { client, mode: "component", reason: "", stop: () => {} }
 }

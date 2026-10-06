@@ -16,11 +16,11 @@
  * of opencode, which is exactly the carve-out ADR-0155 wrote. See
  * ADR-0156.
  *
- * Usage (after `gibson agent enroll --kind agent --name zerocool`):
+ * Usage (after `gibson agent enroll --kind agent --name zerocool-opencode`):
  *
  *   GIBSON_PLATFORM_URL=https://api.example:30443 \
  *   GIBSON_BOOTSTRAP_TOKEN=<one-time token> \
- *   ZEROCOOL_AGENT_NAME=zerocool \
+ *   ZEROCOOL_AGENT_NAME=zerocool-opencode \
  *   ZEROCOOL_WORKSPACE=/srv/work \
  *     zerocool-agent
  *
@@ -103,7 +103,7 @@ async function main(): Promise<void> {
     console.error("[zerocool-agent] GIBSON_PLATFORM_URL is required")
     process.exit(2)
   }
-  const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool"
+  const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
   const workspace = process.env.ZEROCOOL_WORKSPACE ?? process.cwd()
   const model = process.env.ZEROCOOL_MODEL
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")

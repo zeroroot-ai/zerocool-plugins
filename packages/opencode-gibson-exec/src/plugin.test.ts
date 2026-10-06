@@ -195,7 +195,7 @@ test("an interactive run runs in the Devbox on the component grant", async () =>
     hostKeyExists: (p) => p === "/keys/host.key",
     openComponent: async (opts) => {
       assert.equal(opts.hostKeyPath, "/keys/host.key")
-      assert.equal(opts.agentName, "zerocool")
+      assert.equal(opts.agentName, "zerocool-opencode")
       return fakeClient([])
     },
   })
