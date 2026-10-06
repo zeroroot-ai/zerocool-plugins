@@ -95,7 +95,7 @@ const memberEnv = (endpoint: string, stateDir: string) => ({
   callbackInsecure: false,
   instanceMode: "member" as const,
   missionId: "m-1",
-  sandbox: "gvisor" as const,
+  sandbox: "launcher" as const,
   loginShape: "api-key" as const,
   model: "",
   jobCap: 1,

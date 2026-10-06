@@ -32,8 +32,8 @@ export const MEMBER_ENV = {
   /** The mission the member was originated under (ADR-0063). */
   missionId: "GIBSON_MISSION_ID",
   /**
-   * The sandbox marker. The daemon sets it to `gvisor` when it launches the
-   * sandbox under gVisor. Required: the driver runs Claude Code with permission
+   * The sandbox marker. The daemon sets it to `launcher` when it launches the
+   * sandbox in the launcher backend of setec, a Firecracker machine. Required: the driver runs Claude Code with permission
    * prompts off, and the sandbox is the control that makes that safe. Without
    * the marker the driver refuses to start, so the same code path cannot run
    * on a laptop with the prompts off.
@@ -69,8 +69,8 @@ export const MEMBER_ENV = {
 
 export type InstanceMode = "member" | "one-shot"
 /** The one value `GIBSON_SANDBOX` may carry. */
-export type SandboxMarker = "gvisor"
-export const SANDBOX_MARKER: SandboxMarker = "gvisor"
+export type SandboxMarker = "launcher"
+export const SANDBOX_MARKER: SandboxMarker = "launcher"
 /**
  * The state directory under the sandbox. A setec sandbox has a read-only
  * root filesystem, and `/tmp` is the scratch volume every sandbox mounts, so
@@ -165,7 +165,7 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
   if (sandbox !== SANDBOX_MARKER) {
     throw new Error(
       `${MEMBER_ENV.sandbox} is ${sandbox === undefined ? "not set" : JSON.stringify(sandbox)}, expected ${JSON.stringify(SANDBOX_MARKER)}. ` +
-        "The driver runs Claude Code with permission prompts off, so it starts only inside the gVisor sandbox " +
+        "The driver runs Claude Code with permission prompts off, so it starts only inside the launcher sandbox " +
         "the daemon launches. The daemon sets this marker on that launch. Refusing to start.",
     )
   }

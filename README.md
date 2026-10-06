@@ -54,7 +54,7 @@ mission to a target; `GIBSON_BOOTSTRAP_TOKEN` is read on a first start only;
 ## Banks of always-on Claude Code
 
 A **bank** is N Claude Code instances a person or a tenant asked for. The
-daemon keeps them running in gVisor sandboxes, and anyone with `can_send`
+daemon keeps them running in launcher sandboxes, and anyone with `can_send`
 gives one a structured **job**: a goal, repositories, credentials, an
 acceptance rule. A job is a persistent Claude Code conversation with its own
 worktrees, and it stays open across back-and-forth with a verifier until a
