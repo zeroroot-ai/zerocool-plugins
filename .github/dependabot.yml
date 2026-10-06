@@ -40,12 +40,12 @@ updates:
           - "minor"
           - "patch"
     # The hash-pinned tool manifests that the images and the workflows install with
-    # npm ci (zerocool-plugins#13). The Claude Code version in tools/claude is the one
-    # the stream-json fixtures came from. A bump captures them again by hand
+    # npm ci (zerocool-plugins#13). Dependabot proposes Claude Code updates, security
+    # releases included. The stream-json fixtures come from the pinned version, so a
+    # bump pull request also captures them again
     # (packages/claude-member/test/fixtures/README.md). pnpm is bumped by hand with
     # packageManager in the root package.json.
     ignore:
-      - dependency-name: "@anthropic-ai/claude-code"
       - dependency-name: "pnpm"
     commit-message:
       prefix: "chore(deps)"

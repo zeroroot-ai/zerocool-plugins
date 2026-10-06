@@ -60,6 +60,8 @@ export interface WorkspaceOptions {
   git?: GitRunner
   clock?: () => number
   log?: (line: string) => void
+  /** The clone URL schemes to accept. Defaults to CLONE_SCHEMES. */
+  cloneSchemes?: readonly string[]
 }
 
 interface CloneEntry {
@@ -126,13 +128,33 @@ function assertNames(jobId: string, repos: JobRepository[]): void {
   for (const repo of repos) assertGitArgument("repository name", repo.name, { path: true })
 }
 
-/** A clone URL or path git may take positionally. Never an option, never empty. */
-export function assertCloneUrl(url: string): string {
+/**
+ * The clone URL schemes a job may name. A job comes from the bank over the
+ * wire, and git also accepts transports such as `ext::` (it runs a command) and
+ * `file://` (it reads this host). Only a remote transport is accepted.
+ */
+export const CLONE_SCHEMES: readonly string[] = ["https:", "ssh:"]
+
+/**
+ * A clone URL git may take positionally. Never an option, never empty, never a
+ * scheme outside `schemes`, and never the scp-like `host:path` form, which
+ * names no scheme.
+ */
+export function assertCloneUrl(url: string, schemes: readonly string[] = CLONE_SCHEMES): string {
   if (url === "") throw new Error("clone url is empty")
   if (url.startsWith("-")) throw new Error(`clone url ${JSON.stringify(url)} starts with a dash, which git reads as an option`)
   for (const ch of url) {
     const code = ch.charCodeAt(0)
     if (code < 0x21 || code === 0x7f) throw new Error(`clone url ${JSON.stringify(url)} contains a control or space character`)
+  }
+  let protocol: string
+  try {
+    protocol = new URL(url).protocol
+  } catch {
+    throw new Error(`clone url ${JSON.stringify(url)} is not a URL with a scheme; use one of ${schemes.join(", ")}`)
+  }
+  if (!schemes.includes(protocol)) {
+    throw new Error(`clone url ${JSON.stringify(url)} uses the scheme ${protocol}; use one of ${schemes.join(", ")}`)
   }
   return url
 }
@@ -185,7 +207,7 @@ export class WorkspaceManager {
 
   /** Clone once, fetch after. Returns the bare clone path. */
   async ensureClone(repo: JobRepository): Promise<string> {
-    const cloneUrl = assertCloneUrl(repo.cloneUrl)
+    const cloneUrl = assertCloneUrl(repo.cloneUrl, this.opts.cloneSchemes)
     const key = cloneCacheKey(repo)
     const path = clonePath(this.opts.root, repo)
     const credential = await this.credentialFor(repo)

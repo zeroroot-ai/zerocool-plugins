@@ -116,7 +116,9 @@ daemon. The platform CA is TLS with a private root, verification on.
 
 ## What the Claude child sees
 
-`claudeChildEnv` builds the child environment from an allow list. No
+`claudeChildEnv` builds the child environment from an allow list. A cloud
+credential passes only for its login shape: `AWS_*` for `bedrock`, `GOOGLE_*`
+and `CLOUD_ML_REGION` for `vertex`, `AZURE_*` for `foundry`. No
 `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the model's
 process. `NODE_EXTRA_CA_CERTS` passes, so the child trusts the platform CA.
 The connector token goes to `git` alone, through `GIT_ASKPASS`, and is never
