@@ -198,5 +198,14 @@ test("parseAuthUrl takes the first claude URL token and reads a long line once",
   assert.equal(parseAuthUrl("prefix>https://console.claude.com/login"), "https://console.claude.com/login")
   const long = `https://${"claude.".repeat(50_000)}`
   assert.equal(parseAuthUrl(long), "", "a pathological line without a trailing slash ends promptly")
-  assert.equal(parseAuthUrl(`${long}/`), `${long}/`)
+  assert.equal(parseAuthUrl(`${long}/`), "", "a host that only repeats claude. is not a sign-in host")
+})
+
+test("parseAuthUrl reads the host, not a claude. anywhere in the URL", () => {
+  assert.equal(parseAuthUrl("https://evil.example/?x=claude.ai/"), "")
+  assert.equal(parseAuthUrl("https://attacker.example/claude./login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai.evil.example/login"), "")
+  assert.equal(parseAuthUrl("https://notclaude.ai/login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai@evil.example/login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai/oauth/authorize?x=1"), "https://claude.ai/oauth/authorize?x=1")
 })
