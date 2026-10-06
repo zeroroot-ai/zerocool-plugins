@@ -231,6 +231,14 @@ paste prompt from its stdout, and relays both to the console through a
 refused code is reported and the attempt continues, because the CLI keeps
 waiting. Success is confirmed with `claude auth status --json`.
 
+The bank owner starts the flow from the console. The daemon sends the word
+`start` as a turn on the control job `sign-in`, and later the pasted code as
+an answer on the same job. These inputs open no job. The relay prints one JSON
+line for each step on the event stream that the console follows: `sign_in`
+with the URL and the prompt, then `sign_in_invalid`, `sign_in_done` or
+`sign_in_failed`. The daemon forwards these lines to the owner and stores
+none of them. One attempt runs at a time, and a stop cancels it.
+
 The platform never sees the credential. This driver never reads, copies or
 logs `.credentials.json`, and never logs the URL or the code. The credential
 lives in `CLAUDE_CONFIG_DIR` on the sandbox's ephemeral disk and dies with the

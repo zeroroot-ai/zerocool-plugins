@@ -7,10 +7,22 @@ import type { ClaudeEvent } from "./events.js"
 import { nextBackoff } from "./harness-inbox.js"
 import { memberState, type GrantSource, type Inbox, type JobInput, type McpGateway, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobError, JobTable, type JobRecord, type Verdict } from "./job.js"
-import { parseExpiryWarning, type SignInRelay } from "./signin.js"
+import { parseExpiryWarning, SignInError, type SignIn } from "./signin.js"
 import { archiveTranscript, restoreTranscript, transcriptOnDisk, type SessionStore } from "./transcript.js"
 import { startTurn, type TurnHandle } from "./turn.js"
 import type { WorkspaceManager, Worktree } from "./workspace.js"
+
+/**
+ * The job id of the daemon's sign-in control inputs. It names no job (gibson
+ * `internal/engine/harness/member_control.go`, `SignInJobID`).
+ */
+export const SIGN_IN_JOB_ID = "sign-in"
+
+/** The turn text that starts a sign-in (gibson `SignInStart`). */
+export const SIGN_IN_START = "start"
+
+/** What the member needs of one sign-in attempt. */
+export type SignInAttempt = Pick<SignIn, "start" | "submitCode" | "cancel" | "done">
 
 /**
  * The member driver loop (zerocool-plugins#105, glossary: Member, Job, Close).
@@ -46,8 +58,12 @@ export interface MemberDeps {
   claudeCodeVersion: string
   /** True when the login shape is `subscription` and no login is present. */
   needsSignIn?: () => boolean
-  /** Where an expiring subscription login is reported (#109). */
-  signInRelay?: SignInRelay
+  /**
+   * Starts one subscription sign-in attempt (ADR-0119). The owner's console
+   * sends the start word and the pasted code as control inputs on job
+   * {@link SIGN_IN_JOB_ID}. Absent when the login shape takes no sign-in.
+   */
+  signIn?: () => SignInAttempt
   /** Where transcripts are archived to and restored from (#107). */
   sessions?: SessionStore
   /** Grace for a turn to end after SIGINT before the member stops, ms. Default 30s. */
@@ -83,8 +99,8 @@ export class Member {
   private readonly timers: NonNullable<MemberDeps["timers"]>
   private wake: (() => void) | undefined
   private stopping = false
-  /** The day an expiry warning was last reported, so it is reported once a day. */
-  private expiryReportedOn = ""
+  /** The sign-in that is running, if any. One at a time. */
+  private signInAttempt: SignInAttempt | undefined
   /** Days until the subscription login expires, as Claude Code last warned. */
   private signInExpiresInDays = -1
   /** True until the table is loaded, and again once a stop is in progress. */
@@ -166,6 +182,7 @@ export class Member {
 
     const onAbort = () => {
       this.stopping = true
+      this.signInAttempt?.cancel()
       for (const h of this.running.values()) h.interrupt()
       this.wake?.()
     }
@@ -274,10 +291,52 @@ export class Member {
     })
   }
 
-  /** Inputs for held jobs queue in order. The loop drains them. */
+  /** Inputs for held jobs queue in order. The loop drains them. A sign-in control input goes to the sign-in. */
   enqueue(input: JobInput): void {
+    if (input.jobId === SIGN_IN_JOB_ID) {
+      this.signInControl(input)
+      return
+    }
     this.queue.push(input)
     this.wake?.()
+  }
+
+  /**
+   * A control input of the sign-in relay: `start` as a turn, then the code
+   * the person pasted as an answer. The code is typed into the CLI and never
+   * logged.
+   */
+  private signInControl(input: JobInput): void {
+    if (!this.deps.signIn) {
+      this.log("sign-in: this member's login shape takes no sign-in")
+      return
+    }
+    if (input.kind === "turn" && input.text.trim() === SIGN_IN_START) {
+      if (this.signInAttempt) {
+        this.log("sign-in: a sign-in is already running")
+        return
+      }
+      const attempt = this.deps.signIn()
+      this.signInAttempt = attempt
+      void attempt.done.finally(() => {
+        if (this.signInAttempt === attempt) this.signInAttempt = undefined
+      })
+      attempt.start().catch((e: Error) => {
+        this.log(`sign-in: ${e.message}`)
+        attempt.cancel()
+      })
+      return
+    }
+    if (input.kind === "answer") {
+      try {
+        if (!this.signInAttempt) throw new SignInError("no sign-in is waiting for a code")
+        this.signInAttempt.submitCode(input.text)
+      } catch (e) {
+        this.log(`sign-in: ${(e as Error).message}`)
+      }
+      return
+    }
+    this.log(`sign-in: ignored a ${input.kind} control input`)
   }
 
   /** Start at most one thing. Returns whether something started. */
@@ -365,20 +424,15 @@ export class Member {
       })
   }
 
-  /** Claude Code warns on stderr when a subscription login is close to expiry. */
-  private async reportExpiry(stderr: string): Promise<void> {
+  /** Claude Code warns on stderr when a subscription login is close to expiry. The heartbeat carries it. */
+  private noteExpiry(stderr: string): void {
     const days = parseExpiryWarning(stderr)
-    if (days < 0) return
-    this.signInExpiresInDays = days
-    const today = new Date(Date.now()).toISOString().slice(0, 10)
-    if (this.expiryReportedOn === today) return
-    this.expiryReportedOn = today
-    await this.deps.signInRelay?.reportExpiring?.(days).catch((e: Error) => this.log(`sign-in expiry: ${e.message}`))
+    if (days >= 0) this.signInExpiresInDays = days
   }
 
   private async finish(jobId: string, r: ClaudeRunResult): Promise<void> {
     const table = this.deps.table
-    await this.reportExpiry(r.stderr)
+    this.noteExpiry(r.stderr)
     const interrupted = !r.sawResult || r.signal !== null
     const job = await table.finishTurn(jobId, { claudeSessionId: r.sessionId, costUsd: r.costUsd, interrupted })
     const detail = r.sawResult ? (r.isError ? `turn ended with ${r.resultSubtype}: ${r.text.slice(0, 500)}` : r.text.slice(0, 500)) : `turn interrupted (exit ${r.exitCode ?? r.signal}): ${r.text.slice(0, 500)}`

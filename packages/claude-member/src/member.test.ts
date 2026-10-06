@@ -11,10 +11,13 @@ import { Code, ConnectError } from "@connectrpc/connect"
 import type { ClaudeHandle, ClaudeRunOptions } from "./claude-run.js"
 import { readMemberEnv, type MemberEnv } from "./env.js"
 import { ComponentHeartbeat } from "./heartbeat.js"
-import { staticGrants, type DeliverableReport, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
+import { type DeliverableReport, type GrantSource, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobTable, MemoryJobStore, type JobSpec } from "./job.js"
-import { Member, type MemberDeps } from "./member.js"
+import { Member, SIGN_IN_JOB_ID, SIGN_IN_START, type MemberDeps, type SignInAttempt } from "./member.js"
 import type { WorkspaceManager, WrapUpOutcome } from "./workspace.js"
+
+/** A grant source with the base grant only. Inputs carry their own or fall back. */
+const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant })
 
 let scratch = ""
 function memberEnv(over: Record<string, string> = {}): MemberEnv {
@@ -329,32 +332,86 @@ test("a job state report reaches the daemon on every turn boundary", async () =>
   await run
 })
 
-test("an expiring subscription login is reported once a day, from the turn's stderr", async () => {
-  const expiring: number[] = []
-  const { m, inbox, rec } = member({
-    signInRelay: {
-      reportPrompt: async () => {},
-      reportInvalidCode: async () => {},
-      reportSignedIn: async () => {},
-      reportFailed: async () => {},
-      reportExpiring: async (days: number) => {
-        expiring.push(days)
+/** A sign-in attempt that records what the member asked of it. */
+function fakeSignIn() {
+  const attempts: { started: number; codes: string[]; cancelled: number; end: (ok: boolean) => void }[] = []
+  const factory = (): SignInAttempt => {
+    let end!: (ok: boolean) => void
+    const done = new Promise<boolean>((r) => (end = r))
+    const a = { started: 0, codes: [] as string[], cancelled: 0, end }
+    attempts.push(a)
+    return {
+      done,
+      start: async () => {
+        a.started++
       },
-    },
-  })
-  inbox.queued.push(input("job-1"))
+      submitCode: (code: string) => {
+        a.codes.push(code)
+      },
+      cancel: () => {
+        a.cancelled++
+        end(false)
+      },
+    }
+  }
+  return { attempts, factory }
+}
+
+const signInInput = (kind: JobInput["kind"], text: string): JobInput => input(SIGN_IN_JOB_ID, { kind, text, grant: "", spec: undefined })
+
+test("a start control input starts one sign-in, and the pasted code reaches it, not a job", async () => {
+  const signIn = fakeSignIn()
+  const logs: string[] = []
+  const { m, inbox, rec } = member({ signIn: signIn.factory, log: (l) => logs.push(l) })
   const ac = new AbortController()
   const run = m.run(ac.signal)
-  await settle()
-  rec.finishWith(0, { stderr: "Warning: login expires in 4 days" })
-  await settle()
-  await inbox.deliver(input("job-1", { kind: "turn", text: "again", spec: undefined }))
-  await settle()
-  rec.finishWith(1, { stderr: "Warning: login expires in 4 days" })
-  await settle()
-  assert.deepEqual(expiring, [4], "the same day reports once, not on every turn")
+  await settle(2)
+  await inbox.deliver(signInInput("turn", SIGN_IN_START))
+  await inbox.deliver(signInInput("turn", SIGN_IN_START))
+  await settle(2)
+  assert.equal(signIn.attempts.length, 1, "a second start while one runs starts nothing")
+  assert.equal(signIn.attempts[0]!.started, 1)
+  await inbox.deliver(signInInput("answer", "code-123"))
+  await settle(2)
+  assert.deepEqual(signIn.attempts[0]!.codes, ["code-123"])
+  assert.equal(rec.calls.length, 0, "a control input runs no turn")
+  assert.equal(inbox.states.length, 0, "a control input opens no job")
+  assert.ok(!logs.some((l) => l.includes("code-123")), "the code is never logged")
+
+  signIn.attempts[0]!.end(true)
+  await settle(2)
+  await inbox.deliver(signInInput("turn", SIGN_IN_START))
+  await settle(2)
+  assert.equal(signIn.attempts.length, 2, "a finished sign-in lets the next start run")
   ac.abort()
   await run
+  assert.equal(signIn.attempts[1]!.cancelled, 1, "a stop cancels the sign-in that runs")
+})
+
+test("a code with no sign-in running is dropped, and a member with no sign-in ignores the relay", async () => {
+  const logs: string[] = []
+  const signIn = fakeSignIn()
+  const { m, inbox } = member({ signIn: signIn.factory, log: (l) => logs.push(l) })
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle(2)
+  await inbox.deliver(signInInput("answer", "code-9"))
+  await settle(2)
+  assert.ok(logs.some((l) => l.includes("no sign-in is waiting for a code")))
+  assert.ok(!logs.some((l) => l.includes("code-9")), "the code is never logged")
+  ac.abort()
+  await run
+
+  const plain = member({ log: (l) => logs.push(l) })
+  const ac2 = new AbortController()
+  const run2 = plain.m.run(ac2.signal)
+  await settle(2)
+  await plain.inbox.deliver(signInInput("turn", SIGN_IN_START))
+  await settle(2)
+  assert.ok(logs.some((l) => l.includes("takes no sign-in")))
+  assert.equal(plain.inbox.states.length, 0)
+  ac2.abort()
+  await run2
 })
 
 test("the heartbeat carries the days until the subscription login expires", async () => {

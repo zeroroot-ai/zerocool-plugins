@@ -17,8 +17,8 @@ import { createHash } from "node:crypto"
  *
  * This file is the read half of that format, kept here because a hook must
  * not depend on the server package: the format is the contract, not the
- * import. It matches `@zeroroot-ai/gibson-mcp`'s `state.ts` exactly, and the
- * key is a hash of the working directory.
+ * import. It reads the files that `@zeroroot-ai/gibson-mcp`'s `state.ts`
+ * writes, and the key is a hash of the working directory.
  */
 export interface LiveState {
   missionId: string

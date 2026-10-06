@@ -332,13 +332,3 @@ export function summarizeEvents(events: Iterable<ClaudeEvent>): TurnSummary {
   if (!out.sawResult && out.events > 0) out.isError = true
   return out
 }
-
-/** Parse a whole stdout capture. */
-export function parseEvents(stdout: string): ClaudeEvent[] {
-  const events: ClaudeEvent[] = []
-  for (const line of stdout.split("\n")) {
-    const ev = parseEventLine(line)
-    if (ev) events.push(ev)
-  }
-  return events
-}
