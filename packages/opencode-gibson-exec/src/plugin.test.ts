@@ -6,7 +6,7 @@ import test from "node:test"
 
 import { Code, ConnectError } from "@connectrpc/connect"
 
-import type { DevboxExecMessage, DevboxResult } from "./devbox.js"
+import type { DevboxExecMessage } from "./devbox.js"
 import type { HarnessClient } from "./harness.js"
 import { execPlugin, SHELL_TOOL_ID, type ToolContext, type ToolDefinition } from "./plugin.js"
 import { selectHarness } from "./harness.js"
@@ -48,16 +48,11 @@ function fakeClient(
   } as unknown as HarnessClient
 }
 
-async function toolOf(
-  client: HarnessClient,
-  onHost?: (argv: string[], opts: { cwd?: string }) => Promise<DevboxResult>,
-  log: (m: string) => void = silent,
-): Promise<ToolDefinition> {
+async function toolOf(client: HarnessClient, log: (m: string) => void = silent): Promise<ToolDefinition> {
   const hooks = await execPlugin(fakeInput, {
     env: { GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: "t" },
     openHarness: () => ({ client, stop: silent }) as never,
     log,
-    ...(onHost ? { onHost: onHost as never } : {}),
   })
   const tool = (hooks.tool as unknown as Record<string, ToolDefinition>)[SHELL_TOOL_ID]
   assert.ok(tool, "Platform mode must contribute the shell tool")
@@ -102,51 +97,25 @@ test("a stream with no exit event fails the tool call instead of reporting succe
   await assert.rejects(() => tool.execute({ command: "make test" }, context()), /no exit event/)
 })
 
-test("Unavailable degrades to this host, once, with one warning", async () => {
-  const hostCalls: string[][] = []
+test("Unavailable fails the command, never runs it on this host, and warns once", async () => {
   const warnings: string[] = []
-  const onHost = async (argv: string[]): Promise<DevboxResult> => {
-    hostCalls.push(argv)
-    return { outcome: "exited", exitCode: 0, output: "on host", message: "" }
-  }
   const seen: unknown[] = []
   const client = fakeClient([], seen, new ConnectError("no devbox image configured", Code.Unavailable))
-  const tool = await toolOf(client, onHost, (m) => warnings.push(m))
+  const tool = await toolOf(client, (m) => warnings.push(m))
 
-  const first = await tool.execute({ command: "make test" }, context())
-  assert.equal(first.output, "on host")
-  assert.equal(first.metadata.where, "this host")
-  assert.equal(warnings.filter((w) => w.includes("not available")).length, 1)
-
-  const second = await tool.execute({ command: "make build" }, context())
-  assert.equal(second.output, "on host")
-  assert.equal(hostCalls.length, 2)
+  await assert.rejects(() => tool.execute({ command: "make test" }, context()), /Gibson Devbox is not available.*did not run/s)
+  await assert.rejects(() => tool.execute({ command: "make build" }, context()), /Gibson Devbox is not available/)
   assert.equal(seen.length, 1, "a daemon with no Devbox is not retried on every command")
   assert.equal(warnings.filter((w) => w.includes("not available")).length, 1, "one warning, not one per command")
 })
 
-test("the host fallback runs the same shell form, in the session directory", async () => {
-  const calls: { argv: string[]; cwd?: string }[] = []
-  const onHost = async (argv: string[], opts: { cwd?: string }): Promise<DevboxResult> => {
-    calls.push({ argv, cwd: opts.cwd })
-    return { outcome: "exited", exitCode: 0, output: "", message: "" }
-  }
-  const tool = await toolOf(
-    fakeClient([], [], new ConnectError("not wired", Code.Unimplemented)),
-    onHost,
-  )
-  await tool.execute({ command: "ls" }, context())
-  assert.deepEqual(calls, [{ argv: ["sh", "-lc", "ls"], cwd: "/home/dev/repo" }])
+test("Unimplemented fails the command the same way", async () => {
+  const tool = await toolOf(fakeClient([], [], new ConnectError("not wired", Code.Unimplemented)))
+  await assert.rejects(() => tool.execute({ command: "ls" }, context()), /Gibson Devbox is not available/)
 })
 
-test("a failure that is not Unavailable is raised, not swallowed onto the host", async () => {
-  const onHost = async (): Promise<DevboxResult> => {
-    throw new Error("the host backend must not run for a denied command")
-  }
-  const tool = await toolOf(
-    fakeClient([], [], new ConnectError("no tenant in caller identity", Code.PermissionDenied)),
-    onHost,
-  )
+test("a failure that is not Unavailable is raised as it is", async () => {
+  const tool = await toolOf(fakeClient([], [], new ConnectError("no tenant in caller identity", Code.PermissionDenied)))
   await assert.rejects(() => tool.execute({ command: "ls" }, context()), /no tenant in caller identity/)
 })
 
@@ -195,7 +164,7 @@ test("an interactive run runs in the Devbox on the component grant", async () =>
     hostKeyExists: (p) => p === "/keys/host.key",
     openComponent: async (opts) => {
       assert.equal(opts.hostKeyPath, "/keys/host.key")
-      assert.equal(opts.agentName, "zerocool")
+      assert.equal(opts.agentName, "zerocool-opencode")
       return fakeClient([])
     },
   })

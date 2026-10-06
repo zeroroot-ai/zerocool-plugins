@@ -116,7 +116,9 @@ daemon. The platform CA is TLS with a private root, verification on.
 
 ## What the Claude child sees
 
-`claudeChildEnv` builds the child environment from an allow list. No
+`claudeChildEnv` builds the child environment from an allow list. A cloud
+credential passes only for its login shape: `AWS_*` for `bedrock`, `GOOGLE_*`
+and `CLOUD_ML_REGION` for `vertex`, `AZURE_*` for `foundry`. No
 `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the model's
 process. `NODE_EXTRA_CA_CERTS` passes, so the child trusts the platform CA.
 The connector token goes to `git` alone, through `GIT_ASKPASS`, and is never
@@ -228,6 +230,14 @@ paste prompt from its stdout, and relays both to the console through a
 `SignInRelay`. The code the person pastes goes back on the CLI's stdin. A
 refused code is reported and the attempt continues, because the CLI keeps
 waiting. Success is confirmed with `claude auth status --json`.
+
+The bank owner starts the flow from the console. The daemon sends the word
+`start` as a turn on the control job `sign-in`, and later the pasted code as
+an answer on the same job. These inputs open no job. The relay prints one JSON
+line for each step on the event stream that the console follows: `sign_in`
+with the URL and the prompt, then `sign_in_invalid`, `sign_in_done` or
+`sign_in_failed`. The daemon forwards these lines to the owner and stores
+none of them. One attempt runs at a time, and a stop cancels it.
 
 The platform never sees the credential. This driver never reads, copies or
 logs `.credentials.json`, and never logs the URL or the code. The credential

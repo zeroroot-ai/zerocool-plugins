@@ -67,8 +67,7 @@ own login.
 5. Delete the throwaway config directory.
 6. Scrub the `system/init` line as the list above says. Change no other line.
 7. Replace `job-turn-synthetic.jsonl` with the real capture, drop the
-   `synthetic-until-captured` row from the table above, and update
-   `PINNED_CLAUDE_CODE_VERSION` in `src/version.ts` and the
+   `synthetic-until-captured` row from the table above, and update the
    `@anthropic-ai/claude-code` pin in `tools/claude/package.json` (then
    `npm install --package-lock-only` there to refresh the lockfile).
 

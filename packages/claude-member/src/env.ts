@@ -199,8 +199,9 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
 /**
  * Environment prefixes a Claude Code child may see. Everything else is dropped,
  * so no `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the
- * model's process. The provider credential passes through because Claude Code
- * itself reads it (ADR-0158, the hosting terms).
+ * model's process. The cloud credential of a login shape passes through only
+ * for that shape, because Claude Code itself reads it (ADR-0158, the hosting
+ * terms). See CLOUD_ENV_ALLOW.
  */
 const CHILD_ENV_ALLOW: readonly string[] = [
   "PATH",
@@ -222,24 +223,38 @@ const CHILD_ENV_ALLOW: readonly string[] = [
   "SSL_CERT_",
   "CLAUDE_",
   "ANTHROPIC_",
-  "AWS_",
-  "GOOGLE_",
-  "CLOUD_ML_REGION",
-  "AZURE_",
   "MCP_TIMEOUT",
   "DISABLE_TELEMETRY",
   "DISABLE_ERROR_REPORTING",
 ]
 
+/**
+ * The cloud credential prefixes of each login shape. A member on an API key or
+ * a subscription passes no cloud credential, so an AWS, Google or Azure secret
+ * in the launch environment never reaches a process that runs shell commands.
+ */
+const CLOUD_ENV_ALLOW: Readonly<Record<LoginShape, readonly string[]>> = {
+  "api-key": [],
+  subscription: [],
+  bedrock: ["AWS_"],
+  vertex: ["GOOGLE_", "CLOUD_ML_REGION"],
+  foundry: ["AZURE_"],
+}
+
 const CHILD_ENV_DENY: readonly string[] = ["GIBSON_", "ZEROCOOL_", "GIT_"]
 
 /** The environment a Claude Code child gets: the allow list above, plus fixed values. */
-export function claudeChildEnv(env: NodeJS.ProcessEnv, extra: Record<string, string>): NodeJS.ProcessEnv {
+export function claudeChildEnv(
+  env: NodeJS.ProcessEnv,
+  extra: Record<string, string>,
+  loginShape: LoginShape,
+): NodeJS.ProcessEnv {
+  const allow = [...CHILD_ENV_ALLOW, ...CLOUD_ENV_ALLOW[loginShape]]
   const out: NodeJS.ProcessEnv = {}
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) continue
     if (CHILD_ENV_DENY.some((p) => k.startsWith(p))) continue
-    if (!CHILD_ENV_ALLOW.some((p) => k === p || k.startsWith(p))) continue
+    if (!allow.some((p) => k === p || k.startsWith(p))) continue
     out[k] = v
   }
   // Auto memory would write facts learned on one job into a store the next,

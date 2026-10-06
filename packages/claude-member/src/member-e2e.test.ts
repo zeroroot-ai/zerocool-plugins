@@ -8,10 +8,13 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { readMemberEnv } from "./env.js"
-import { staticGrants, type DeliverableReport, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
+import { type DeliverableReport, type GrantSource, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobTable, MemoryJobStore, type JobSpec } from "./job.js"
 import { Member } from "./member.js"
 import { WorkspaceManager } from "./workspace.js"
+
+/** A grant source with the base grant only. Inputs carry their own or fall back. */
+const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant })
 
 /**
  * The driver end to end: the real `spawnClaude`, the real argv, a fake

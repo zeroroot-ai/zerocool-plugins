@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url"
 import test from "node:test"
 import {
   assertSubscriptionOnly,
+  consoleRelay,
   parseAuthStatus,
   parseAuthUrl,
   parseCodePrompt,
@@ -198,5 +199,35 @@ test("parseAuthUrl takes the first claude URL token and reads a long line once",
   assert.equal(parseAuthUrl("prefix>https://console.claude.com/login"), "https://console.claude.com/login")
   const long = `https://${"claude.".repeat(50_000)}`
   assert.equal(parseAuthUrl(long), "", "a pathological line without a trailing slash ends promptly")
-  assert.equal(parseAuthUrl(`${long}/`), `${long}/`)
+  assert.equal(parseAuthUrl(`${long}/`), "", "a host that only repeats claude. is not a sign-in host")
+})
+
+test("parseAuthUrl reads the host, not a claude. anywhere in the URL", () => {
+  assert.equal(parseAuthUrl("https://evil.example/?x=claude.ai/"), "")
+  assert.equal(parseAuthUrl("https://attacker.example/claude./login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai.evil.example/login"), "")
+  assert.equal(parseAuthUrl("https://notclaude.ai/login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai@evil.example/login"), "")
+  assert.equal(parseAuthUrl("https://claude.ai/oauth/authorize?x=1"), "https://claude.ai/oauth/authorize?x=1")
+})
+
+test("the console relay prints the four line types the daemon forwards, and marks the member signed in", async () => {
+  const lines: Record<string, string>[] = []
+  let signedIn: AuthStatus | undefined
+  const relay = consoleRelay(
+    (l) => lines.push(l),
+    (s) => (signedIn = s),
+  )
+  await relay.reportPrompt({ url: "https://claude.com/cai/oauth/authorize?x", codePrompt: "Paste code here if prompted > " })
+  await relay.reportInvalidCode("Invalid code.")
+  const status: AuthStatus = { loggedIn: true, authMethod: "claude.ai", subscriptionType: "max", expiresAt: 0 }
+  await relay.reportSignedIn(status)
+  await relay.reportFailed("claude auth login exited 1 without a login")
+  assert.deepEqual(lines, [
+    { type: "sign_in", url: "https://claude.com/cai/oauth/authorize?x", code_prompt: "Paste code here if prompted > " },
+    { type: "sign_in_invalid", message: "Invalid code." },
+    { type: "sign_in_done" },
+    { type: "sign_in_failed", error: "claude auth login exited 1 without a login" },
+  ])
+  assert.deepEqual(signedIn, status)
 })

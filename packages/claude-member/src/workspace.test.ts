@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import test from "node:test"
 import { runGit, type GitRunner } from "./git.js"
 import type { JobRepository } from "./job.js"
@@ -28,6 +29,9 @@ async function origin(dir: string): Promise<string> {
   return bare
 }
 
+/** The tests clone a local bare repository, so they accept file: beside the remote schemes. */
+const LOCAL_SCHEMES = ["https:", "ssh:", "file:"]
+
 function repository(cloneUrl: string, over: Partial<JobRepository> = {}): JobRepository {
   return { name: "api", connectorRef: "gitlab/acme", cloneUrl, baseBranch: "main", deliverable: "MERGE_REQUEST", credentialName: "gitlab-token", ...over }
 }
@@ -36,7 +40,7 @@ async function fixture(): Promise<{ dir: string; root: string; repo: JobReposito
   const dir = await mkdtemp(join(tmpdir(), "zerocool-ws-"))
   const root = join(dir, "workspace")
   await mkdir(root, { recursive: true })
-  return { dir, root, repo: repository(await origin(dir)), cleanup: () => rm(dir, { recursive: true, force: true }) }
+  return { dir, root, repo: repository(pathToFileURL(await origin(dir)).href), cleanup: () => rm(dir, { recursive: true, force: true }) }
 }
 
 test("the clone cache holds one clone per repository, and a second job reuses it", async () => {
@@ -47,7 +51,7 @@ test("the clone cache holds one clone per repository, and a second job reuses it
       calls.push(args)
       return runGit(args, opts)
     }
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret", git })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret", git })
     const first = await ws.prepare("job-1", [f.repo])
     const second = await ws.prepare("job-2", [f.repo])
     assert.equal(calls.filter((c) => c[0] === "clone").length, 1, "the second job fetches, it does not clone again")
@@ -70,6 +74,7 @@ test("wrap-up commits, pushes the job branch and removes the worktree", async ()
   try {
     const opened: { sourceBranch: string; targetBranch: string }[] = []
     const ws = new WorkspaceManager({
+      cloneSchemes: LOCAL_SCHEMES,
       root: f.root,
       stateDir: join(f.dir, "state"),
       capBytes: 1 << 30,
@@ -86,7 +91,7 @@ test("wrap-up commits, pushes the job branch and removes the worktree", async ()
     assert.equal(outcomes[0]!.mergeRequestUrl, "https://git.example/acme/api/-/merge_requests/1")
     assert.deepEqual(opened, [{ sourceBranch: "job/job-1", targetBranch: "main", title: "job job-1", description: "why" }])
 
-    const branches = await runGit(["branch", "--list", "job/job-1"], { cwd: f.repo.cloneUrl })
+    const branches = await runGit(["branch", "--list", "job/job-1"], { cwd: fileURLToPath(f.repo.cloneUrl) })
     assert.match(branches.stdout, /job\/job-1/, "the branch reached the origin")
     await assert.rejects(stat(wt!.path), "the worktree is gone")
   } finally {
@@ -98,7 +103,7 @@ test("abandon pushes a PUSH_BRANCH deliverable so the work is not lost, and open
   const f = await fixture()
   try {
     const repo = repository(f.repo.cloneUrl, { deliverable: "PUSH_BRANCH" })
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
     const [wt] = await ws.prepare("job-3", [repo])
     await writeFile(join(wt!.path, "half.txt"), "half done\n")
     const outcomes = await ws.wrapUp("job-3", [repo], { push: false, title: "t", description: "d" })
@@ -114,12 +119,12 @@ test("a NONE deliverable pushes nothing at all", async () => {
   const f = await fixture()
   try {
     const repo = repository(f.repo.cloneUrl, { deliverable: "NONE" })
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
     const [wt] = await ws.prepare("job-4", [repo])
     await writeFile(join(wt!.path, "note.txt"), "read only\n")
     const outcomes = await ws.wrapUp("job-4", [repo], { push: true, title: "t", description: "d" })
     assert.equal(outcomes[0]!.pushed, false)
-    const branches = await runGit(["branch", "--list", "job/job-4"], { cwd: repo.cloneUrl })
+    const branches = await runGit(["branch", "--list", "job/job-4"], { cwd: fileURLToPath(repo.cloneUrl) })
     assert.equal(branches.stdout.trim(), "")
   } finally {
     await f.cleanup()
@@ -129,7 +134,7 @@ test("a NONE deliverable pushes nothing at all", async () => {
 test("eviction never removes a repository an open job holds", async () => {
   const f = await fixture()
   try {
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 0, credential: async () => "glpat-secret" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 0, credential: async () => "glpat-secret" })
     await ws.prepare("job-1", [f.repo])
     assert.deepEqual(await ws.evict(new Set(["gitlab/acme"])), [], "a cap of zero still keeps a repository in use")
     assert.equal(ws.cached().length, 1)
@@ -144,7 +149,7 @@ test("eviction never removes a repository an open job holds", async () => {
 test("eviction under the cap removes nothing", async () => {
   const f = await fixture()
   try {
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret" })
     await ws.prepare("job-1", [f.repo])
     assert.deepEqual(await ws.evict(new Set()), [])
   } finally {
@@ -161,7 +166,7 @@ test("the connector token reaches git through askpass and never lands on argv or
       seen.push({ args, env: gitEnv(opts) })
       return runGit(args, opts)
     }
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret", git })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "glpat-secret", git })
     await ws.prepare("job-1", [f.repo])
     const clone = seen.find((c) => c.args[0] === "clone")!
     assert.ok(!clone.args.some((a) => a.includes("glpat-secret")), "no token on argv: /proc/<pid>/cmdline is readable")
@@ -177,7 +182,7 @@ test("the connector token reaches git through askpass and never lands on argv or
 test("an empty credential fails the job instead of cloning anonymously", async () => {
   const f = await fixture()
   try {
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "" })
     await assert.rejects(ws.prepare("job-1", [f.repo]), /returned an empty secret/)
   } finally {
     await f.cleanup()
@@ -187,7 +192,7 @@ test("an empty credential fails the job instead of cloning anonymously", async (
 test("a job id, repository name or base branch git could read as an option or a path escape is refused", async () => {
   const f = await fixture()
   try {
-    const ws = new WorkspaceManager({ root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "tok" })
+    const ws = new WorkspaceManager({ cloneSchemes: LOCAL_SCHEMES, root: f.root, stateDir: join(f.dir, "state"), capBytes: 1 << 30, credential: async () => "tok" })
     await assert.rejects(ws.prepare("--upload-pack=touch /tmp/pwned", [f.repo]), /job id .* starts with a dash/)
     await assert.rejects(ws.prepare("../escape", [f.repo]), /job id .* contains \.\./)
     await assert.rejects(ws.prepare("job-1", [repository(f.repo.cloneUrl, { name: "-x" })]), /repository name .* starts with a dash/)
@@ -205,4 +210,15 @@ test("a job id, repository name or base branch git could read as an option or a 
   } finally {
     await f.cleanup()
   }
+})
+
+test("a clone url names a remote scheme, so ext::, file: and a bare path are refused", () => {
+  assert.equal(assertCloneUrl("https://git.example/acme/api.git"), "https://git.example/acme/api.git")
+  assert.equal(assertCloneUrl("ssh://git@git.example/acme/api.git"), "ssh://git@git.example/acme/api.git")
+  assert.throws(() => assertCloneUrl("ext::sh -c touch% /tmp/pwned"), /control or space|scheme/)
+  assert.throws(() => assertCloneUrl("ext::sh"), /scheme ext:/)
+  assert.throws(() => assertCloneUrl("file:///etc"), /scheme file:/)
+  assert.throws(() => assertCloneUrl("/srv/repo.git"), /not a URL with a scheme/)
+  assert.throws(() => assertCloneUrl("http://git.example/acme/api.git"), /scheme http:/)
+  assert.throws(() => assertCloneUrl("git@git.example:acme/api.git"), /scheme|not a URL/)
 })

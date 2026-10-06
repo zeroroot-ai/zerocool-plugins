@@ -150,14 +150,6 @@ export interface McpGateway {
   release(jobId: string): Promise<void>
 }
 
-/** A grant source with the base grant only. Inputs carry their own or fall back. */
-export function staticGrants(baseGrant: string): GrantSource {
-  return {
-    baseGrant: () => baseGrant,
-    grantFor: (input) => input.grant || baseGrant,
-  }
-}
-
 /** What the member reports, given what it is doing. */
 export interface MemberStateInputs {
   inFlight: number

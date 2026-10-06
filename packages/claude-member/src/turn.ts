@@ -56,7 +56,7 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
     sessionPersistence: true,
     sandbox: env.sandbox,
     bin: env.claudeBin,
-    env: claudeChildEnv(deps.processEnv, { CLAUDE_CONFIG_DIR: env.claudeConfigDir }),
+    env: claudeChildEnv(deps.processEnv, { CLAUDE_CONFIG_DIR: env.claudeConfigDir }, env.loginShape),
   }
   const budget = spec.constraints.maxBudgetUsd ?? env.maxBudgetUsd
   if (budget) opts.maxBudgetUsd = budget

@@ -55,8 +55,25 @@ export interface SignInRelay {
   reportSignedIn(status: AuthStatus): Promise<void>
   /** The login failed for good: the CLI exited, or the deadline passed. */
   reportFailed(reason: string): Promise<void>
-  /** The login is close to expiry and the person should sign in again. */
-  reportExpiring?(daysLeft: number): Promise<void>
+}
+
+/**
+ * The relay the daemon reads. Each step is one JSON line on the stream the
+ * console already follows, keyed by `type` like every other console line.
+ * The daemon forwards these four types to the owner and stores none of them
+ * (gibson `internal/server/daemon/bank_signin.go`). The URL rides this line
+ * only, never a log line.
+ */
+export function consoleRelay(print: (line: Record<string, string>) => void, onSignedIn: (status: AuthStatus) => void): SignInRelay {
+  return {
+    reportPrompt: async (p) => print({ type: "sign_in", url: p.url, code_prompt: p.codePrompt }),
+    reportInvalidCode: async (message) => print({ type: "sign_in_invalid", message }),
+    reportSignedIn: async (status) => {
+      onSignedIn(status)
+      print({ type: "sign_in_done" })
+    },
+    reportFailed: async (error) => print({ type: "sign_in_failed", error }),
+  }
 }
 
 export class SignInError extends Error {}
@@ -65,23 +82,36 @@ const PROMPT_LINE = /paste code[^\n]*/i
 const INVALID_LINE = /invalid code[^\n]*/i
 const EXPIRY_LINE = /login expires in (\d+) days?/i
 
+/** The sign-in hosts Claude Code prints. A subdomain of one counts, for example `console.claude.com`. */
+const SIGN_IN_DOMAINS: readonly string[] = ["claude.ai", "claude.com"]
+
+function isSignInHost(hostname: string): boolean {
+  return SIGN_IN_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`))
+}
+
 /**
  * Read the authorization URL out of one stdout line. Empty when there is none.
  *
- * The URL is the first whitespace-free run that starts with `https://` and
- * has `claude.` followed by a `/` somewhere after it, for example
- * `https://claude.com/cai/oauth/authorize?...`. A whitespace split plus
- * indexOf reads each character once. The old regular expression (three
- * overlapping non-space runs around `claude.`) was polynomial on long lines
- * (CodeQL js/polynomial-redos, #13).
+ * The URL is the first whitespace-free run that starts with `https://`, has a
+ * path, and parses with a host of `claude.ai` or `claude.com` or a subdomain of
+ * one, for example `https://claude.com/cai/oauth/authorize?...`. The host is
+ * read by `new URL`, never by a text search, so `claude.` in a path or a query
+ * of another host does not pass. A person clicks this URL, so no other host
+ * may reach the console.
  */
 export function parseAuthUrl(line: string): string {
   for (const token of line.split(/\s+/)) {
     const start = token.indexOf("https://")
     if (start < 0) continue
     const url = token.slice(start)
-    const host = url.indexOf("claude.", "https://".length)
-    if (host >= 0 && url.indexOf("/", host + "claude.".length) >= 0) return url
+    if (url.indexOf("/", "https://".length) < 0) continue
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      continue
+    }
+    if (parsed.protocol === "https:" && isSignInHost(parsed.hostname)) return url
   }
   return ""
 }

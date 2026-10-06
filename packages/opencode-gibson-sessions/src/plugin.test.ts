@@ -85,7 +85,7 @@ test("an interactive run mirrors on the component grant, on the host key already
     hostKeyExists: (p) => p === "/keys/host.key",
     openComponent: async (opts) => {
       assert.equal(opts.hostKeyPath, "/keys/host.key")
-      assert.equal(opts.agentName, "zerocool")
+      assert.equal(opts.agentName, "zerocool-opencode")
       return {} as HarnessClient
     },
   })
