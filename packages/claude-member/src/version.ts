@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-/**
- * The Claude Code version this driver was captured and tested against.
- *
- * The fixtures under `test/fixtures/claude-code-<version>/` come from this
- * version, and `Dockerfile.claude` installs it. A bump changes all three in
- * one PR: the constant, the fixture directory, and the image build argument
- * (see `test/fixtures/README.md`, "Re-capture procedure").
- */
-export const PINNED_CLAUDE_CODE_VERSION = "2.1.257"
+// The Claude Code version this driver was captured and tested against is the
+// name of the fixture directory `test/fixtures/claude-code-<version>/`, and
+// `Dockerfile.claude` installs it. A bump changes both in one PR (see
+// `test/fixtures/README.md`, "Re-capture procedure").
 
 /** Read the running CLI's version from `claude --version` output. */
 export function parseClaudeVersion(stdout: string): string {
@@ -33,22 +28,6 @@ function isDigits(s: string): boolean {
     if (c < 48 || c > 57) return false
   }
   return true
-}
-
-/** Compare two dotted versions. Negative when `a` is older than `b`. */
-export function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map(Number)
-  const pb = b.split(".").map(Number)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
-    if (d !== 0) return d
-  }
-  return 0
-}
-
-/** The pinned version is a floor, never an exact match: a newer CLI is fine. */
-export function versionIsSupported(found: string): boolean {
-  return found !== "" && compareVersions(found, PINNED_CLAUDE_CODE_VERSION) >= 0
 }
 
 /** Ask the CLI what version it is. Empty when it cannot run. */

@@ -11,10 +11,13 @@ import { Code, ConnectError } from "@connectrpc/connect"
 import type { ClaudeHandle, ClaudeRunOptions } from "./claude-run.js"
 import { readMemberEnv, type MemberEnv } from "./env.js"
 import { ComponentHeartbeat } from "./heartbeat.js"
-import { staticGrants, type DeliverableReport, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
+import { type DeliverableReport, type GrantSource, type Inbox, type JobInput, type JobStateReport, type MemberStatus, type StatusReporter } from "./inbox.js"
 import { JobTable, MemoryJobStore, type JobSpec } from "./job.js"
 import { Member, type MemberDeps } from "./member.js"
 import type { WorkspaceManager, WrapUpOutcome } from "./workspace.js"
+
+/** A grant source with the base grant only. Inputs carry their own or fall back. */
+const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant })
 
 let scratch = ""
 function memberEnv(over: Record<string, string> = {}): MemberEnv {

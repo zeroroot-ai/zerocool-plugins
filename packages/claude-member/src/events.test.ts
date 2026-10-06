@@ -5,7 +5,10 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
-import { LineSplitter, parseEventLine, parseEvents, summarizeEvents, type InitEvent, type ResultEvent } from "./events.js"
+import { LineSplitter, parseEventLine, summarizeEvents, type ClaudeEvent, type InitEvent, type ResultEvent } from "./events.js"
+
+/** A whole stdout capture, line by line, as the turn reads it. */
+const parseEvents = (stdout: string): ClaudeEvent[] => stdout.split("\n").flatMap((l) => parseEventLine(l) ?? [])
 
 /**
  * The fixtures are what Claude Code 2.1.257 really printed, or, where a paid
