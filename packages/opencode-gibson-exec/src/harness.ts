@@ -11,6 +11,7 @@ import {
   createGibsonClients,
   normalizePlatformURL,
   openTaskHarness,
+  sandboxIdentityInterceptor,
   type GibsonClients,
   type OpenTaskHarnessOptions,
   type TaskHarness,
@@ -94,7 +95,9 @@ async function openComponentHarness(opts: ComponentHarnessOptions): Promise<Harn
   await cg.register()
   const transport = createGrpcTransport({
     baseUrl: opts.daemonURL ? normalizePlatformURL(opts.daemonURL) : cg.platformURL,
-    interceptors: [cg.authInterceptor()],
+    // Each call also carries the setec identity token of the sandbox, when
+    // the process runs in one (zeroroot-ai/sdk#251).
+    interceptors: [cg.authInterceptor(), sandboxIdentityInterceptor()],
   })
   return createGibsonClients(transport).harness
 }
