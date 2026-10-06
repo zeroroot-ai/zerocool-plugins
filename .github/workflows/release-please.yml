@@ -5,9 +5,13 @@ name: release-please
 # and the publish job below ships @zeroroot-ai/zerocool to npm.
 #
 # Publishing is DOUBLY gated (zerocool-plugins#26):
-#      and skips — releases still happen, npm just lags. The scope itself is
-#      no longer a gate: @zeroroot-ai is the npm account's own username
-#      scope, so unlike @zerocool it needs no org and no human step (#26).
+#   1. The package must already be on npm with a trusted publisher. npm
+#      trusted publishing needs the name to exist, so the first version of a
+#      new name is published once from a terminal by a person. Until then the
+#      publish step prints a notice for that name and skips it: releases still
+#      happen, npm just lags. The scope itself is no longer a gate:
+#      @zeroroot-ai is the npm account's own username scope, so it needs no
+#      org and no human step (#26).
 #   2. The package must not depend on a git URL. Publishing a tarball whose
 #      dependency is git+ssh://…sdk-ts.git would be uninstallable for anyone
 #      without repo access; the guard fails the job until the dependency is
