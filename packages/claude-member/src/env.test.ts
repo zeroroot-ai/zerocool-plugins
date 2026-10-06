@@ -105,6 +105,7 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
       SOME_OTHER_SECRET: "nope",
     },
     { CLAUDE_CONFIG_DIR: "/state/claude-config" },
+    "bedrock",
   )
   assert.equal(child.GIBSON_CG_JWT, undefined)
   assert.equal(child.GIBSON_CALLBACK_ENDPOINT, undefined)
@@ -118,4 +119,30 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
   assert.equal(child.CLAUDE_CONFIG_DIR, "/state/claude-config")
   assert.equal(child.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "1", "one job's memory must not reach another job")
   assert.equal(child.PATH, "/usr/bin")
+})
+
+test("the child gets the cloud credential of its login shape and no other", () => {
+  const launch = {
+    PATH: "/usr/bin",
+    ANTHROPIC_API_KEY: "sk-ant-tenant",
+    AWS_SECRET_ACCESS_KEY: "aws-secret",
+    AWS_SESSION_TOKEN: "aws-session",
+    GOOGLE_APPLICATION_CREDENTIALS: "/creds/gcp.json",
+    CLOUD_ML_REGION: "us-east5",
+    AZURE_CLIENT_SECRET: "azure-secret",
+  }
+  const cloud = ["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "CLOUD_ML_REGION", "AZURE_CLIENT_SECRET"]
+  const want: Record<string, string[]> = {
+    "api-key": [],
+    subscription: [],
+    bedrock: ["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"],
+    vertex: ["GOOGLE_APPLICATION_CREDENTIALS", "CLOUD_ML_REGION"],
+    foundry: ["AZURE_CLIENT_SECRET"],
+  }
+  for (const [shape, keys] of Object.entries(want)) {
+    const child = claudeChildEnv(launch, {}, shape as never)
+    const got = cloud.filter((k) => child[k] !== undefined)
+    assert.deepEqual(got, keys, `login shape ${shape}`)
+    assert.equal(child.ANTHROPIC_API_KEY, "sk-ant-tenant", `login shape ${shape} keeps its Anthropic settings`)
+  }
 })

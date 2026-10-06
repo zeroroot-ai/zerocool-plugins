@@ -158,7 +158,7 @@ test("the children get NODE_EXTRA_CA_CERTS at the written file and never the PEM
   assert.equal(withCa[EXTRA_CA_CERTS_ENV], "/state/platform-ca.pem")
   assert.equal(withCa[PLATFORM_CA_ENV], undefined)
   assert.equal(withCa.GIBSON_CG_JWT, "g", "the MCP server still gets its base grant")
-  const claude = claudeChildEnv(withCa, {})
+  const claude = claudeChildEnv(withCa, {}, "api-key")
   assert.equal(claude[EXTRA_CA_CERTS_ENV], "/state/platform-ca.pem", "the claude allow list passes NODE_ names")
   assert.equal(claude[PLATFORM_CA_ENV], undefined)
   const without = childEnv(env, undefined)
