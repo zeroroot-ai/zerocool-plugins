@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.5.0...claude-member-v0.6.0) (2026-10-07)
+
+
+### Features
+
+* end-phase integration of zerocool-plugins, part 2 ([#129](https://github.com/zeroroot-ai/zerocool-plugins/issues/129)) ([d8fa6e0](https://github.com/zeroroot-ai/zerocool-plugins/commit/d8fa6e010754ad2c3af5bda0fbe9b07be9b94f1e))
+
 ## [0.5.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.4.3...claude-member-v0.5.0) (2026-10-06)
 
 

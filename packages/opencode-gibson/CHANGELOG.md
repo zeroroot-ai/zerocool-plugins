@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.10.0...opencode-gibson-v0.11.0) (2026-10-07)
+
+
+### Features
+
+* end-phase integration of zerocool-plugins, part 2 ([#129](https://github.com/zeroroot-ai/zerocool-plugins/issues/129)) ([d8fa6e0](https://github.com/zeroroot-ai/zerocool-plugins/commit/d8fa6e010754ad2c3af5bda0fbe9b07be9b94f1e))
+
 ## [0.10.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.9.4...opencode-gibson-v0.10.0) (2026-10-06)
 
 
