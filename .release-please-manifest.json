@@ -1,7 +1,7 @@
 {
-  "packages/opencode-gibson": "0.10.0",
-  "packages/claude-gibson": "0.7.0",
-  "packages/claude-member": "0.5.0",
-  "packages/opencode-gibson-sessions": "0.2.0",
-  "packages/opencode-gibson-exec": "0.2.0"
+  "packages/opencode-gibson": "0.11.0",
+  "packages/claude-gibson": "0.8.0",
+  "packages/claude-member": "0.6.0",
+  "packages/opencode-gibson-sessions": "0.3.0",
+  "packages/opencode-gibson-exec": "0.3.0"
 }

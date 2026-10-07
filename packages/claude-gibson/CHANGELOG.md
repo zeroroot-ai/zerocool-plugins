@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.7.0...claude-gibson-v0.8.0) (2026-10-07)
+
+
+### Features
+
+* end-phase integration of zerocool-plugins, part 2 ([#129](https://github.com/zeroroot-ai/zerocool-plugins/issues/129)) ([d8fa6e0](https://github.com/zeroroot-ai/zerocool-plugins/commit/d8fa6e010754ad2c3af5bda0fbe9b07be9b94f1e))
+
 ## [0.7.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.6.2...claude-gibson-v0.7.0) (2026-10-06)
 
 
