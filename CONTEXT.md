@@ -279,9 +279,9 @@ unbuilt `dist` would land in the type and run paths of every check.
   may call `CloseJob`. The node declares acceptance: verifier component and
   passing score. Each pass is an attempt in the run history.
 - **Permission posture** — a job runs Claude Code with
-  `--dangerously-skip-permissions`; the gVisor sandbox and the per-turn grant
+  `--dangerously-skip-permissions`; the launcher sandbox and the per-turn grant
   are the controls (non-root image, which the flag requires). The daemon
-  states the sandbox with `GIBSON_SANDBOX=gvisor` on the launch, and the
+  states the sandbox with `GIBSON_SANDBOX=launcher` on the launch, and the
   driver refuses to start without that marker, so the flag never runs
   outside the sandbox. Outward side
   effects are *deliverables* the driver performs at wrap-up under the job's

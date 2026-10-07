@@ -4,7 +4,7 @@ The always-on Claude Code member driver for Gibson banks
 (ADR-0158).
 
 A **bank** is N Claude Code instances a person or a tenant asked for. The
-daemon keeps N **members** running in gVisor sandboxes. This package is the
+daemon keeps N **members** running in launcher sandboxes (a Firecracker machine each). This package is the
 process inside one sandbox. It holds the **job table**, one Claude Code
 process per active job, the **workspace manager**, and the status heartbeat.
 
@@ -47,7 +47,7 @@ The daemon sets these when it launches a member sandbox.
 | `GIBSON_CALLBACK_ENDPOINT` | yes | the harness endpoint, `host:port` or a URL |
 | `GIBSON_CALLBACK_INSECURE` | no | `1` dials plaintext, for a local daemon |
 | `GIBSON_PLATFORM_CA_PEM` | no | the platform's private CA as PEM, when the edge does not chain to public roots. See below. |
-| `GIBSON_SANDBOX` | yes | `gvisor`. The daemon sets it when the sandbox runs under gVisor. See below. |
+| `GIBSON_SANDBOX` | yes | `launcher`. The daemon sets it when the sandbox runs in the launcher backend of setec. See below. |
 | `GIBSON_INSTANCE_MODE` | no | `member` (default) or `one-shot` |
 | `GIBSON_MISSION_ID` | no | the mission the member runs under |
 | `ZEROCOOL_LOGIN_SHAPE` | no | `api-key` (default), `subscription`, `bedrock`, `vertex`, `foundry` |
@@ -71,9 +71,9 @@ reads it, never logs it and never writes it to disk.
 ### The sandbox marker
 
 The driver runs Claude Code with `--dangerously-skip-permissions` on every
-turn. The gVisor sandbox and the per-turn grant are the controls that make
+turn. The launcher sandbox and the per-turn grant are the controls that make
 that safe, so the driver starts only where the sandbox is. `GIBSON_SANDBOX`
-is the daemon's statement that it launched this process under gVisor. The
+is the daemon's statement that it launched this process in the launcher sandbox. The
 driver refuses to start when the marker is absent or carries another value,
 and `claudeArgs` refuses to build an argv without it. This package ships a
 bin, and the same code must not run prompt-free on a laptop.
@@ -86,7 +86,7 @@ filesystem. Its writable paths are `/tmp`, the scratch volume every sandbox
 gets, and `/workspace` on a session sandbox. The home directory is on the
 root filesystem, so nothing can be written there.
 
-When `ZEROCOOL_STATE_DIR` is unset and `GIBSON_SANDBOX` is `gvisor`, the
+When `ZEROCOOL_STATE_DIR` is unset and `GIBSON_SANDBOX` is `launcher`, the
 state dir is `/tmp/zerocool`. The image sets the same value. Outside the
 sandbox the default is `~/.zerocool`. The choice is made from the marker
 alone, never from a probe: a fallback that depends on what happens to be
