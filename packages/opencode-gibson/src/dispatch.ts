@@ -64,8 +64,10 @@
  */
 import {
   observe,
+  parkAfterResult,
   readSandboxDispatch,
   sandboxHarness,
+  Watcher,
   taskKnowledge,
   type AgentOutcome,
   type SandboxDispatch,
@@ -717,7 +719,44 @@ export function formatTerminalResult(outcome: AgentOutcome): string {
   })
 }
 
+/** Seams of {@link runForkableDispatch}. */
+export interface ForkableDispatchDeps extends DispatchDeps {
+  /** Made at process start, before a fork can happen. */
+  watcher: Watcher
+  /** Called with the outcome of each run, before a park. */
+  onOutcome?: (outcome: AgentOutcome) => void
+  /** Test seams. */
+  runOnce?: typeof runDispatch
+  park?: typeof parkAfterResult
+}
+
+/**
+ * Run the dispatch, and run the task of a fork when this run is forked (D74).
+ * A fork source (`GIBSON_FORKABLE=1`) parks after a passing result. The
+ * parent returns at the end of the park. A fork claims its own dispatch once
+ * and runs that task, and the outcome of the fork is returned. A failed run
+ * does not park.
+ */
+export async function runForkableDispatch(ctx: DispatchContext, env: NodeJS.ProcessEnv, deps: ForkableDispatchDeps): Promise<AgentOutcome> {
+  const runOnce = deps.runOnce ?? runDispatch
+  const parkFor = deps.park ?? parkAfterResult
+  let current = ctx
+  let launch = env
+  for (;;) {
+    const outcome = await runOnce(current, deps)
+    deps.onOutcome?.(outcome)
+    if (outcome.success === false) return outcome
+    const next = await parkFor(launch, deps.watcher, { insecure: current.insecure })
+    if (!next) return outcome
+    console.error("[zerocool-dispatch] this process is a fork: running the task of the fork")
+    launch = next
+    current = readDispatchContext(next)
+  }
+}
+
 async function main(): Promise<void> {
+  // Made before any run, so a fork of this process sees its new sandbox id (D74).
+  const watcher = Watcher.create()
   let ctx: DispatchContext
   try {
     ctx = readDispatchContext(process.env)
@@ -737,15 +776,18 @@ async function main(): Promise<void> {
   )
 
   try {
-    const outcome = await runDispatch(ctx, {
+    await runForkableDispatch(ctx, process.env, {
+      watcher,
       // Forward every opencode event to our stdout, live, for the console stream.
       onEvent: (line) => process.stdout.write(`${line}\n`),
+      onOutcome: (outcome) => {
+        process.stdout.write(`${formatTerminalResult(outcome)}\n`)
+        console.error(
+          `[zerocool-dispatch] done reason=${outcome.metadata?.finish_reason ?? "-"} ` +
+            `tokens=${outcome.metadata?.tokens_total ?? "-"}`,
+        )
+      },
     })
-    process.stdout.write(`${formatTerminalResult(outcome)}\n`)
-    console.error(
-      `[zerocool-dispatch] done reason=${outcome.metadata?.finish_reason ?? "-"} ` +
-        `tokens=${outcome.metadata?.tokens_total ?? "-"}`,
-    )
     process.exit(0)
   } catch (e) {
     const message = (e as Error).message

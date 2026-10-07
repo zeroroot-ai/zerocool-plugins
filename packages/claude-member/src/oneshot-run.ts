@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-import { ensureStateDir, readMemberEnv, type MemberEnv } from "./env.js"
+import { parkAfterResult, Watcher } from "@zeroroot-ai/sdk"
+import { ensureStateDir, MEMBER_ENV, readMemberEnv, type MemberEnv } from "./env.js"
 import type { ClaudeEvent } from "./events.js"
 import type { McpGateway } from "./inbox.js"
 import { JobTable, MemoryJobStore } from "./job.js"
@@ -88,4 +89,37 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
   controller.abort()
   await run
   return outcome
+}
+
+/** Seams of {@link runForkable}. */
+export interface ForkableOptions extends OneShotOptions {
+  /** Made at process start, before a fork can happen. */
+  watcher: Watcher
+  /** Called with the outcome of each run, before a park. */
+  onOutcome?: (outcome: OneShotOutcome) => void
+  /** Test seams. */
+  run?: typeof runOneShot
+  park?: typeof parkAfterResult
+}
+
+/**
+ * Run the dispatch, and run the task of a fork when this run is forked (D74).
+ * A fork source (`GIBSON_FORKABLE=1`) parks after a passing result. The
+ * parent returns at the end of the park. A fork claims its own dispatch once
+ * and runs that task, and the outcome of the fork is returned. A failed run
+ * does not park.
+ */
+export async function runForkable(opts: ForkableOptions): Promise<OneShotOutcome> {
+  const run = opts.run ?? runOneShot
+  const parkFor = opts.park ?? parkAfterResult
+  let env = opts.env
+  for (;;) {
+    const outcome = await run({ ...opts, env })
+    opts.onOutcome?.(outcome)
+    if (outcome.isError) return outcome
+    const next = await parkFor(env, opts.watcher, { insecure: env[MEMBER_ENV.callbackInsecure] === "1" })
+    if (!next) return outcome
+    opts.log?.("this process is a fork: running the task of the fork")
+    env = next
+  }
 }

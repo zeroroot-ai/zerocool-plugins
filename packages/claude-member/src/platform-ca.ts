@@ -3,7 +3,7 @@
 
 import type { Transport } from "@connectrpc/connect"
 import { createGrpcTransport } from "@connectrpc/connect-node"
-import { grantInterceptor } from "@zeroroot-ai/sdk"
+import { grantInterceptor, sandboxIdentityInterceptor } from "@zeroroot-ai/sdk"
 import { X509Certificate } from "node:crypto"
 import { chmod, mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -144,7 +144,9 @@ export function childEnv(env: NodeJS.ProcessEnv, trust: PlatformTrust | undefine
 export function platformTransport(baseUrl: string, token: () => string, trust: PlatformTrust | undefined): Transport {
   return createGrpcTransport({
     baseUrl,
-    interceptors: [grantInterceptor(token)],
+    // Each call also carries a new setec identity token of the sandbox
+    // (zeroroot-ai/sdk#251): the daemon takes the caller only from it.
+    interceptors: [grantInterceptor(token), sandboxIdentityInterceptor()],
     ...(trust ? { nodeOptions: { ca: trust.ca } } : {}),
   })
 }
