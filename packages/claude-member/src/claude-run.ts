@@ -86,7 +86,7 @@ export function claudeArgs(opts: ClaudeRunOptions): string[] {
   if ((opts.goal === undefined) === (opts.input === undefined)) {
     throw new Error("claudeArgs: set exactly one of goal (argv prompt) and input (stream-json on stdin)")
   }
-  // Permission prompts are off for the whole run. The gVisor sandbox and the
+  // Permission prompts are off for the whole run. The launcher sandbox and the
   // per-turn grant are the controls (glossary, Permission posture), and the
   // launch marker is the proof the sandbox is there. No marker, no argv: this
   // package ships a bin, and the same code must not run prompt-free on a

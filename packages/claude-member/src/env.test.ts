@@ -13,7 +13,7 @@ const launch: NodeJS.ProcessEnv = {
   GIBSON_BANK_ID: "bank-1",
   GIBSON_CG_JWT: "base-grant",
   GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-  GIBSON_SANDBOX: "gvisor",
+  GIBSON_SANDBOX: "launcher",
 }
 
 test("readMemberEnv reads the launch contract and defaults the rest", () => {
@@ -35,7 +35,7 @@ test("readMemberEnv reads the launch contract and defaults the rest", () => {
 
 test("the state dir defaults to the sandbox scratch path under the marker, and to the home dir elsewhere", () => {
   assert.equal(SANDBOX_STATE_DIR, "/tmp/zerocool")
-  assert.equal(defaultStateDir({ GIBSON_SANDBOX: "gvisor" }), "/tmp/zerocool")
+  assert.equal(defaultStateDir({ GIBSON_SANDBOX: "launcher" }), "/tmp/zerocool")
   assert.equal(defaultStateDir({}), join(homedir(), ".zerocool"))
   assert.equal(defaultStateDir({ GIBSON_SANDBOX: "docker" }), join(homedir(), ".zerocool"))
   assert.equal(readMemberEnv({ ...launch, ZEROCOOL_STATE_DIR: "/data/state" }).stateDir, "/data/state", "an explicit value wins")
@@ -71,10 +71,10 @@ test("a launch with no member, bank, grant, endpoint or sandbox marker fails wit
   }
 })
 
-test("the sandbox marker must say gvisor: any other value refuses to start", () => {
-  assert.throws(() => readMemberEnv({ ...launch, GIBSON_SANDBOX: "docker" }), /GIBSON_SANDBOX is "docker", expected "gvisor"/)
+test("the sandbox marker must say launcher: any other value refuses to start", () => {
+  assert.throws(() => readMemberEnv({ ...launch, GIBSON_SANDBOX: "docker" }), /GIBSON_SANDBOX is "docker", expected "launcher"/)
   assert.throws(() => readMemberEnv({ ...launch, GIBSON_SANDBOX: "" }), /GIBSON_SANDBOX is ""/)
-  assert.equal(readMemberEnv(launch).sandbox, "gvisor")
+  assert.equal(readMemberEnv(launch).sandbox, "launcher")
 })
 
 test("an unknown instance mode or login shape is refused, never guessed", () => {
@@ -97,7 +97,7 @@ test("the Claude child never sees a Gibson grant, a zerocool knob or a git token
       AWS_BEARER_TOKEN_BEDROCK: "bedrock",
       GIBSON_CG_JWT: "base-grant",
       GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-      GIBSON_SANDBOX: "gvisor",
+      GIBSON_SANDBOX: "launcher",
       GIBSON_TURN_TOKEN: "turn-token-of-this-driver",
       ZEROCOOL_MCP_URL: "http://127.0.0.1:7455/mcp",
       GIT_ASKPASS: "/state/git-askpass.sh",

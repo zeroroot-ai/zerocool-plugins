@@ -47,7 +47,7 @@ test("a member with no platform url refuses to start, because the bank would nev
     GIBSON_BANK_ID: "bank-1",
     GIBSON_CG_JWT: "base-grant",
     GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-    GIBSON_SANDBOX: "gvisor",
+    GIBSON_SANDBOX: "launcher",
     ZEROCOOL_STATE_DIR: join(dir, "state"),
   }
   const harness = { client: {}, transport: undefined, endpoint: "gibson:50001", context: {}, token: () => "base-grant", expiresAt: () => 0, stop: () => {} } as never
@@ -64,7 +64,7 @@ test("a subscription member refuses to start with an Anthropic key set", async (
     GIBSON_BANK_ID: "bank-1",
     GIBSON_CG_JWT: "base-grant",
     GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-  GIBSON_SANDBOX: "gvisor",
+  GIBSON_SANDBOX: "launcher",
     GIBSON_PLATFORM_URL: "https://api.example",
     ZEROCOOL_LOGIN_SHAPE: "subscription",
     ANTHROPIC_API_KEY: "sk-ant",

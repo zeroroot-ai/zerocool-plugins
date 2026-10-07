@@ -24,26 +24,26 @@ importers:
   packages/claude-gibson:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: ^0.13.0
-        version: 0.13.0
+        specifier: ^0.16.0
+        version: 0.16.0
 
   packages/claude-member:
     dependencies:
       '@connectrpc/connect':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)
       '@connectrpc/connect-node':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.15.0))
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.13.0
-        version: 0.13.0
+        specifier: ^0.16.0
+        version: 0.16.0
 
   packages/opencode-gibson:
     dependencies:
       '@zeroroot-ai/sdk':
-        specifier: ^0.13.0
-        version: 0.13.0
+        specifier: ^0.16.0
+        version: 0.16.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -53,13 +53,13 @@ importers:
     dependencies:
       '@connectrpc/connect':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)
       '@connectrpc/connect-node':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.15.0))
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.13.0
-        version: 0.13.0
+        specifier: ^0.16.0
+        version: 0.16.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -69,13 +69,13 @@ importers:
     dependencies:
       '@connectrpc/connect':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)
       '@connectrpc/connect-node':
         specifier: ^2.2.0
-        version: 2.2.0(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.15.0))
+        version: 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
       '@zeroroot-ai/sdk':
-        specifier: ^0.13.0
-        version: 0.13.0
+        specifier: ^0.16.0
+        version: 0.16.0
     devDependencies:
       '@opencode-ai/plugin':
         specifier: ^1.18.34
@@ -87,15 +87,8 @@ packages:
     resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
     engines: {node: '>=18'}
 
-  '@bufbuild/protobuf@2.15.0':
-    resolution: {integrity: sha512-DAheWUkVr/SJTWCc+lg9dhY0eN4SaWlf4+bG1KzHeXbnqt0AfB/NX0Z+VunGlM1ki1B4zVvye27MpKh/svySUA==}
-
-  '@connectrpc/connect-node@2.1.2':
-    resolution: {integrity: sha512-+i/aAOpsI8sIx1mbYp6d99zvxaUSF6t/jP9Ux9maAmjsZPgmIQ3JuIeYi0zJIP9zlCnBlJjkpPosshCgdRuThQ==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@bufbuild/protobuf': ^2.7.0
-      '@connectrpc/connect': 2.1.2
+  '@bufbuild/protobuf@2.16.0':
+    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
 
   '@connectrpc/connect-node@2.2.0':
     resolution: {integrity: sha512-E6uUO6e11WdynAuBjuN+0WpHjqxEM9BNDdfDIJHcn49Esg/WxSIbn2y1KFt9XL96IJi01qdBbvubcdpBz1X3Zw==}
@@ -103,11 +96,6 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^2.7.0
       '@connectrpc/connect': 2.2.0
-
-  '@connectrpc/connect@2.1.2':
-    resolution: {integrity: sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA==}
-    peerDependencies:
-      '@bufbuild/protobuf': ^2.7.0
 
   '@connectrpc/connect@2.2.0':
     resolution: {integrity: sha512-M63OQ1ZFcPUm85CuewJ9G9CMV8LjzGR9935xOnXNQGSazAbwMb3x2W7vXBYM1zqrP7XFD8uxp/dUAhirclgwnQ==}
@@ -656,8 +644,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@zeroroot-ai/sdk@0.13.0':
-    resolution: {integrity: sha512-k66tJa4RH/SDmW+cfsfeO8T6vE43UkKi45LkWLIVQfCOjo1MfCC0i7OQ+3RhA0sCWzSx0I+wvJzkx4Zz09olSA==}
+  '@zeroroot-ai/sdk@0.16.0':
+    resolution: {integrity: sha512-vF7LyYMoikN//P0upXPbEbHyP/IXTIgM29hyffB94uC46cN9Hg6T37+0Krh+hMCqXffbl1uOPOQexJhwb4Gh1g==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -839,25 +827,16 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@bufbuild/protobuf@2.15.0': {}
+  '@bufbuild/protobuf@2.16.0': {}
 
-  '@connectrpc/connect-node@2.1.2(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.15.0))':
+  '@connectrpc/connect-node@2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))':
     dependencies:
-      '@bufbuild/protobuf': 2.15.0
-      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.15.0)
+      '@bufbuild/protobuf': 2.16.0
+      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
 
-  '@connectrpc/connect-node@2.2.0(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.15.0))':
+  '@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0)':
     dependencies:
-      '@bufbuild/protobuf': 2.15.0
-      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.15.0)
-
-  '@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.15.0)':
-    dependencies:
-      '@bufbuild/protobuf': 2.15.0
-
-  '@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.15.0)':
-    dependencies:
-      '@bufbuild/protobuf': 2.15.0
+      '@bufbuild/protobuf': 2.16.0
 
   '@emnapi/core@1.11.2':
     dependencies:
@@ -1159,11 +1138,11 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@zeroroot-ai/sdk@0.13.0':
+  '@zeroroot-ai/sdk@0.16.0':
     dependencies:
-      '@bufbuild/protobuf': 2.15.0
-      '@connectrpc/connect': 2.1.2(@bufbuild/protobuf@2.15.0)
-      '@connectrpc/connect-node': 2.1.2(@bufbuild/protobuf@2.15.0)(@connectrpc/connect@2.1.2(@bufbuild/protobuf@2.15.0))
+      '@bufbuild/protobuf': 2.16.0
+      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
+      '@connectrpc/connect-node': 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
 
   cross-spawn@7.0.6:
     dependencies:

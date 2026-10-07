@@ -99,7 +99,7 @@ async function harness(cap: number, hangMs = "0") {
     GIBSON_BANK_ID: "bank-1",
     GIBSON_CG_JWT: "base-grant",
     GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
-  GIBSON_SANDBOX: "gvisor",
+  GIBSON_SANDBOX: "launcher",
     ZEROCOOL_JOB_CAP: String(cap),
     ZEROCOOL_WORKSPACE: join(dir, "workspace"),
     ZEROCOOL_STATE_DIR: join(dir, "state"),
