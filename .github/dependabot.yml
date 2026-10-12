@@ -24,7 +24,7 @@ updates:
   - package-ecosystem: "npm"
     directories:
       - "/tools/opencode"
-      - "/tools/claude"
+      - "/packages/claude-member/image"
       - "/tools/hosts"
       - "/tools/pnpm"
     schedule:

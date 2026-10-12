@@ -21,8 +21,8 @@
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
 # zerocool-plugins#13): the base image by digest, and the Claude Code CLI plus
 # the Gibson MCP server (the one tool surface for every host, ADR-0158)
-# through tools/claude/package-lock.json (npm ci). The Claude Code version
-# there is the one the stream-json fixtures in packages/claude-member/test/
+# through packages/claude-member/image/package-lock.json (npm ci). The Claude
+# Code version there is the one the stream-json fixtures in packages/claude-member/test/
 # fixtures came from; a bump re-captures them (test/fixtures/README.md).
 
 FROM node:26.10.0-trixie-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS build
@@ -61,7 +61,10 @@ ENV NODE_ENV=production \
 # npm or npx after the build: the driver attaches exactly one MCP server,
 # over HTTP, under --strict-mcp-config (packages/claude-member/src/turn.ts),
 # so no npx-based server a person adds is ever started.
-COPY tools/claude/package.json tools/claude/package-lock.json /opt/claude/
+# The lock lives under packages/claude-member so a fix to it releases
+# claude-member, and the release builds a new image. In tools/claude it cut no
+# release, and no image existed after 0.4.3 (zerocool-plugins#133).
+COPY packages/claude-member/image/package.json packages/claude-member/image/package-lock.json /opt/claude/
 # APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
 #
 # This image ships gzip, libpcre2-8-0 and libsqlite3-0 one Debian point release

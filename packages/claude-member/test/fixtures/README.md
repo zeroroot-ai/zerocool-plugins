@@ -68,7 +68,7 @@ own login.
 6. Scrub the `system/init` line as the list above says. Change no other line.
 7. Replace `job-turn-synthetic.jsonl` with the real capture, drop the
    `synthetic-until-captured` row from the table above, and update the
-   `@anthropic-ai/claude-code` pin in `tools/claude/package.json` (then
+   `@anthropic-ai/claude-code` pin in `packages/claude-member/image/package.json` (then
    `npm install --package-lock-only` there to refresh the lockfile).
 
 A fixture directory for a version the image does not pin is deleted, never
