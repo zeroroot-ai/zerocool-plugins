@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.8.0...claude-gibson-v0.8.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **claude-member:** the image tool lock lives in the package, so a lock fix releases an image ([#134](https://github.com/zeroroot-ai/zerocool-plugins/issues/134)) ([eff5479](https://github.com/zeroroot-ai/zerocool-plugins/commit/eff5479d1e08bf2fdfe0ec57a74a0fad81baf903)), closes [#133](https://github.com/zeroroot-ai/zerocool-plugins/issues/133)
+
 ## [0.8.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.7.0...claude-gibson-v0.8.0) (2026-10-07)
 
 
