@@ -23,7 +23,7 @@
  * time from tools/opencode/package-lock.json, hash pinned, and
  * `ZEROCOOL_MCP_BIN` names it, the same knob the Claude member driver reads.
  */
-export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.3.0"
+export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.5.0"
 
 /** The command opencode spawns: the installed bin when the image names one, else the pinned package through npx. */
 export function gibsonMcpCommand(env: NodeJS.ProcessEnv = process.env): string[] {
