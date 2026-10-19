@@ -25,7 +25,7 @@
 # Code version there is the one the stream-json fixtures in packages/claude-member/test/
 # fixtures came from; a bump re-captures them (test/fixtures/README.md).
 
-FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS build
 WORKDIR /src
 # Node 25 and later ship no corepack. pnpm comes from tools/pnpm, hash
 # pinned, at the version the root package.json names as packageManager.
@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --froze
 RUN pnpm -r build
 RUN pnpm --filter @zeroroot-ai/zerocool-claude-member deploy --prod --legacy /app
 
-FROM node:26.11.1-trixie-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS runtime
+FROM node:26.12.0-trixie-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
 # State lives under /tmp. The setec sandbox this image is built for mounts a
 # read-only root filesystem, and /tmp is the scratch volume every sandbox
 # gets, so /home/claude is never writable there. The driver defaults to the
