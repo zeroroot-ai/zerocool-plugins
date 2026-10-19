@@ -22,7 +22,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@zeroroot-ai/sdk": "^0.18.0",
+    "@zeroroot-ai/sdk": "^0.18.1",
     "@connectrpc/connect": "^2.2.0",
     "@connectrpc/connect-node": "^2.2.0"
   },
@@ -30,7 +30,7 @@
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.18.35"
+    "@opencode-ai/plugin": "^1.19.2"
   },
   "exports": {
     ".": {
