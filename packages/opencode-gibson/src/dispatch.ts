@@ -117,8 +117,13 @@ export interface CallbackGrant {
   callbackToken: string
   /** Dial the callback listener without TLS. Only for a local or kind daemon. */
   insecure?: boolean
+  /**
+   * The mission run. Required: the mission ID is the same for every run of a
+   * record, so a callback with no run cannot be told from a callback of another
+   * run, and the daemon refuses it (gibson#1235).
+   */
+  missionRunId: string
   /** Provenance the platform correlates the run by. Empty when the caller set none. */
-  missionRunId?: string
   agentRunId?: string
   traceId?: string
 }
@@ -133,11 +138,14 @@ export interface CallbackGrant {
  * same environment.
  */
 export function dispatchChildEnv(g: CallbackGrant): NodeJS.ProcessEnv {
+  if (!g.missionRunId) {
+    throw new Error("dispatch carries no mission run id: the child's callbacks would be refused")
+  }
   return {
     ...(g.callbackEndpoint ? { GIBSON_CALLBACK_ENDPOINT: g.callbackEndpoint } : {}),
     ...(g.callbackToken ? { GIBSON_CALLBACK_TOKEN: g.callbackToken } : {}),
     ...(g.insecure ? { GIBSON_CALLBACK_INSECURE: "1" } : {}),
-    ...(g.missionRunId ? { GIBSON_MISSION_RUN_ID: g.missionRunId } : {}),
+    GIBSON_MISSION_RUN_ID: g.missionRunId,
     ...(g.agentRunId ? { GIBSON_AGENT_RUN_ID: g.agentRunId } : {}),
     ...(g.traceId ? { GIBSON_TRACE_ID: g.traceId } : {}),
   }

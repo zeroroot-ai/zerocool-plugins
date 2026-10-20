@@ -153,9 +153,16 @@ test("dispatchChildEnv hands the child the per-dispatch grant", () => {
 })
 
 test("dispatchChildEnv omits empty fields rather than setting them blank", () => {
-  const env = dispatchChildEnv({ callbackEndpoint: "gibson:50001", callbackToken: "tok" })
-  assert.ok(!("GIBSON_MISSION_RUN_ID" in env))
+  const env = dispatchChildEnv({ callbackEndpoint: "gibson:50001", callbackToken: "tok", missionRunId: "mr-1" })
+  assert.ok(!("GIBSON_AGENT_RUN_ID" in env))
   assert.ok(!("GIBSON_CALLBACK_INSECURE" in env))
+})
+
+test("dispatchChildEnv refuses a dispatch with no mission run id", () => {
+  assert.throws(
+    () => dispatchChildEnv({ callbackEndpoint: "gibson:50001", callbackToken: "tok", missionRunId: "" }),
+    /no mission run id/,
+  )
 })
 
 // ---------------------------------------------------------------------------
