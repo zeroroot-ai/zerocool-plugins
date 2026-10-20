@@ -10,7 +10,7 @@ name: host-smoke
 # and Windsurf have no headless mode; their snippets are checked by the shape
 # test in the node-ci suite.
 #
-# Trigger discipline (ADR-0080): main and a daily schedule, never on
+# Trigger discipline (ADR-0080): main and dispatch, never on
 # a pull request. It installs from the npm registry, which a PR gate must not
 # depend on.
 on:
@@ -19,8 +19,6 @@ on:
     paths:
       - 'hosts/**'
       - '.github/workflows/host-smoke.yml'
-  schedule:
-    - cron: '17 6 * * *'
   workflow_dispatch:
 
 concurrency:

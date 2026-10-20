@@ -290,8 +290,8 @@ unbuilt `dist` would land in the type and run paths of every check.
   the token. Questions to a person go through one Gibson MCP tool, `ask`,
   wired as `--permission-prompt-tool`: the job enters `waiting` and the next
   input is the answer.
-- **Bank exit test** — `exit-test-bank.yml` in gibson, on `main` and on a
-  schedule, never on a PR (ADR-0080). Real model only, on a real key from a
+- **Bank exit test** — `exit-test-bank.yml` in gibson, on `main` and on
+  dispatch, never on a PR (ADR-0080). Real model only, on a real key from a
   repository secret; no stub Messages API. Asserts lifecycle and
   deliverables, not model text: two members reach `idle`; a job from a
   scanner-shaped test component turns one member `busy`; the worktree exists
