@@ -31,7 +31,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@58931387de5d0f2925ee29fa9781822b1e3a100d # v0.20.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@7626d9726b593f0e33bc668626e0dbe8771eee19 # v0.20.1
     with:
       component_name: zerocool-agent
       component_path: .
@@ -55,7 +55,7 @@ jobs:
       attestations: write
       security-events: write
       actions: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@58931387de5d0f2925ee29fa9781822b1e3a100d # v0.20.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-image-build.yml@7626d9726b593f0e33bc668626e0dbe8771eee19 # v0.20.1
     with:
       component_name: zerocool-claude-agent
       component_path: .
@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@58931387de5d0f2925ee29fa9781822b1e3a100d # v0.20.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@7626d9726b593f0e33bc668626e0dbe8771eee19 # v0.20.1
     with:
       image_ref: ghcr.io/zeroroot-ai/zerocool-agent@${{ needs.image.outputs.digest }}
       expected_subject_repo: ${{ github.repository }}
@@ -86,7 +86,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@58931387de5d0f2925ee29fa9781822b1e3a100d # v0.20.0
+    uses: zeroroot-ai/.github/.github/workflows/reusable-verify-release.yml@7626d9726b593f0e33bc668626e0dbe8771eee19 # v0.20.1
     with:
       image_ref: ghcr.io/zeroroot-ai/zerocool-claude-agent@${{ needs.image-claude.outputs.digest }}
       expected_subject_repo: ${{ github.repository }}
