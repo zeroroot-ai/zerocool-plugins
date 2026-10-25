@@ -50,11 +50,12 @@ function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
 /**
  * A CG-JWT shaped grant. `openTaskHarness` decodes the grant's claims to build
  * the `ContextInfo` every callback carries, so the token must be a real JWT
- * shape — an opaque string is refused. No `exp`, so the harness schedules no
+ * shape — an opaque string is refused. It names the mission run in the `mrid`
+ * claim, which sdk 0.20 requires. No `exp`, so the harness schedules no
  * renewal timer and the test process exits.
  */
 const TASK_GRANT =
-  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJjb21wb25lbnQ6YWdlbnQ6emVyb2Nvb2wiLCJ0ZW5hbnQiOiJwcmltYXJ5IiwibWlzc2lvbl9pZCI6Im0tMSIsInRhc2tfaWQiOiJ0LTEifQ.sig"
+  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJjb21wb25lbnQ6YWdlbnQ6emVyb2Nvb2wiLCJ0ZW5hbnQiOiJwcmltYXJ5IiwibWlzc2lvbl9pZCI6Im0tMSIsInRhc2tfaWQiOiJ0LTEiLCJtcmlkIjoicnVuLTEifQ.sig"
 
 test("an interactive run keeps the component grant", () => {
   withEnv({ GIBSON_CALLBACK_ENDPOINT: undefined, GIBSON_CALLBACK_TOKEN: undefined }, () => {
