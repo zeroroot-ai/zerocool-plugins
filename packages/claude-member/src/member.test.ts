@@ -297,7 +297,7 @@ test("stopping interrupts the running turn instead of killing it", async () => {
 
 test("every turn runs under the grant of its own input", async () => {
   const grants: [string, string][] = []
-  const { m, inbox, rec } = member({ mcp: { url: "http://127.0.0.1:7455/mcp", useGrant: async (j: string, g: string) => void grants.push([j, g]), release: async () => {} } })
+  const { m, inbox, rec } = member({ mcp: { url: "http://127.0.0.1:7455/mcp", useGrant: async (j: string, g: string) => void grants.push([j, g]), release: async () => {}, answer: async () => false } })
   inbox.queued.push(input("job-1", { grant: "dispatch-grant-1" }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
@@ -657,4 +657,40 @@ test("a failure in the loop body is survived too, and run resolves only on stop"
     await run
   }
   assert.equal(rec.calls.length, 0)
+})
+
+test("an answer goes to the open question on the MCP server and does not start a turn", async () => {
+  const answers: [string, string, string][] = []
+  const { m, inbox, rec } = member({
+    mcp: { url: "http://127.0.0.1:7455/mcp", useGrant: async () => {}, release: async () => {}, answer: async (j: string, t: string, s: string) => (answers.push([j, t, s]), true) },
+  })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  await inbox.deliver(input("job-1", { kind: "answer", text: "use the second approach", spec: undefined }))
+  await settle()
+  assert.deepEqual(answers, [["job-1", "use the second approach", "user:ana"]])
+  assert.equal(rec.finish.length, 1, "the answer is not a second turn")
+  ac.abort()
+  rec.finish[0]!()
+  await run
+})
+
+test("an answer with no open question runs as a turn: a person's reply is never dropped", async () => {
+  const { m, inbox, rec } = member({
+    mcp: { url: "http://127.0.0.1:7455/mcp", useGrant: async () => {}, release: async () => {}, answer: async () => false },
+  })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver(input("job-1", { kind: "answer", text: "late reply", spec: undefined }))
+  await settle()
+  assert.equal(rec.finish.length, 2, "the reply started the next turn")
+  ac.abort()
+  rec.finish[1]!()
+  await run
 })

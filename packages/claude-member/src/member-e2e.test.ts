@@ -247,6 +247,7 @@ test("end to end: the turn attaches the MCP server over localhost HTTP with the 
       url: "http://127.0.0.1:7788/mcp",
       useGrant: async (jobId: string, grant: string) => void grants.push([jobId, grant]),
       release: async (jobId: string) => void released.push(jobId),
+      answer: async () => false,
     }
     const member = new Member({ ...h.deps, mcp: gateway })
     h.daemon.queued.push(open("job-1"))

@@ -297,6 +297,29 @@ export class Member {
       this.signInControl(input)
       return
     }
+    if (input.kind === "answer" && this.deps.mcp) {
+      void this.deliverAnswer(input, this.deps.mcp)
+      return
+    }
+    this.queue.push(input)
+    this.wake?.()
+  }
+
+  /**
+   * An answer belongs to the question a job has open in `ask`, and the MCP
+   * server holds that question. The driver is the one reader of the inbox, so
+   * it hands the answer over. When no question is open, or the server cannot
+   * take it, the answer is a turn like any other input: refusing it would
+   * drop a person's reply.
+   */
+  private async deliverAnswer(input: JobInput, mcp: McpGateway): Promise<void> {
+    let delivered = false
+    try {
+      delivered = await mcp.answer(input.jobId, input.text, input.sender)
+    } catch (e) {
+      this.log(`job ${input.jobId}: answer: ${(e as Error).message}; running it as a turn`)
+    }
+    if (delivered) return
     this.queue.push(input)
     this.wake?.()
   }

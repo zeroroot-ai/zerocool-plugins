@@ -10,6 +10,12 @@
 //   FAKE_MCP_OPEN_TURN        accept POST/DELETE /turn with no bearer token,
 //                             the shape of a server the driver must refuse
 //
+// /healthz reports `subscribes`, which follows the real server's contract
+// (sdk-ts gibson-mcp, ADR-0119): a server started with GIBSON_TURN_TOKEN has
+// a driver that owns the inbox stream, so it never subscribes. POST /answer
+// takes an answer under the same bearer token and answers 409 for any job
+// other than FAKE_MCP_OPEN_JOB.
+//
 // POST and DELETE /turn require `Authorization: Bearer $GIBSON_TURN_TOKEN`,
 // the token the driver minted and put in this process's environment. No
 // token in the environment means every POST and DELETE answers 401.
@@ -40,7 +46,7 @@ createServer((req, res) => {
     }
     if (req.url === "/healthz") {
       if (Date.now() - started < readyAfter) return json(503, { ok: false })
-      return json(200, { ok: true, sessions: 0 })
+      return json(200, { ok: true, sessions: 0, subscribes: !token })
     }
     if (req.url === "/turn") {
       if ((req.method === "POST" || req.method === "DELETE") && !openTurn) {
@@ -56,6 +62,13 @@ createServer((req, res) => {
       if (!body.job_id || !body.grant) return json(400, { error: "job_id and grant are both required" })
       turn = body
       return json(200, { job_id: body.job_id, endpoint: body.callback_endpoint ?? "" })
+    }
+    if (req.url === "/answer" && req.method === "POST") {
+      if (!token || (req.headers.authorization ?? "") !== `Bearer ${token}`) return json(401, { error: "POST /answer requires the driver's bearer token" })
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")
+      if (!body.job_id || !body.message) return json(400, { error: "job_id and message are both required" })
+      if (body.job_id !== process.env.FAKE_MCP_OPEN_JOB) return json(409, { error: `no question is open for job ${body.job_id}` })
+      return json(200, { delivered: true })
     }
     json(404, { error: `no route ${req.method} ${req.url}` })
   })

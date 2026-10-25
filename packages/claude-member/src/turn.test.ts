@@ -40,6 +40,7 @@ const gateway = (): McpGateway & { grants: [string, string][]; released: string[
     url: "http://127.0.0.1:7455/mcp",
     useGrant: async (j: string, g: string) => void grants.push([j, g]),
     release: async (j: string) => void released.push(j),
+    answer: async () => false,
     grants,
     released,
   }

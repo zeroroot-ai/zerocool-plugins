@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
+import { readdirSync, readFileSync } from "node:fs"
 import { assertTurnRequiresToken, freePort, mcpGateway, McpError, mintTurnToken, startMcpServer, TURN_TOKEN_ENV, type TurnBody } from "./mcp.js"
 
 const FAKE = fileURLToPath(new URL("../test/bin/fake-gibson-mcp.mjs", import.meta.url))
@@ -194,4 +195,58 @@ test("a server that never answers healthz fails on the deadline rather than hang
     }),
     /did not answer .*\/healthz within 400ms/,
   )
+})
+
+test("the server the driver starts does not subscribe to the inbox: the driver is the one reader", async () => {
+  const server = await startMcpServer({
+    bin: FAKE,
+    callbackEndpoint: "gibson:50001",
+    insecure: false,
+    env: { ...process.env, FAKE_MCP_READY_AFTER_MS: "0" },
+    cwd: process.cwd(),
+    readyTimeoutMs: 10_000,
+  })
+  try {
+    const health = (await (await fetch(`${server.base}/healthz`)).json()) as { subscribes: boolean }
+    assert.equal(health.subscribes, false, "a second SubscribeInput stream is refused by the daemon with AlreadyExists (ADR-0119)")
+  } finally {
+    await server.stop()
+  }
+})
+
+test("only the harness inbox of the driver calls SubscribeInput", () => {
+  const dir = fileURLToPath(new URL(".", import.meta.url))
+  const callers = readdirSync(dir)
+    .filter((f) => /\.(ts|js)$/.test(f) && !/\.test\.(ts|js)$/.test(f))
+    .filter((f) => /\bsubscribeInput\b/.test(readFileSync(`${dir}${f}`, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")))
+  assert.deepEqual(callers.map((f) => f.replace(/\.js$/, ".ts")), ["harness-inbox.ts"], "a second reader of the inbox is a bug: the daemon allows one stream for each member")
+})
+
+test("an answer reaches the server under the bearer token, and a closed question is a false, not a fault", async () => {
+  const server = await startMcpServer({
+    bin: FAKE,
+    callbackEndpoint: "gibson:50001",
+    insecure: false,
+    env: { ...process.env, FAKE_MCP_OPEN_JOB: "job-1" },
+    cwd: process.cwd(),
+    readyTimeoutMs: 10_000,
+  })
+  try {
+    assert.equal(await server.answer("job-1", "use the second approach", "user:ana"), true)
+    assert.equal(await server.answer("job-2", "nobody asked", "user:ana"), false)
+    const open = await fetch(`${server.base}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ job_id: "job-1", message: "x" }) })
+    assert.equal(open.status, 401, "the Claude child cannot answer its own question")
+  } finally {
+    await server.stop()
+  }
+})
+
+test("a failed answer raises without the person's text in the message", async () => {
+  const gateway = mcpGateway("http://127.0.0.1:1", { token: TOKEN, fetch: async () => new Response("no", { status: 500 }) })
+  await assert.rejects(gateway.answer("job-1", "private reply", "user:ana"), (e: Error) => {
+    assert.ok(e instanceof McpError)
+    assert.match(e.message, /POST \/answer for job job-1 answered 500/)
+    assert.ok(!e.message.includes("private reply"))
+    return true
+  })
 })
