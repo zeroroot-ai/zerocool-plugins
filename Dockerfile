@@ -7,8 +7,8 @@
 #
 # Every third-party input is pinned by hash (Scorecard Pinned-Dependencies,
 # zerocool-plugins#13): the base image by digest, the opencode CLI and the
-# Gibson MCP server through tools/opencode/package-lock.json (npm ci), and
-# semgrep through tools/semgrep/requirements.txt (pip --require-hashes). Dependabot bumps
+# Gibson MCP server through packages/opencode-gibson/image/package-lock.json (npm ci), and
+# semgrep through packages/opencode-gibson/image/requirements.txt (pip --require-hashes). Dependabot bumps
 # each of them. The candidate list for a checkout must not change under a
 # Scan mission because a registry moved (zerocool-plugins#87).
 
@@ -47,7 +47,7 @@ ENV NODE_ENV=production \
 # bundles its own copies of undici, ip-address and brace-expansion, and the
 # bundled copies lag their fixes by weeks (Trivy, #101). Nothing in this
 # image runs npm or npx after the build, so the runtime carries neither.
-COPY tools/opencode/package.json tools/opencode/package-lock.json /opt/opencode/
+COPY packages/opencode-gibson/image/package.json packages/opencode-gibson/image/package-lock.json /opt/opencode/
 RUN cd /opt/opencode \
  && npm ci --omit=dev --no-audit --no-fund \
  && npm cache clean --force \
@@ -64,7 +64,7 @@ RUN cd /opt/opencode \
 # semgrep lives in its own venv: the hash-pinned set must not fight the
 # modules Debian's own python3 packages install (pip refuses to replace a
 # Debian-owned `packaging`). The venv's pip is removed once it has installed.
-COPY tools/semgrep/requirements.txt /tmp/semgrep-requirements.txt
+COPY packages/opencode-gibson/image/requirements.txt /tmp/semgrep-requirements.txt
 # APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
 #
 # This image ships gzip, libpcre2-8-0 and libsqlite3-0 one Debian point release
