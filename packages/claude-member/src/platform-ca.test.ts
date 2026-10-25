@@ -41,10 +41,10 @@ function mintPki(dir: string): TestPki {
   return { caPem: read("ca.pem"), leafKey: read("leaf.key"), leafPem: read("leaf.pem") }
 }
 
-/** A grant with the claims the harness derives its context from. Never verified here. */
+/** A grant with the claims the harness derives its context from, the mission run (`mrid`) included, which sdk 0.20 requires. Never verified here. */
 function testGrant(): string {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url")
-  return `${b64({ alg: "none" })}.${b64({ sub: "component:agent:mem-1", tenant: "t", mission_id: "m-1", task_id: "t-1", exp: 0 })}.sig`
+  return `${b64({ alg: "none" })}.${b64({ sub: "component:agent:mem-1", tenant: "t", mission_id: "m-1", task_id: "t-1", mrid: "run-1", exp: 0 })}.sig`
 }
 
 interface Platform {
