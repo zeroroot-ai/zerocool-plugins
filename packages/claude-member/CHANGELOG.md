@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.1...claude-member-v0.6.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **claude-member:** pin gibson-mcp 0.7.1 so the server never subscribes to the inbox ([#161](https://github.com/zeroroot-ai/zerocool-plugins/issues/161)) ([0b701f8](https://github.com/zeroroot-ai/zerocool-plugins/commit/0b701f845de39a05b3a9845f42083c747e119e88))
+* **claude-member:** the driver hands answers to the MCP server, which never subscribes ([#160](https://github.com/zeroroot-ai/zerocool-plugins/issues/160)) ([c0b751e](https://github.com/zeroroot-ai/zerocool-plugins/commit/c0b751e6958c823b6dd4f1695413bce0895b4ac6))
+
 ## [0.6.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.0...claude-member-v0.6.1) (2026-10-12)
 
 

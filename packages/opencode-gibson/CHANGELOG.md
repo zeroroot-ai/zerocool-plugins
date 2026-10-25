@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.0...opencode-gibson-v0.11.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **claude-member:** pin gibson-mcp 0.7.1 so the server never subscribes to the inbox ([#161](https://github.com/zeroroot-ai/zerocool-plugins/issues/161)) ([0b701f8](https://github.com/zeroroot-ai/zerocool-plugins/commit/0b701f845de39a05b3a9845f42083c747e119e88))
+* **opencode-gibson:** refuse a dispatch with no mission run id ([#151](https://github.com/zeroroot-ai/zerocool-plugins/issues/151)) ([d8bf5d4](https://github.com/zeroroot-ai/zerocool-plugins/commit/d8bf5d4085ac0d5a3b29417ed978a1631f007ec3))
+
 ## [0.11.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.10.0...opencode-gibson-v0.11.0) (2026-10-07)
 
 
