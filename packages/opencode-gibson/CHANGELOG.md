@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.2...opencode-gibson-v0.11.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* **opencode-gibson:** the test grants name the mission run that sdk 0.20 requires ([#174](https://github.com/zeroroot-ai/zerocool-plugins/issues/174)) ([cb97a75](https://github.com/zeroroot-ai/zerocool-plugins/commit/cb97a75fb23c9239c69b6b8d9ca39b2415d42170))
+
 ## [0.11.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.1...opencode-gibson-v0.11.2) (2026-10-25)
 
 

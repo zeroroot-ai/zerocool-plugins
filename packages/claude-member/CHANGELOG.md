@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.3...claude-member-v0.6.4) (2026-10-25)
+
+
+### Bug Fixes
+
+* **opencode-gibson:** the test grants name the mission run that sdk 0.20 requires ([#174](https://github.com/zeroroot-ai/zerocool-plugins/issues/174)) ([cb97a75](https://github.com/zeroroot-ai/zerocool-plugins/commit/cb97a75fb23c9239c69b6b8d9ca39b2415d42170))
+
 ## [0.6.3](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.2...claude-member-v0.6.3) (2026-10-25)
 
 
