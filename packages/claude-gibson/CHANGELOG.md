@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.3](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.8.2...claude-gibson-v0.8.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* clear the image gate, and let a tool lock fix release both images ([#165](https://github.com/zeroroot-ai/zerocool-plugins/issues/165)) ([38c8a3c](https://github.com/zeroroot-ai/zerocool-plugins/commit/38c8a3c7d251af2a63a7d6ba8cdfae485f60fd8c))
+
 ## [0.8.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.8.1...claude-gibson-v0.8.2) (2026-10-25)
 
 
