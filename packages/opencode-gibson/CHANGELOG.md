@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.1...opencode-gibson-v0.11.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* clear the image gate, and let a tool lock fix release both images ([#165](https://github.com/zeroroot-ai/zerocool-plugins/issues/165)) ([38c8a3c](https://github.com/zeroroot-ai/zerocool-plugins/commit/38c8a3c7d251af2a63a7d6ba8cdfae485f60fd8c))
+
 ## [0.11.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.0...opencode-gibson-v0.11.1) (2026-10-25)
 
 
