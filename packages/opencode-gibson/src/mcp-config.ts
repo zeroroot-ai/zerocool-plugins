@@ -20,7 +20,7 @@
  * The agent image carries no npm at all: every npm release bundles its own
  * copies of undici and ip-address, and an image that carries npm carries
  * their CVEs (zerocool-plugins#101). There the server is installed at build
- * time from tools/opencode/package-lock.json, hash pinned, and
+ * time from packages/opencode-gibson/image/package-lock.json, hash pinned, and
  * `ZEROCOOL_MCP_BIN` names it, the same knob the Claude member driver reads.
  */
 export const GIBSON_MCP_PACKAGE = "@zeroroot-ai/gibson-mcp@0.7.1"
