@@ -148,6 +148,13 @@ export interface McpGateway {
   useGrant(jobId: string, grant: string): Promise<void>
   /** The job's turn ended. The server falls back to the base grant. */
   release(jobId: string): Promise<void>
+  /**
+   * Hand an `answer` input to the question the job has open in `ask`. The
+   * driver is the one reader of the inbox stream (ADR-0119), so the server
+   * gets every answer from here and never subscribes itself. Resolves `false`
+   * when no question is open for the job.
+   */
+  answer(jobId: string, message: string, sender: string): Promise<boolean>
 }
 
 /** What the member reports, given what it is doing. */

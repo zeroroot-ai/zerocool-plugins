@@ -25,6 +25,11 @@ import { trimTrailingSlashes } from "./text.js"
  * server falls back to its base grant. A stdio server that Claude Code
  * spawns per session cannot do this, which is why the transport is HTTP.
  *
+ * ONE READER OF THE INBOX (ADR-0119). The daemon allows one `SubscribeInput`
+ * stream for each member, and the driver holds it. The server is started with
+ * the turn token, which tells it not to subscribe. The driver hands each
+ * `answer` input to the open `ask` with `POST /answer`.
+ *
  * THE CONTROL PLANE IS AUTHENTICATED. The Claude Code child shares the
  * sandbox's network namespace, has a shell and runs with permission prompts
  * off, so an open `/turn` would let it install or drop any grant string it
@@ -159,6 +164,18 @@ export function mcpGateway(base: string, opts: McpGatewayOptions): McpGateway {
         // The grant is never in the message: this text reaches the console.
         throw new McpError(`POST /turn for job ${jobId} answered ${res.status}`)
       }
+    },
+    async answer(jobId: string, message: string, sender: string): Promise<boolean> {
+      const res = await doFetch(`${root}/answer`, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ job_id: jobId, message, sender }),
+      })
+      // 409 is the server saying no question is open. It is an answer, not a fault.
+      if (res.status === 409) return false
+      // The text is never in the message: it is a person's reply.
+      if (!res.ok) throw new McpError(`POST /answer for job ${jobId} answered ${res.status}`)
+      return true
     },
     async release(jobId: string): Promise<void> {
       const res = await doFetch(url, { method: "DELETE", headers: auth })
