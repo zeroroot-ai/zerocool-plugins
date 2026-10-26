@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.5](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.4...claude-member-v0.6.5) (2026-10-26)
+
+
+### Bug Fixes
+
+* **claude-member:** a member that has not signed in pulls no work ([#178](https://github.com/zeroroot-ai/zerocool-plugins/issues/178)) ([364a549](https://github.com/zeroroot-ai/zerocool-plugins/commit/364a549ae5de26796ad7fc6fd2a71244495d9c45))
+
 ## [0.6.4](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.3...claude-member-v0.6.4) (2026-10-25)
 
 
