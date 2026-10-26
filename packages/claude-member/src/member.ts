@@ -365,10 +365,16 @@ export class Member {
   /** Start at most one thing. Returns whether something started. */
   private async schedule(): Promise<boolean> {
     const table = this.deps.table
+    // A member with no Claude login cannot run a turn. A turn it starts ends in
+    // error_during_execution and the job it pulled is lost to a member that
+    // cannot work it, so it takes no work until the person has signed in. A
+    // close needs no Claude Code, so it still runs.
+    const signedOut = this.deps.needsSignIn?.() ?? false
     // Inputs on held jobs first, oldest first, skipping jobs mid-turn.
     for (let i = 0; i < this.queue.length; i++) {
       const input = this.queue[i]!
       if (this.running.has(input.jobId)) continue
+      if (signedOut && input.kind !== "close") continue
       if (input.kind === "close") {
         this.queue.splice(i, 1)
         await this.close(input)
@@ -382,7 +388,7 @@ export class Member {
       await this.turn(input)
       return true
     }
-    if (table.freeSlots === 0) return false
+    if (table.freeSlots === 0 || signedOut) return false
     let pulled: JobInput | undefined
     const ok = await this.survive("pull", async () => {
       pulled = await this.deps.inbox.pull()

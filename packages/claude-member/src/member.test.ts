@@ -694,3 +694,21 @@ test("an answer with no open question runs as a turn: a person's reply is never 
   rec.finish[1]!()
   await run
 })
+
+test("a member that has not signed in pulls no job and starts no turn, and takes work once it has", async () => {
+  let signedIn = false
+  const { m, inbox, rec } = member({ needsSignIn: () => !signedIn })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  assert.equal(inbox.queued.length, 1, "the job stays in the daemon's queue: pulling it would run a turn with no login")
+  assert.equal(rec.calls.length, 0)
+  signedIn = true
+  await settle()
+  assert.equal(inbox.queued.length, 0)
+  assert.equal(rec.calls.length, 1, "the same member works the job after the sign-in")
+  ac.abort()
+  rec.finish[0]!()
+  await run
+})
