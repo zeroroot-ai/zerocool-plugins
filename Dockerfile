@@ -13,7 +13,7 @@
 # Scan mission because a registry moved (zerocool-plugins#87).
 
 # ---- build: install the workspace and tsc the zerocool package ----
-FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS build
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS build
 WORKDIR /src
 # Node 25 and later ship no corepack. pnpm comes from tools/pnpm, hash
 # pinned, at the version the root package.json names as packageManager.
@@ -30,7 +30,7 @@ RUN pnpm -r build
 RUN pnpm --filter @zeroroot-ai/zerocool deploy --prod --legacy /app
 
 # ---- runtime: node + the opencode CLI the agent spawns + the deployed agent ----
-FROM node:26.12.1-trixie-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS runtime
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime
 ENV NODE_ENV=production \
     ZEROCOOL_OPENCODE_BIN=opencode \
     ZEROCOOL_MCP_BIN=gibson-mcp \
