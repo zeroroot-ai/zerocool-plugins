@@ -23,14 +23,14 @@
   },
   "dependencies": {
     "@zeroroot-ai/sdk": "^0.20.0",
-    "@connectrpc/connect": "^2.2.0",
-    "@connectrpc/connect-node": "^2.2.0"
+    "@connectrpc/connect": "^2.3.0",
+    "@connectrpc/connect-node": "^2.3.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.19.4"
+    "@opencode-ai/plugin": "^1.19.5"
   },
   "exports": {
     ".": {
