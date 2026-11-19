@@ -2,28 +2,17 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { createServer as createHttpServer, type IncomingHttpHeaders } from "node:http"
-import { createServer as createHttpsServer } from "node:https"
-import type { AddressInfo } from "node:net"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import test from "node:test"
 import { RESPONSES_PATH, type ResolvedModel } from "@zeroroot-ai/sdk"
 
-import { gatewayProvider, resolveProvider } from "./model-provider.js"
-
-/** What the fake gateway saw. */
-interface Seen {
-  method?: string
-  url?: string
-  headers: IncomingHttpHeaders
-  body: string
-}
+import { gatewayProvider, modelSelector, modelSlot, resolveProvider } from "./model-provider.js"
+import { makeCa, withHttpServer, withTlsGateway } from "./tls-fixture.test.js"
 
 type ProviderOptions = { baseURL: string; apiKey: string; fetch: typeof fetch }
 type ProviderModels = Record<string, { id: string; limit?: { context: number; output: number } }>
+
+// One CA for the file. Each test starts its own server with a certificate of this CA.
+const ca = makeCa("gateway-ca")
 
 const reply = (gatewayUrl: string, extra: Partial<ResolvedModel> = {}): ResolvedModel => ({
   model: "claude-sonnet-x",
@@ -32,44 +21,23 @@ const reply = (gatewayUrl: string, extra: Partial<ResolvedModel> = {}): Resolved
   routeHeaders: { "x-route-model": "claude-sonnet-x", "x-route-tenant": "t1" },
   contextWindow: 200000,
   maxOutputTokens: 8192,
-  gatewayCaPem: "",
+  gatewayCaPem: ca.pem,
   ...extra,
 })
 
-const responseBody = JSON.stringify({ id: "resp_1", status: "completed", output: [] })
-
 /** Send the call that the AI SDK makes for an Open Responses turn. */
-async function turn(provider: Record<string, unknown>): Promise<Response> {
+async function turn(provider: Record<string, unknown>, url?: string): Promise<Response> {
   const options = provider.options as ProviderOptions
-  return await options.fetch(`${options.baseURL}/responses`, {
+  return await options.fetch(url ?? `${options.baseURL}/responses`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${options.apiKey}` },
     body: JSON.stringify({ model: "claude-sonnet-x", input: [] }),
   })
 }
 
-async function withHttpGateway(fn: (url: string, seen: Seen[]) => Promise<void>): Promise<void> {
-  const seen: Seen[] = []
-  const server = createHttpServer((req, res) => {
-    let body = ""
-    req.on("data", (d: Buffer) => (body += d.toString()))
-    req.on("end", () => {
-      seen.push({ method: req.method, url: req.url, headers: req.headers, body })
-      res.writeHead(200, { "content-type": "application/json" }).end(responseBody)
-    })
-  })
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
-  try {
-    await fn(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen)
-  } finally {
-    await new Promise((r) => server.close(r))
-  }
-}
-
 test("a turn calls POST {gatewayUrl}/v1/responses with the grant and the route headers of the reply", async () => {
-  await withHttpGateway(async (url, seen) => {
-    const provider = gatewayProvider(reply(url), "primary", () => "grant-1")
-    const res = await turn(provider)
+  await withTlsGateway(ca, async (url, seen) => {
+    const res = await turn(gatewayProvider(reply(url), "primary", () => "grant-1"))
     assert.equal(res.status, 200)
     assert.equal(seen.length, 1)
     assert.equal(seen[0]?.method, "POST")
@@ -82,8 +50,15 @@ test("a turn calls POST {gatewayUrl}/v1/responses with the grant and the route h
   })
 })
 
+test("a trailing slash on the gateway URL does not change the route", async () => {
+  await withTlsGateway(ca, async (url, seen) => {
+    await turn(gatewayProvider(reply(`${url}/`), "primary", () => "g"))
+    assert.equal(seen[0]?.url, RESPONSES_PATH)
+  })
+})
+
 test("the plugin resolves the slot with resolveModel and sends the grant of the harness", async () => {
-  await withHttpGateway(async (url, seen) => {
+  await withTlsGateway(ca, async (url, seen) => {
     const slots: string[] = []
     let grant = "task-grant-1"
     const provider = await resolveProvider(
@@ -96,15 +71,14 @@ test("the plugin resolves the slot with resolveModel and sends the grant of the 
       },
       "primary",
     )
-    assert.deepEqual(slots, ["primary"], "one call to the daemon, then the provider is fixed")
     await turn(provider)
     grant = "task-grant-2"
     await turn(provider)
     assert.deepEqual(
       seen.map((s) => s.headers["x-capability-grant"]),
       ["task-grant-1", "task-grant-2"],
+      "a renewal reaches the gateway",
     )
-    assert.equal(seen[0]?.headers["x-route-tenant"], "t1")
     assert.deepEqual(slots, ["primary"], "a turn does not call the daemon again")
   })
 })
@@ -125,24 +99,21 @@ test("a refused slot is an error, not a provider", async () => {
   )
 })
 
-test("a trailing slash on the gateway URL does not change the route", async () => {
-  await withHttpGateway(async (url, seen) => {
-    await turn(gatewayProvider(reply(`${url}/`), "primary", () => "g"))
-    assert.equal(seen[0]?.url, RESPONSES_PATH)
+test("an empty grant fails the call before it is sent", async () => {
+  await withTlsGateway(ca, async (url, seen) => {
+    await assert.rejects(() => turn(gatewayProvider(reply(url), "primary", () => "")), /grant is empty/)
+    assert.equal(seen.length, 0)
   })
 })
 
-test("each turn sends the current grant, so a renewal reaches the gateway", async () => {
-  await withHttpGateway(async (url, seen) => {
-    let grant = "grant-1"
-    const provider = gatewayProvider(reply(url), "primary", () => grant)
-    await turn(provider)
-    grant = "grant-2"
-    await turn(provider)
-    assert.deepEqual(
-      seen.map((s) => s.headers["x-capability-grant"]),
-      ["grant-1", "grant-2"],
-    )
+test("a call to another origin is refused, so the grant goes to the gateway only", async () => {
+  await withTlsGateway(ca, async (url, seen) => {
+    await withTlsGateway(ca, async (other, otherSeen) => {
+      const provider = gatewayProvider(reply(url), "primary", () => "grant-1")
+      await assert.rejects(() => turn(provider, `${other}/v1/responses`), /refused a call to/)
+      assert.equal(otherSeen.length, 0, "the other server saw nothing")
+      assert.equal(seen.length, 0)
+    })
   })
 })
 
@@ -157,62 +128,16 @@ test("the provider names the slot, the exact model of the reply and its limits",
   assert.equal((unknown.models as ProviderModels).primary?.limit, undefined, "0 means unknown, so no limit is set")
 })
 
-test("a CA bundle with an http URL is refused before any call", () => {
-  const ca = makeCa("only-ca").pem
-  assert.throws(() => gatewayProvider(reply("http://gw.example", { gatewayCaPem: ca }), "primary", () => "g"), /https/)
+test("a gateway URL that is not https is refused, with a CA bundle and without one", async () => {
+  await withHttpServer(async (url, seen) => {
+    assert.throws(() => gatewayProvider(reply(url, { gatewayCaPem: ca.pem }), "primary", () => "g"), /https/)
+    assert.throws(() => gatewayProvider(reply(url, { gatewayCaPem: "" }), "primary", () => "g"), /https/)
+    assert.equal(seen.length, 0)
+  })
+  assert.throws(() => gatewayProvider(reply("not a url"), "primary", () => "g"), /not a URL/)
 })
 
-// ---------------------------------------------------------------------------
-// The CA rule, against a TLS server with a private CA.
-// ---------------------------------------------------------------------------
-
-interface Ca {
-  pem: string
-  sign: () => { key: string; cert: string }
-}
-
-/** Make a private CA, and a way to sign a localhost server certificate with it. */
-function makeCa(name: string): Ca {
-  const dir = mkdtempSync(join(tmpdir(), "zerocool-ca-"))
-  const run = (...args: string[]): void => void execFileSync("openssl", args, { cwd: dir, stdio: "ignore" })
-  try {
-    run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2", "-subj", `/CN=${name}`)
-    const pem = readFileSync(join(dir, "ca.pem"), "utf8")
-    return {
-      pem,
-      sign: () => {
-        writeFileSync(join(dir, "ext.cnf"), "subjectAltName=DNS:localhost,IP:127.0.0.1\n")
-        run("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "srv.key", "-out", "srv.csr", "-subj", "/CN=localhost")
-        run("x509", "-req", "-in", "srv.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "srv.pem", "-days", "2", "-extfile", "ext.cnf")
-        return { key: readFileSync(join(dir, "srv.key"), "utf8"), cert: readFileSync(join(dir, "srv.pem"), "utf8") }
-      },
-    }
-  } finally {
-    // The material is read into memory above, and sign() runs before cleanup.
-    process.once("exit", () => rmSync(dir, { recursive: true, force: true }))
-  }
-}
-
-async function withTlsGateway(signer: Ca, fn: (url: string, seen: Seen[]) => Promise<void>): Promise<void> {
-  const seen: Seen[] = []
-  const server = createHttpsServer(signer.sign(), (req, res) => {
-    let body = ""
-    req.on("data", (d: Buffer) => (body += d.toString()))
-    req.on("end", () => {
-      seen.push({ method: req.method, url: req.url, headers: req.headers, body })
-      res.writeHead(200, { "content-type": "application/json" }).end(responseBody)
-    })
-  })
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
-  try {
-    await fn(`https://localhost:${(server.address() as AddressInfo).port}`, seen)
-  } finally {
-    await new Promise((r) => server.close(r))
-  }
-}
-
 test("the plugin trusts the CA bundle of the reply for the gateway", async () => {
-  const ca = makeCa("gateway-ca")
   await withTlsGateway(ca, async (url, seen) => {
     const res = await turn(gatewayProvider(reply(url, { gatewayCaPem: ca.pem }), "primary", () => "g"))
     assert.equal(res.status, 200)
@@ -221,9 +146,8 @@ test("the plugin trusts the CA bundle of the reply for the gateway", async () =>
 })
 
 test("the plugin trusts only the CA bundle of the reply", async () => {
-  const gatewayCa = makeCa("gateway-ca")
   const otherCa = makeCa("other-ca")
-  await withTlsGateway(gatewayCa, async (url, seen) => {
+  await withTlsGateway(ca, async (url, seen) => {
     // The bundle names another CA, so the certificate of this gateway fails.
     await assert.rejects(() => turn(gatewayProvider(reply(url, { gatewayCaPem: otherCa.pem }), "primary", () => "g")))
     assert.equal(seen.length, 0, "no request, and so no grant, reached a server the bundle does not vouch for")
@@ -231,9 +155,15 @@ test("the plugin trusts only the CA bundle of the reply", async () => {
 })
 
 test("with no bundle in the reply the plugin uses the system roots, so a private CA fails", async () => {
-  const ca = makeCa("gateway-ca")
   await withTlsGateway(ca, async (url, seen) => {
-    await assert.rejects(() => turn(gatewayProvider(reply(url), "primary", () => "g")))
+    await assert.rejects(() => turn(gatewayProvider(reply(url, { gatewayCaPem: "" }), "primary", () => "g")))
     assert.equal(seen.length, 0)
   })
+})
+
+test("the model of the gateway provider is gibson/<slot>, from GIBSON_MODEL_SLOT or primary", () => {
+  assert.equal(modelSlot({}), "primary")
+  assert.equal(modelSelector({}), "gibson/primary")
+  assert.equal(modelSelector({ GIBSON_MODEL_SLOT: "review" }), "gibson/review")
+  assert.equal(modelSlot({ GIBSON_MODEL_SLOT: "" }), "primary", "an empty value is no value")
 })

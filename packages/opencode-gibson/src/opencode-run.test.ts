@@ -113,7 +113,7 @@ test("the opencode child never sees the launcher's grant, enrollment token or ta
   assert.equal(child.XDG_CONFIG_HOME, "/home/agent/.config")
   assert.equal(child.OPENCODE_CONFIG, "/etc/opencode.json")
   assert.equal(child.ZEROCOOL_OPENCODE_BIN, "/opt/opencode")
-  assert.equal(child.ANTHROPIC_API_KEY, "sk-ant-operator", "opencode reads its own provider credential")
+  assert.equal(child.ANTHROPIC_API_KEY, undefined, "a dispatched child reaches its model through the gateway, not a direct key")
 })
 
 test("runOpencode spawns the child with the allow-listed environment, not the launcher's", async () => {
@@ -146,11 +146,11 @@ test("opencodeArgs puts the goal last so it cannot swallow a flag", () => {
   const args = opencodeArgs({
     goal: "fix the build",
     dir: "/srv/work",
-    model: "gibson/default",
+    model: "gibson/primary",
     sessionId: "ses_1",
   })
   assert.equal(args[args.length - 1], "fix the build")
-  assert.ok(args.includes("--model") && args.includes("gibson/default"))
+  assert.ok(args.includes("--model") && args.includes("gibson/primary"))
   assert.ok(args.includes("--session") && args.includes("ses_1"))
 })
 
@@ -198,4 +198,29 @@ test("createLineStreamer skips blank lines and a bare flush", () => {
   s.push("\n\n")
   s.flush()
   assert.deepEqual(lines, [])
+})
+
+test("a run with the task grant gets no direct provider credential", () => {
+  const parent = {
+    PATH: "/bin",
+    ANTHROPIC_API_KEY: "sk-a",
+    OPENAI_API_KEY: "sk-o",
+    AWS_SECRET_ACCESS_KEY: "aws",
+    GOOGLE_API_KEY: "g",
+    AZURE_OPENAI_KEY: "az",
+    CLOUD_ML_REGION: "us",
+    ZEROCOOL_WORKSPACE: "/srv",
+  }
+  const child = opencodeChildEnv(parent, { GIBSON_CALLBACK_TOKEN: "grant", GIBSON_CALLBACK_ENDPOINT: "d:1" })
+  assert.equal(child.PATH, "/bin")
+  assert.equal(child.ZEROCOOL_WORKSPACE, "/srv")
+  assert.equal(child.GIBSON_CALLBACK_TOKEN, "grant")
+  for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "GOOGLE_API_KEY", "AZURE_OPENAI_KEY", "CLOUD_ML_REGION"]) {
+    assert.equal(child[name], undefined, `${name} must not reach a gateway-only child`)
+  }
+})
+
+test("a run with no task grant keeps the provider credentials of the user", () => {
+  const child = opencodeChildEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "sk-a" }, {})
+  assert.equal(child.ANTHROPIC_API_KEY, "sk-a")
 })

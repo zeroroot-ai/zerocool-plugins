@@ -57,7 +57,7 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
       GIBSON_MISSION_RUN_ID: "mr-1",
       GIBSON_AGENT_RUN_ID: "ar-1",
       GIBSON_TRACE_ID: "tr-1",
-      GIBSON_MODEL: "gibson/default",
+      GIBSON_MODEL: "claude-sonnet-x",
       GIBSON_TIMEOUT_MS: "60000",
     },
     { cwd: "/srv/work" },
@@ -68,7 +68,7 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
   assert.equal(ctx.missionRunId, "mr-1")
   assert.equal(ctx.agentRunId, "ar-1")
   assert.equal(ctx.traceId, "tr-1")
-  assert.equal(ctx.model, "gibson/default")
+  assert.equal(ctx.model, "claude-sonnet-x")
   assert.equal(ctx.missionId, "m-1")
   assert.equal(ctx.workspace, "/srv/work")
   assert.equal(ctx.timeoutMs, 60000)
@@ -199,7 +199,7 @@ const ctx = (over: Partial<DispatchContext> = {}): DispatchContext => ({
 
 test("runDispatch drives opencode with the goal, workspace and the grant env", async () => {
   let seen: OpencodeRunOptions | undefined
-  const outcome = await runDispatch(ctx({ model: "gibson/default" }), {
+  const outcome = await runDispatch(ctx({ model: "claude-sonnet-x" }), {
     run: async (opts) => {
       seen = opts
       return fakeRunResult()
@@ -207,7 +207,8 @@ test("runDispatch drives opencode with the goal, workspace and the grant env", a
   })
   assert.equal(seen?.goal, "do the thing")
   assert.equal(seen?.dir, "/srv/work")
-  assert.equal(seen?.model, "gibson/default")
+  // The launcher names a bare tenant model. The child selects the gateway provider.
+  assert.equal(seen?.model, "gibson/primary")
   // The child's callbacks must authenticate as the task — the grant is in its env.
   assert.equal(seen?.env?.GIBSON_CALLBACK_ENDPOINT, "gibson:50001")
   assert.equal(seen?.env?.GIBSON_CALLBACK_TOKEN, "tok")
@@ -345,4 +346,22 @@ test("taskContextStrings drops what a task cannot read as one string", () => {
   )
   assert.deepEqual(ctx.taskContext, { keep: "yes" })
   assert.deepEqual(taskContextStrings({}), {})
+})
+
+test("runDispatch selects the gateway model of the configured slot, and never the bare launcher name", async () => {
+  const saved = process.env.GIBSON_MODEL_SLOT
+  process.env.GIBSON_MODEL_SLOT = "review"
+  try {
+    let seen: OpencodeRunOptions | undefined
+    await runDispatch(ctx({ model: "claude-sonnet-x" }), {
+      run: async (opts) => {
+        seen = opts
+        return fakeRunResult()
+      },
+    })
+    assert.equal(seen?.model, "gibson/review")
+  } finally {
+    if (saved === undefined) delete process.env.GIBSON_MODEL_SLOT
+    else process.env.GIBSON_MODEL_SLOT = saved
+  }
 })

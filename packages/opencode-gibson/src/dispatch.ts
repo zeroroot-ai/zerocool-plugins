@@ -87,6 +87,7 @@ import {
   type Workspace,
 } from "./fix.js"
 import { allowedGitLabHosts, gitlabRest, gitlabRestWriter, resolveGitLabBaseUrl, type GitLabClient, type GitLabWriter } from "./gitlab.js"
+import { modelSelector } from "./model-provider.js"
 import { runOpencode } from "./opencode-run.js"
 import type { SemgrepRunner } from "./semgrep.js"
 import {
@@ -354,7 +355,9 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
   const result = await run({
     goal: ctx.goal,
     dir: ctx.workspace,
-    ...(ctx.model ? { model: ctx.model } : {}),
+    // `gibson/<slot>`, the model of the gateway provider. `ctx.model` is a bare
+    // tenant model name that no provider registers, so it is not passed.
+    model: modelSelector(),
     ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
     ...(ctx.timeoutMs > 0 ? { timeoutMs: ctx.timeoutMs } : {}),
     // The child speaks the opencode plugin's own contract, whose token name is
@@ -386,7 +389,7 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
 /**
  * The source-analysis task, sandboxed (zerocool-plugins#87). opencode is not
  * involved: semgrep produces candidates, the model triages them through the
- * harness `LLMComplete` on the task grant, and real ones are submitted through
+ * Model gateway on the task grant, and real ones are submitted through
  * the harness `SubmitFinding` on the same grant. The task reads the checkout
  * (the workspace, or `source.path` under it) and changes nothing.
  *

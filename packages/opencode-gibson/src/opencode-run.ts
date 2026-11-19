@@ -109,7 +109,7 @@ export interface OpencodeRunOptions {
   goal: string
   /** Working directory. opencode edits files here, so it is the run's workspace. */
   dir: string
-  /** `provider/model`, e.g. `gibson/default`. Omitted lets opencode choose. */
+  /** `provider/model`, e.g. `gibson/primary`. Omitted lets opencode choose. */
   model?: string
   /** Continue an earlier opencode session instead of starting a new one. */
   sessionId?: string
@@ -177,7 +177,9 @@ export function createLineStreamer(onLine: (line: string) => void): {
  * the token share that prefix with the addressing the child plugin reads.
  * The provider credential passes through because opencode itself reads it
  * for a model that is not served through the Model gateway, the same posture
- * `claude-member/src/env.ts` takes for Claude Code.
+ * `claude-member/src/env.ts` takes for Claude Code. A dispatched run has the
+ * gateway and nothing else, so it gets none of them (see
+ * {@link DIRECT_PROVIDER_PREFIXES}).
  */
 const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
   "PATH",
@@ -221,16 +223,27 @@ const CHILD_ENV_ALLOW_PREFIX: readonly string[] = [
 ]
 
 /**
+ * The names of a direct model provider credential or region. A child that has
+ * the task grant reaches its model through the Model gateway. It gets none of
+ * these, so a failed gateway path cannot end in a call on a direct key.
+ */
+const DIRECT_PROVIDER_EXACT: readonly string[] = ["CLOUD_ML_REGION"]
+const DIRECT_PROVIDER_PREFIXES: readonly string[] = ["ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_"]
+
+/**
  * The environment the opencode child gets: the allow list above from `parent`,
  * then `extra` on top. `extra` is the per-dispatch grant from
  * `dispatchChildEnv`, which is the only way a `GIBSON_CALLBACK_*` name reaches
- * the child.
+ * the child. When `extra` carries the task grant, the direct provider
+ * credentials of `parent` do not pass.
  */
 export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
+  const gatewayOnly = Boolean(extra.GIBSON_CALLBACK_TOKEN)
   for (const [k, v] of Object.entries(parent)) {
     if (v === undefined) continue
     if (!CHILD_ENV_ALLOW_EXACT.includes(k) && !CHILD_ENV_ALLOW_PREFIX.some((p) => k.startsWith(p))) continue
+    if (gatewayOnly && (DIRECT_PROVIDER_EXACT.includes(k) || DIRECT_PROVIDER_PREFIXES.some((p) => k.startsWith(p)))) continue
     out[k] = v
   }
   for (const [k, v] of Object.entries(extra)) {

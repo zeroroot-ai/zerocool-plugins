@@ -8,8 +8,9 @@
  * The sibling of `zerocool-serve`, and the other half of dispatched mode. Where
  * `zerocool-serve` registers a TOOL — one named capability with declared
  * parameters — this registers an AGENT: a goal-driven executor. A mission node
- * hands over a Task, and this process pursues it by driving opencode headless
- * for as long as the dispatch allows.
+ * hands over a Task. See {@link agentHandler}: until the SDK gives a polled
+ * work item its task grant, this process answers each Task with a failed A2A
+ * Task and starts no opencode child.
  *
  * This is zerocool-plugins#33, Option B, per the owner decision of 2026-08-15.
  * It does not reopen ADR-0155: the driver is a bin in this package, not a fork
@@ -21,7 +22,6 @@
  *   GIBSON_PLATFORM_URL=https://api.example:30443 \
  *   GIBSON_BOOTSTRAP_TOKEN=<one-time token> \
  *   ZEROCOOL_AGENT_NAME=zerocool-opencode \
- *   ZEROCOOL_WORKSPACE=/srv/work \
  *     zerocool-agent
  *
  * The token is needed for the first check-in only; afterwards the persisted host
@@ -29,10 +29,10 @@
  */
 import {
   connectGibson,
+  daemonGrantRenewer,
   registerInstance,
   startAgentWorker,
   startHeartbeat,
-  daemonGrantRenewer,
   TaskState,
   type AgentInvocation,
   type AgentOutcome,
@@ -41,62 +41,45 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { dispatchChildEnv, failedOutcome } from "./dispatch.js"
-import { runOpencode } from "./opencode-run.js"
-
 /** Version reported to the daemon on registration. */
 const VERSION = "0.1.0"
 
+/** The error code of a work item that this agent cannot serve. */
+export const NO_GATEWAY_PATH = "NO_MODEL_GATEWAY_PATH"
+
 /**
- * Turn one dispatched Task into one headless opencode run.
+ * Answer one dispatched Task with a failed A2A Task.
  *
- * Exported for tests: the loop around it is `startAgentWorker`'s, and the value
- * of this function is entirely in what it maps onto and off the wire.
+ * THIS AGENT CANNOT RUN OPENCODE FOR A POLLED WORK ITEM YET. The opencode child
+ * has to reach the Model gateway on the task grant of the work item, and the
+ * SDK does not hand that grant to the handler. `AgentInvocation` has the
+ * `harness` calls, `resolveModel` and `model`, and the grant stays inside the
+ * SDK. A polled work item also has no callback endpoint, so the child cannot
+ * open a task harness of its own.
+ *
+ * The child would otherwise start with no gateway provider. It would run on a
+ * direct provider key from its environment, which is a silent fallback. So the
+ * handler fails the work item with a reason and starts no child. No child also
+ * means no knowledge read with the component grant instead of the task grant.
+ *
+ * THE SDK CHANGE THAT ENDS THIS: `AgentInvocation` must expose the current task
+ * grant (a function that returns the renewed token) and the callback endpoint
+ * of the daemon, as `TaskHarness` does with `token()` and `endpoint`. The
+ * worker can then hand both to the child as `GIBSON_CALLBACK_TOKEN` and
+ * `GIBSON_CALLBACK_ENDPOINT`, and the plugin of the child resolves the slot.
+ *
+ * Exported for tests.
  */
-export async function agentHandler(
-  item: AgentInvocation,
-  opts: { workspace: string; model?: string; run?: typeof runOpencode },
-): Promise<AgentOutcome> {
-  if (!item.goal.trim()) {
-    // A dispatch with no goal is a defect upstream, not something to guess at.
-    // Failing loudly beats running opencode against an empty prompt and
-    // reporting whatever it says back as a mission result. The Task state is
-    // failed, so the daemon sees a finished run with a reason.
-    return failedOutcome(`work ${item.workId} carried no task goal`)
-  }
-
-  const run = await (opts.run ?? runOpencode)({
-    goal: item.goal,
-    dir: opts.workspace,
-    model: opts.model,
-    // Continuity across dispatches: the daemon's agent_run_id is stable for a
-    // retried node, but opencode's own session id is what carries the
-    // conversation. It is returned in metadata below so a follow-up dispatch can
-    // pass it back — see the ADR on why this is not yet automatic.
-    sessionId: item.context.opencode_session_id,
-    timeoutMs: item.timeoutMs,
-    // The run ids of the A2A message. A pulled work item carries no callback
-    // endpoint and no grant for the child: the task grant stays in the SDK of
-    // this process, so the child gets the ids and nothing that authenticates.
-    env: dispatchChildEnv({
-      callbackEndpoint: "",
-      callbackToken: "",
-      missionRunId: item.task.run.missionRunId,
-      agentRunId: item.task.run.agentRunId,
-      traceId: item.task.run.traceId,
-    }),
-  })
-
+export async function agentHandler(item: AgentInvocation): Promise<AgentOutcome> {
+  const message =
+    `work ${item.workId}: this agent cannot start opencode for a polled work item. ` +
+    "The SDK does not give the handler the task grant that the Model gateway needs. " +
+    "A direct provider key is not a substitute."
   return {
-    state: TaskState.TASK_STATE_COMPLETED,
-    output: run.text,
-    metadata: {
-      opencode_session_id: run.sessionId,
-      finish_reason: run.finishReason,
-      tokens_total: String(run.tokens.total),
-      tokens_output: String(run.tokens.output),
-      cost: String(run.cost),
-    },
+    state: TaskState.TASK_STATE_FAILED,
+    output: message,
+    error: { code: NO_GATEWAY_PATH, message, retryable: false },
+    metadata: { error: message },
   }
 }
 
@@ -107,8 +90,6 @@ async function main(): Promise<void> {
     process.exit(2)
   }
   const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
-  const workspace = process.env.ZEROCOOL_WORKSPACE ?? process.cwd()
-  const model = process.env.ZEROCOOL_MODEL
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const checkedIn = existsSync(hostKeyPath)
 
@@ -130,7 +111,7 @@ async function main(): Promise<void> {
     name: agentName,
     version: VERSION,
     capabilities: ["code"],
-    metadata: { served_by: "zerocool", workspace },
+    metadata: { served_by: "zerocool" },
   })
 
   const stopHeartbeat = startHeartbeat(session.clients.component, ref, (e: unknown) =>
@@ -139,8 +120,9 @@ async function main(): Promise<void> {
 
   console.error(
     `[zerocool-agent] registered agent "${agentName}" (instance=${ref.current()}) ` +
-      `workspace=${workspace}; polling for work`,
+      "polling for work",
   )
+  console.error(`[zerocool-agent] warning: ${NO_GATEWAY_PATH}: every work item fails until the SDK gives the handler the task grant`)
 
   const stop = startAgentWorker(session.clients.component, ref, {
     renewGrant: daemonGrantRenewer(session.transport),
@@ -150,14 +132,7 @@ async function main(): Promise<void> {
           `timeout=${item.timeoutMs}ms goal=${JSON.stringify(item.goal.slice(0, 120))}`,
       ),
     onError: (e: unknown) => console.error(`[zerocool-agent] ${(e as Error).message}`),
-    handler: async (item: AgentInvocation) => {
-      const outcome = await agentHandler(item, { workspace, model })
-      console.error(
-        `[zerocool-agent] finished ${item.workId} reason=${outcome.metadata?.finish_reason ?? "-"} ` +
-          `tokens=${outcome.metadata?.tokens_total ?? "-"}`,
-      )
-      return outcome
-    },
+    handler: agentHandler,
   })
 
   const shutdown = (): void => {
