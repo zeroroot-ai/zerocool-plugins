@@ -384,6 +384,11 @@ export interface OpencodeTask {
   timeoutMs: number
   /** The grant and the endpoint the child receives, in its environment only. */
   grant: CallbackGrant
+  /**
+   * Other grant values of this run that the parent knows, such as a renewed
+   * grant. They are read after the run and removed from the result.
+   */
+  knownGrants?: () => Promise<string[]>
 }
 
 /**
@@ -392,34 +397,60 @@ export interface OpencodeTask {
  * Both dispatched shapes end here: the sandboxed run (`runDispatch`) and the
  * pull worker (`serve-agent.ts`). The child gets the same environment from
  * {@link dispatchChildEnv} in both, so it opens one task harness the same way.
+ * The task grant is removed from the output, the metadata, the events and the
+ * error text before they leave this process.
  */
 export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDeps, "run" | "onEvent"> = {}): Promise<AgentOutcome> {
   const run = deps.run ?? runOpencode
-  const result = await run({
-    goal: task.goal,
-    dir: task.workspace,
-    // `gibson/<slot>`, the model of the gateway provider. A bare tenant model
-    // name is no model of any provider, so it is not passed.
-    model: modelSelector(),
-    ...(task.sessionId ? { sessionId: task.sessionId } : {}),
-    ...(task.timeoutMs > 0 ? { timeoutMs: task.timeoutMs } : {}),
-    // The child speaks the opencode plugin's own contract, whose token name is
-    // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
-    env: dispatchChildEnv(task.grant),
-    ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
-  })
-
-  return {
-    output: result.text,
-    state: TaskState.TASK_STATE_COMPLETED,
-    metadata: {
-      opencode_session_id: result.sessionId,
-      finish_reason: result.finishReason,
-      tokens_total: String(result.tokens.total),
-      tokens_output: String(result.tokens.output),
-      cost: String(result.cost),
-    },
+  const known = [task.grant.callbackToken]
+  let result: Awaited<ReturnType<typeof runOpencode>>
+  try {
+    result = await run({
+      goal: task.goal,
+      dir: task.workspace,
+      // `gibson/<slot>`, the model of the gateway provider. A bare tenant model
+      // name is no model of any provider, so it is not passed.
+      model: modelSelector(),
+      ...(task.sessionId ? { sessionId: task.sessionId } : {}),
+      ...(task.timeoutMs > 0 ? { timeoutMs: task.timeoutMs } : {}),
+      // The child speaks the opencode plugin's own contract, whose token name is
+      // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
+      env: dispatchChildEnv(task.grant),
+      ...(deps.onEvent ? { onEvent: (line) => deps.onEvent?.(redactGrant(line, known)) } : {}),
+    })
+  } catch (e) {
+    const secrets = await currentSecrets(task, known)
+    throw new Error(redactGrant((e as Error).message, secrets))
   }
+  const secrets = await currentSecrets(task, known)
+  const metadata = {
+    opencode_session_id: result.sessionId,
+    finish_reason: result.finishReason,
+    tokens_total: String(result.tokens.total),
+    tokens_output: String(result.tokens.output),
+    cost: String(result.cost),
+  }
+  return {
+    output: redactGrant(result.text, secrets),
+    state: TaskState.TASK_STATE_COMPLETED,
+    metadata: Object.fromEntries(Object.entries(metadata).map(([k, v]) => [k, redactGrant(v, secrets)])),
+  }
+}
+
+/** The text that replaces a task grant in anything that leaves the process. */
+export const REDACTED_GRANT = "[task grant]"
+
+/** Replace each grant in `text`. An empty value is skipped. */
+export function redactGrant(text: string, grants: readonly string[]): string {
+  let out = text
+  for (const g of grants) if (g) out = out.split(g).join(REDACTED_GRANT)
+  return out
+}
+
+/** The grant the child started with, and the renewed grant when the parent knows one. */
+async function currentSecrets(task: OpencodeTask, known: string[]): Promise<string[]> {
+  const more = task.knownGrants ? await task.knownGrants().catch(() => []) : []
+  return [...known, ...more]
 }
 
 /**

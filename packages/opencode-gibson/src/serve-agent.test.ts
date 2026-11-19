@@ -13,7 +13,7 @@ import { agentHandler, callbackEndpointOf } from "./serve-agent.js"
 
 /** The agent worker submits an A2A Task. These tests drive the real SDK worker with a fake daemon. */
 
-const FAKE_ENV_BIN = fileURLToPath(new URL("../test/bin/fake-opencode-env.mjs", import.meta.url))
+const PROBE_BIN = fileURLToPath(new URL("../test/bin/fake-opencode-probe.mjs", import.meta.url))
 const ENDPOINT = "https://api.example.test:8443"
 
 const jwt = (payload: Record<string, unknown>): string => {
@@ -74,13 +74,16 @@ async function serve(
   }
 }
 
-/** The environment the fake opencode child saw. It prints its env as the text of the run. */
-function childEnvOf(result: string): Record<string, string | undefined> {
-  const task = JSON.parse(result) as Task
-  const text = JSON.stringify(task)
-  const m = /"text":"((?:[^"\\]|\\.)*)"/.exec(text)
-  assert.ok(m, "the Task carries the child output")
-  return JSON.parse(JSON.parse(`"${m[1]}"`)) as Record<string, string | undefined>
+/** What the fake opencode child saw: its environment and its arguments. It wrote them to a file. */
+async function probeOf(out: string): Promise<{ env: Record<string, string | undefined>; argv: string[] }> {
+  return JSON.parse(await readFile(out, "utf8")) as { env: Record<string, string | undefined>; argv: string[] }
+}
+
+/** A temp file for the probe to write, and the environment that points the probe at it. */
+async function probeEnv(extra: Record<string, string | undefined> = {}): Promise<{ out: string; env: Record<string, string | undefined> }> {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-probe-"))
+  const out = join(dir, "probe.json")
+  return { out, env: { ZEROCOOL_OPENCODE_BIN: PROBE_BIN, ZEROCOOL_TEST_PROBE_OUT: out, ...extra } }
 }
 
 async function withChildEnv<T>(set: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
@@ -102,11 +105,12 @@ async function withChildEnv<T>(set: Record<string, string | undefined>, fn: () =
 
 test("the child gets the task grant and the endpoint in its environment, and no direct provider key", async () => {
   const grant = grantFor("first")
-  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN, ANTHROPIC_API_KEY: "sk-direct", OPENAI_API_KEY: "sk-direct" }, async () => {
-    const { submitted, text, errors } = await serve(grant)
+  const probe = await probeEnv({ ANTHROPIC_API_KEY: "sk-direct", OPENAI_API_KEY: "sk-direct" })
+  await withChildEnv(probe.env, async () => {
+    const { submitted, errors } = await serve(grant)
     assert.equal(submitted.error, undefined)
     assert.deepEqual(errors, [])
-    const env = childEnvOf(text)
+    const { env } = await probeOf(probe.out)
     assert.equal(env.GIBSON_CALLBACK_TOKEN, grant)
     assert.equal(env.GIBSON_CALLBACK_ENDPOINT, ENDPOINT)
     assert.equal(env.GIBSON_MISSION_RUN_ID, "run-1")
@@ -120,10 +124,35 @@ test("the child gets the renewed grant when the grant of the work item is near i
   const old = grantFor("old", 60_000)
   const fresh = grantFor("fresh")
   const seen: string[] = []
-  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN }, async () => {
-    const { text } = await serve(old, async (cur) => (seen.push(cur), fresh))
-    assert.equal(childEnvOf(text).GIBSON_CALLBACK_TOKEN, fresh)
+  const probe = await probeEnv()
+  await withChildEnv(probe.env, async () => {
+    await serve(old, async (cur) => (seen.push(cur), fresh))
+    assert.equal((await probeOf(probe.out)).env.GIBSON_CALLBACK_TOKEN, fresh)
     assert.deepEqual(seen, [old])
+  })
+})
+
+test("the grant is removed from the output and the metadata of the submitted Task", async () => {
+  const grant = grantFor("in-output")
+  const probe = await probeEnv()
+  await withChildEnv(probe.env, async () => {
+    const { submitted, text } = await serve(grant)
+    assert.equal(submitted.error, undefined)
+    assert.ok(!text.includes(grant), "the Task has no grant")
+    assert.ok(text.includes("the grant is [task grant]"), "the grant is replaced, not dropped without a trace")
+    assert.equal((JSON.parse(text) as Task).status?.state, "TASK_STATE_COMPLETED")
+  })
+})
+
+test("the grant is removed from the error of a child that fails", async () => {
+  const grant = grantFor("in-error")
+  const probe = await probeEnv({ ZEROCOOL_TEST_PROBE_FAIL: "1" })
+  await withChildEnv(probe.env, async () => {
+    const { submitted, errors } = await serve(grant)
+    assert.equal(submitted.error?.code, "EXECUTION_ERROR")
+    assert.match(submitted.error?.message ?? "", /opencode exited 1: boom with \[task grant\]/)
+    assert.ok(!(submitted.error?.message ?? "").includes(grant))
+    for (const e of errors) assert.ok(!String((e as Error).message).includes(grant))
   })
 })
 
@@ -150,7 +179,7 @@ test("the grant is in no log line of the worker", async () => {
   const orig = console.error
   console.error = (...a: unknown[]) => void lines.push(a.join(" "))
   try {
-    await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN }, async () => {
+    await withChildEnv((await probeEnv()).env, async () => {
       const { errors } = await serve(grant)
       for (const e of errors) lines.push(String((e as Error).message))
     })

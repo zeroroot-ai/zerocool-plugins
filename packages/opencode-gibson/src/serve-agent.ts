@@ -105,6 +105,8 @@ export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocati
         goal: item.goal,
         workspace: options.workspace ?? process.env.ZEROCOOL_WORKSPACE ?? process.cwd(),
         timeoutMs: item.timeoutMs,
+        // The grant may be renewed during the run. Remove that value too.
+        knownGrants: async () => [await item.harness.token()],
         grant: {
           callbackEndpoint: options.callbackEndpoint,
           callbackToken: token,
