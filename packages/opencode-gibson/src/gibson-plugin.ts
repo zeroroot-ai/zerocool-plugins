@@ -68,8 +68,8 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps, env: No
   if (env.GIBSON_CALLBACK_TOKEN || env.GIBSON_CALLBACK_ENDPOINT) {
     return await grantedPlugin(deps, env)
   }
-  const platformURL = process.env.GIBSON_PLATFORM_URL
-  const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
+  const platformURL = env.GIBSON_PLATFORM_URL
+  const hostKeyPath = env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const context: SessionContext = {}
 
   // Check in once, then run unattended — the platform's enrollment model
@@ -84,7 +84,7 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps, env: No
   // a one-time token on every start would be rejected, and it would mean asking
   // the operator to keep a spent credential in their environment forever.
   const checkedIn = existsSync(hostKeyPath)
-  const bootstrapToken = checkedIn ? undefined : process.env.GIBSON_BOOTSTRAP_TOKEN
+  const bootstrapToken = checkedIn ? undefined : env.GIBSON_BOOTSTRAP_TOKEN
 
   // Standalone: the MCP server still runs. It decides its own posture from
   // what is present, reports it through gibson_status, and offers the tools
@@ -108,16 +108,16 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps, env: No
 
   // The catalog holds an agent named "zerocool". A token-enrolled host checks in
   // under its own name, so the default differs from every catalog name.
-  const agentName = process.env.GIBSON_AGENT_NAME ?? "zerocool-opencode"
+  const agentName = env.GIBSON_AGENT_NAME ?? "zerocool-opencode"
   let session: GibsonSession | undefined
   try {
     session = await deps.connect({
       platformURL,
-      daemonURL: process.env.GIBSON_DAEMON_URL,
+      daemonURL: env.GIBSON_DAEMON_URL,
       bootstrapToken,
       hostKeyPath,
       agentName,
-      agentMode: process.env.GIBSON_AGENT_MODE ?? "autonomous",
+      agentMode: env.GIBSON_AGENT_MODE ?? "autonomous",
       agent: { name: agentName, version: "0.0.0", capabilities: ["code"] },
     })
     console.error(
@@ -145,6 +145,7 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps, env: No
   console.error(`[zerocool] knowledge reads use the ${selected.scope} grant`)
   console.error(`[zerocool] no ${PROVIDER_ID} model provider: this run has no task grant`)
   return buildHooks({
+    env,
     knowledge: selected,
     context,
     stop: () => {
@@ -178,6 +179,7 @@ async function grantedPlugin(deps: PluginDeps, env: NodeJS.ProcessEnv): Promise<
   console.error(`[zerocool] knowledge reads use the task grant`)
   console.error(`[zerocool] provider "${PROVIDER_ID}" sends Open Responses calls to the Model gateway for slot "${slot}"`)
   return buildHooks({
+    env,
     knowledge: run,
     context: {},
     stop: () => run.stop(),
@@ -223,6 +225,7 @@ export function lockToGateway(config: unknown, provider: Record<string, unknown>
 }
 
 interface HookInputs {
+  env: NodeJS.ProcessEnv
   knowledge: SelectedKnowledge
   context: SessionContext
   stop: () => void
@@ -234,7 +237,7 @@ function buildHooks(inputs: HookInputs): Hooks {
   const { knowledge, context, stop } = inputs
   const injectKnowledge = ambientKnowledge(
     knowledge.knowledge,
-    process.env.ZEROCOOL_AMBIENT_QUERY ?? "prior findings and security facts for this codebase",
+    inputs.env.ZEROCOOL_AMBIENT_QUERY ?? "prior findings and security facts for this codebase",
   )
 
   return {

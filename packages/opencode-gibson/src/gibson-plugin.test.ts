@@ -173,7 +173,7 @@ test("a dispatched run whose slot does not resolve fails, and does not continue 
 
 test("a run with no task grant registers no provider and selects no model", async () => {
   await withEnv({}, async () => {
-    const hooks = await createGibsonPlugin(deps(undefined), {})
+    const hooks = await createGibsonPlugin(deps(undefined), process.env)
     const config: Config = { model: "anthropic/claude-sonnet-x" }
     await hooks.config?.(config as never)
     assert.equal(config.provider?.gibson, undefined)
@@ -258,11 +258,31 @@ test("a granted run locks opencode to the gibson provider, whatever the user con
 
 test("an interactive run leaves the providers and the agent models of the user alone", async () => {
   await withEnv({}, async () => {
-    const hooks = await createGibsonPlugin(deps(undefined), {})
+    const hooks = await createGibsonPlugin(deps(undefined), process.env)
     const config = { agent: { build: { model: "anthropic/x" } }, provider: { anthropic: {} } }
     await hooks.config?.(config as never)
     assert.equal(config.agent.build.model, "anthropic/x")
     assert.deepEqual(Object.keys(config.provider), ["anthropic"])
     assert.equal((config as { enabled_providers?: string[] }).enabled_providers, undefined)
   })
+})
+
+test("an interactive run reads the env parameter, not the process environment", async () => {
+  const seen: { platformURL?: string; agentName?: string } = {}
+  const d = deps()
+  d.connect = (async (cfg: { platformURL: string; agentName?: string }) => {
+    seen.platformURL = cfg.platformURL
+    seen.agentName = cfg.agentName
+    return { componentScope: "c", stop: () => {} }
+  }) as never
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-plugin-"))
+  await withEnv({ GIBSON_PLATFORM_URL: undefined, GIBSON_BOOTSTRAP_TOKEN: undefined }, async () => {
+    await createGibsonPlugin(d, {
+      GIBSON_PLATFORM_URL: "https://from-param.example",
+      GIBSON_BOOTSTRAP_TOKEN: "one-time",
+      GIBSON_HOST_KEY_PATH: join(dir, "no-host.key"),
+      GIBSON_AGENT_NAME: "from-param",
+    })
+  })
+  assert.deepEqual(seen, { platformURL: "https://from-param.example", agentName: "from-param" })
 })

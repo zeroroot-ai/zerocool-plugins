@@ -6,7 +6,7 @@ import test from "node:test"
 
 import { openTaskHarness, type TaskHarness } from "@zeroroot-ai/sdk"
 
-import { selectKnowledgeSource } from "./knowledge-source.js"
+import { openTaskRun, selectKnowledgeSource } from "./knowledge-source.js"
 
 /**
  * Which grant a run reads the knowledge graph with.
@@ -20,32 +20,8 @@ import { selectKnowledgeSource } from "./knowledge-source.js"
 
 const fakeSession = { clients: { component: {} } } as never
 
-function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
-  const saved: Record<string, string | undefined> = {}
-  for (const k of Object.keys(vars)) {
-    saved[k] = process.env[k]
-    if (vars[k] === undefined) delete process.env[k]
-    else process.env[k] = vars[k]
-  }
-  const restore = (): void => {
-    for (const [k, v] of Object.entries(saved)) {
-      if (v === undefined) delete process.env[k]
-      else process.env[k] = v
-    }
-  }
-  let out: T
-  try {
-    out = fn()
-  } catch (e) {
-    restore()
-    throw e
-  }
-  // An async body must keep the environment until it settles, and a sync one
-  // must restore before the caller reads it back. Both, from one helper.
-  if (out instanceof Promise) return out.finally(restore) as T
-  restore()
-  return out
-}
+/** The child contract: the grant and the endpoint, and nothing of the launch environment. */
+const taskEnv = (token: string): NodeJS.ProcessEnv => ({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: token })
 
 /**
  * A CG-JWT shaped grant. `openTaskHarness` decodes the grant's claims to build
@@ -57,36 +33,26 @@ function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
 const TASK_GRANT =
   "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJjb21wb25lbnQ6YWdlbnQ6emVyb2Nvb2wiLCJ0ZW5hbnQiOiJwcmltYXJ5IiwibWlzc2lvbl9pZCI6Im0tMSIsInRhc2tfaWQiOiJ0LTEiLCJtcmlkIjoicnVuLTEifQ.sig"
 
-test("an interactive run keeps the component grant", () => {
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: undefined, GIBSON_CALLBACK_TOKEN: undefined }, () => {
-    assert.equal(selectKnowledgeSource(fakeSession).scope, "component")
-  })
+test("an interactive run keeps the component grant and has no harness", () => {
+  const sel = selectKnowledgeSource(fakeSession)
+  assert.equal(sel.scope, "component")
+  assert.equal((sel as { harness?: unknown }).harness, undefined, "no task grant, so no model resolution")
+  sel.stop()
 })
 
-test("a dispatched run reads as the task", () => {
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, () => {
-    assert.equal(selectKnowledgeSource(fakeSession).scope, "task")
-  })
+test("a dispatched run reads as the task, on the one harness of the model path", () => {
+  const sel = openTaskRun(taskEnv(TASK_GRANT))
+  assert.equal(sel.scope, "task")
+  assert.equal(sel.harness.token(), TASK_GRANT, "resolveModel and the gateway grant come from this harness")
+  sel.stop()
 })
 
-test("a dispatched run shares one harness with the model path, and an interactive run has none", () => {
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, () => {
-    const sel = selectKnowledgeSource(fakeSession)
-    assert.equal(sel.harness?.token(), TASK_GRANT, "resolveModel and the gateway grant come from this harness")
-    sel.stop()
-  })
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: undefined, GIBSON_CALLBACK_TOKEN: undefined }, () => {
-    assert.equal(selectKnowledgeSource(fakeSession).harness, undefined, "no task grant, so no model resolution")
-  })
-})
-
-test("an endpoint with no token FAILS rather than falling back", () => {
+test("a half-set pair FAILS rather than falling back", () => {
   // The whole point. A fallback here is how the authority gap reappears
   // silently: reads keep working, and nobody learns the run held the
   // component's grant instead of its own.
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: undefined }, () => {
-    assert.throws(() => selectKnowledgeSource(fakeSession), /would silently\s+widen this run's authority/)
-  })
+  assert.throws(() => openTaskRun({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001" }), /would silently\s+widen this run's authority/)
+  assert.throws(() => openTaskRun({ GIBSON_CALLBACK_TOKEN: TASK_GRANT }), /must both be set/)
 })
 
 /**
@@ -120,8 +86,8 @@ const sentContext = (req: unknown): { missionId?: string; taskId?: string; agent
 
 test("a dispatched read carries context.mission_id, taken from the dispatch grant", async () => {
   const calls: unknown[] = []
-  await withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, async () => {
-    const { knowledge, scope, stop } = selectKnowledgeSource(fakeSession, {
+  {
+    const { knowledge, scope, stop } = openTaskRun(taskEnv(TASK_GRANT), {
       // The real harness, so the context really is derived from the grant.
       // Only the wire client is replaced, so the read reaches no daemon.
       openHarness: (opts) => ({ ...openTaskHarness(opts), client: recordingClient(calls) }),
@@ -129,7 +95,7 @@ test("a dispatched read carries context.mission_id, taken from the dispatch gran
     assert.equal(scope, "task")
     await knowledge.query({ text: "prior findings for this codebase" })
     stop()
-  })
+  }
 
   assert.equal(calls.length, 1)
   assert.equal(sentContext(calls[0]).missionId, "m-1", "the callback service refuses a read with no mission_id")
@@ -139,15 +105,15 @@ test("a dispatched read carries context.mission_id, taken from the dispatch gran
 
 test("every task-scoped read carries the same context, not only the first", async () => {
   const calls: unknown[] = []
-  await withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, async () => {
-    const { knowledge, stop } = selectKnowledgeSource(fakeSession, {
+  {
+    const { knowledge, stop } = openTaskRun(taskEnv(TASK_GRANT), {
       openHarness: (opts) => ({ ...openTaskHarness(opts), client: recordingClient(calls) }),
     })
     await knowledge.similarFindings("f-1")
     await knowledge.relatedFindings("f-1")
     await knowledge.runHistory()
     stop()
-  })
+  }
 
   assert.equal(calls.length, 3)
   for (const c of calls) assert.equal(sentContext(c).missionId, "m-1")
@@ -157,22 +123,20 @@ test("stopping the source stops the task harness", () => {
   // The harness renews the grant on a timer. A session that ended must not keep
   // renewing a grant for a run that is over.
   let stopped = 0
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, () => {
-    const { stop } = selectKnowledgeSource(fakeSession, {
+  {
+    const { stop } = openTaskRun(taskEnv(TASK_GRANT), {
       openHarness: (opts) => {
         const h = openTaskHarness(opts)
         return { ...h, stop: () => { stopped += 1; h.stop() } }
       },
     })
     stop()
-  })
+  }
   assert.equal(stopped, 1)
 })
 
 test("an interactive source stops cleanly although it opened no harness", () => {
-  withEnv({ GIBSON_CALLBACK_ENDPOINT: undefined, GIBSON_CALLBACK_TOKEN: undefined }, () => {
-    const { scope, stop } = selectKnowledgeSource(fakeSession)
-    assert.equal(scope, "component")
-    stop()
-  })
+  const { scope, stop } = selectKnowledgeSource(fakeSession)
+  assert.equal(scope, "component")
+  stop()
 })
