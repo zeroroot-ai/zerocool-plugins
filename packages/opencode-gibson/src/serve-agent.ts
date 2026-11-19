@@ -88,6 +88,12 @@ export interface AgentHandlerOptions {
  */
 export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocation) => Promise<AgentOutcome> {
   return async (item) => {
+    if (!item.goal.trim()) {
+      // A dispatch with no goal is a defect upstream, not something to guess at.
+      // Failing loudly beats running opencode against an empty prompt and
+      // reporting whatever it says back as a mission result.
+      throw new Error(`work ${item.workId} carried no task goal`)
+    }
     const token = await item.harness.token()
     // `token()` renews a grant that is within the renewal window of its expiry.
     // A grant still inside that window after `token()` means the renewal failed.
@@ -105,6 +111,10 @@ export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocati
         goal: item.goal,
         workspace: options.workspace ?? process.env.ZEROCOOL_WORKSPACE ?? process.cwd(),
         timeoutMs: item.timeoutMs,
+        // Continuity across dispatches: opencode's own session id carries the
+        // conversation. The result returns it in `opencode_session_id`, and a
+        // later dispatch passes it back in the context of the work item.
+        ...(item.context.opencode_session_id ? { sessionId: item.context.opencode_session_id } : {}),
         // The grant may be renewed during the run. Remove that value too.
         knownGrants: async () => [await item.harness.token()],
         grant: {
