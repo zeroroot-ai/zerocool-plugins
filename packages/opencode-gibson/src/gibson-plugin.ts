@@ -7,7 +7,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { ambientKnowledge } from "./knowledge.js"
-import { selectKnowledgeSource } from "./knowledge-source.js"
+import { openTaskRun, selectKnowledgeSource, type KnowledgeSourceDeps, type SelectedKnowledge } from "./knowledge-source.js"
 import { gibsonMcpServer } from "./mcp-config.js"
 import { modelSelector, modelSlot, PROVIDER_ID, resolveProvider } from "./model-provider.js"
 import type { SessionContext } from "./findings.js"
@@ -16,6 +16,8 @@ import type { SessionContext } from "./findings.js"
 export interface PluginDeps {
   connect: typeof connectGibson
   selectKnowledge: typeof selectKnowledgeSource
+  /** Opens the task harness of a granted run. Defaults to `openTaskHarness`. */
+  openHarness?: KnowledgeSourceDeps["openHarness"]
 }
 
 const defaultDeps: PluginDeps = { connect: connectGibson, selectKnowledge: selectKnowledgeSource }
@@ -58,7 +60,14 @@ const defaultDeps: PluginDeps = { connect: connectGibson, selectKnowledge: selec
  * platform must still be a working coding agent, so every platform failure
  * degrades to the standalone behaviour instead of refusing to start.
  */
-export async function createGibsonPlugin(deps: PluginDeps = defaultDeps): Promise<Hooks> {
+export async function createGibsonPlugin(deps: PluginDeps = defaultDeps, env: NodeJS.ProcessEnv = process.env): Promise<Hooks> {
+  // A run with a task grant is a dispatched run. The grant and the callback
+  // endpoint are its whole credential, so it opens the task harness from them
+  // before and without any component check-in. It needs no platform URL, no
+  // host key and no bootstrap token, and a sandboxed run has none of them.
+  if (env.GIBSON_CALLBACK_TOKEN || env.GIBSON_CALLBACK_ENDPOINT) {
+    return await grantedPlugin(deps, env)
+  }
   const platformURL = process.env.GIBSON_PLATFORM_URL
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const context: SessionContext = {}
@@ -129,37 +138,74 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps): Promis
 
   const live = session
 
-  // Which grant this process reads the knowledge graph with. A dispatched run
-  // reads as the TASK; an interactive one keeps the component grant. Chosen once
-  // here so nothing downstream has to ask.
-  const { knowledge, scope: knowledgeScope, harness, stop: stopKnowledge } = deps.selectKnowledge(live)
-  console.error(`[zerocool] knowledge reads use the ${knowledgeScope} grant`)
+  // An interactive run reads the knowledge graph with the component grant.
+  // It has no task, so it has no task grant and no model provider: opencode
+  // uses the provider that the user configured.
+  const selected = deps.selectKnowledge(live)
+  console.error(`[zerocool] knowledge reads use the ${selected.scope} grant`)
+  console.error(`[zerocool] no ${PROVIDER_ID} model provider: this run has no task grant`)
+  return buildHooks({
+    knowledge: selected,
+    context,
+    stop: () => {
+      selected.stop()
+      live.stop()
+    },
+  })
+}
 
-  // The model path. `resolveModel` needs a task grant, so only a dispatched run
-  // has one. An interactive run has no task, and opencode uses the provider the
-  // user configured.
-  //
-  // A dispatched run has no other model path. When the slot does not resolve,
-  // this throws, and the run fails. The driver also selects `gibson/<slot>`
-  // with `--model`, so a plugin that opencode fails to load still ends in a
-  // failed run, not in a run on a direct provider key.
-  const slot = modelSlot()
-  let provider: Record<string, unknown> | undefined
-  if (harness) {
-    try {
-      provider = await resolveProvider(harness, slot)
-    } catch (e) {
-      stopKnowledge()
-      session.stop()
-      throw new Error(`the Model gateway did not resolve slot "${slot}": ${(e as Error).message}`, { cause: e })
-    }
-    console.error(`[zerocool] provider "${PROVIDER_ID}" sends Open Responses calls to the Model gateway for slot "${slot}"`)
-  } else {
-    console.error(`[zerocool] no ${PROVIDER_ID} model provider: this run has no task grant`)
+/**
+ * The plugin of a granted run. It opens the task harness from the
+ * `GIBSON_CALLBACK_*` variables, resolves the model slot on it, and locks
+ * opencode to the `gibson` provider. It does not check in as a component: the
+ * task harness gives the model path and the knowledge reads, and the Gibson MCP
+ * server of the child joins the run with the same grant.
+ *
+ * The slot must resolve. When it does not, this throws and the run fails. The
+ * driver also selects `gibson/<slot>` with `--model`, so a plugin that opencode
+ * fails to load still ends in a failed run, not in a run on a direct provider.
+ */
+async function grantedPlugin(deps: PluginDeps, env: NodeJS.ProcessEnv): Promise<Hooks> {
+  const run = openTaskRun(env, deps.openHarness ? { openHarness: deps.openHarness } : {})
+  const slot = modelSlot(env)
+  let provider: Record<string, unknown>
+  try {
+    provider = await resolveProvider(run.harness, slot)
+  } catch (e) {
+    run.stop()
+    throw new Error(`the Model gateway did not resolve slot "${slot}": ${(e as Error).message}`, { cause: e })
   }
+  console.error(`[zerocool] knowledge reads use the task grant`)
+  console.error(`[zerocool] provider "${PROVIDER_ID}" sends Open Responses calls to the Model gateway for slot "${slot}"`)
+  return buildHooks({
+    knowledge: run,
+    context: {},
+    stop: () => run.stop(),
+    grantedConfig: (config) => lockToGateway(config, provider, modelSelector(env)),
+  })
+}
 
+/** Select the `gibson` provider and its model. The provider replaces any entry of the same name. */
+export function lockToGateway(config: unknown, provider: Record<string, unknown>, selector: string): void {
+  const cfg = config as { provider?: Record<string, unknown>; model?: string; small_model?: string }
+  cfg.provider = cfg.provider ?? {}
+  cfg.provider[PROVIDER_ID] = provider
+  cfg.model = selector
+  cfg.small_model = selector
+}
+
+interface HookInputs {
+  knowledge: SelectedKnowledge
+  context: SessionContext
+  stop: () => void
+  /** Set for a granted run: it locks the config to the gateway provider. */
+  grantedConfig?: (config: unknown) => void
+}
+
+function buildHooks(inputs: HookInputs): Hooks {
+  const { knowledge, context, stop } = inputs
   const injectKnowledge = ambientKnowledge(
-    knowledge,
+    knowledge.knowledge,
     process.env.ZEROCOOL_AMBIENT_QUERY ?? "prior findings and security facts for this codebase",
   )
 
@@ -168,15 +214,7 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps): Promis
     // config-load time (#6, ADR-0158). `Plugin` returns `Promise<Hooks>`, so
     // opencode cannot reach this hook before the slot has resolved.
     config: async (config) => {
-      if (provider) {
-        // A dispatched run uses the gateway and nothing else. The provider
-        // replaces any entry of the same name, and both model fields select it.
-        const cfg = config as unknown as { provider?: Record<string, unknown>; model?: string; small_model?: string }
-        cfg.provider = cfg.provider ?? {}
-        cfg.provider[PROVIDER_ID] = provider
-        cfg.model = modelSelector()
-        cfg.small_model = modelSelector()
-      }
+      inputs.grantedConfig?.(config)
       addMcpServer(config)
     },
 
@@ -195,8 +233,7 @@ export async function createGibsonPlugin(deps: PluginDeps = defaultDeps): Promis
     dispose: async () => {
       // A task-scoped source holds a grant-renewal timer. Leaving it running
       // would keep renewing a grant for a session that has ended.
-      stopKnowledge()
-      session?.stop()
+      stop()
     },
   } satisfies Hooks
 }

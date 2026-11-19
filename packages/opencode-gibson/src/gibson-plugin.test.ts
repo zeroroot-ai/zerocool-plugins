@@ -15,6 +15,8 @@ import { makeCa, withTlsGateway } from "./tls-fixture.test.js"
 
 const ca = makeCa("gateway-ca")
 
+
+
 async function withEnv(env: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
   const keys = ["GIBSON_PLATFORM_URL", "GIBSON_BOOTSTRAP_TOKEN", "GIBSON_HOST_KEY_PATH", "GIBSON_MODEL_SLOT"]
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
@@ -40,18 +42,43 @@ async function withEnv(env: Record<string, string | undefined>, fn: () => Promis
   }
 }
 
-function deps(harness: { resolveModel: (slot: string) => Promise<ResolvedModel>; token: () => string } | undefined): PluginDeps & { stops: string[] } {
+/** A fake harness of a granted run: the model resolver, the grant and the stop. */
+interface FakeHarness {
+  resolveModel: (slot: string) => Promise<ResolvedModel>
+  token: () => string
+}
+
+/** The platform calls of a plugin. A granted run must never check in, so `connect` fails the test. */
+function deps(harness?: FakeHarness): PluginDeps & { stops: string[]; checkedIn: number } {
   const stops: string[] = []
-  return {
+  const d = {
     stops,
-    connect: (async () => ({ componentScope: "c", stop: () => stops.push("session") })) as never,
-    selectKnowledge: (() => ({
-      knowledge: {},
-      scope: harness ? "task" : "component",
-      ...(harness ? { harness } : {}),
-      stop: () => stops.push("knowledge"),
-    })) as never,
+    checkedIn: 0,
+    connect: (async () => {
+      d.checkedIn += 1
+      return { componentScope: "c", stop: () => stops.push("session") }
+    }) as never,
+    selectKnowledge: (() => ({ knowledge: {}, scope: "component", stop: () => stops.push("knowledge") })) as never,
+    ...(harness
+      ? { openHarness: (() => ({ ...harness, stop: () => stops.push("harness") })) as never }
+      : {}),
   }
+  return d
+}
+
+/**
+ * The environment of a sandboxed dispatched child, exactly. The launcher
+ * (gibson `internal/engine/harness/sandboxed/agent_member.go`) writes the grant,
+ * the endpoint and the run ids. It writes no `GIBSON_PLATFORM_URL`, no host key
+ * and no bootstrap token. The driver renames the grant for the child.
+ */
+const SANDBOX_CHILD_ENV: NodeJS.ProcessEnv = {
+  GIBSON_CALLBACK_ENDPOINT: "https://api.example.test",
+  GIBSON_CALLBACK_TOKEN: "task-grant",
+  GIBSON_MISSION_RUN_ID: "run-1",
+  GIBSON_AGENT_RUN_ID: "ar-1",
+  GIBSON_TRACE_ID: "tr-1",
+  PATH: "/usr/bin",
 }
 
 type Config = {
@@ -83,6 +110,7 @@ test("the config hook selects gibson/<slot> and its fetch reaches the gateway wi
           },
           token: () => "task-grant",
         }),
+        SANDBOX_CHILD_ENV,
       )
       // The config of the user holds a direct provider and a bare model. The dispatch wins.
       const config: Config = { model: "anthropic/claude-sonnet-x", provider: { gibson: { models: {} } } }
@@ -121,6 +149,7 @@ test("GIBSON_MODEL_SLOT names the slot that the hook resolves and selects", asyn
         },
         token: () => "g",
       }),
+      { ...SANDBOX_CHILD_ENV, GIBSON_MODEL_SLOT: "review" },
     )
     const config: Config = {}
     await hooks.config?.(config as never)
@@ -137,18 +166,60 @@ test("a dispatched run whose slot does not resolve fails, and does not continue 
       },
       token: () => "g",
     })
-    await assert.rejects(() => createGibsonPlugin(d), /did not resolve slot "primary": no model for slot/)
-    assert.deepEqual(d.stops, ["knowledge", "session"], "the grant timer and the session stop")
+    await assert.rejects(() => createGibsonPlugin(d, SANDBOX_CHILD_ENV), /did not resolve slot "primary": no model for slot/)
+    assert.deepEqual(d.stops, ["harness"], "the grant timer stops")
   })
 })
 
 test("a run with no task grant registers no provider and selects no model", async () => {
   await withEnv({}, async () => {
-    const hooks = await createGibsonPlugin(deps(undefined))
+    const hooks = await createGibsonPlugin(deps(undefined), {})
     const config: Config = { model: "anthropic/claude-sonnet-x" }
     await hooks.config?.(config as never)
     assert.equal(config.provider?.gibson, undefined)
     assert.equal(config.model, "anthropic/claude-sonnet-x", "the model of the user stays")
     assert.ok(config.mcp?.gibson)
   })
+})
+
+test("a sandboxed granted run registers the provider with no platform URL, no host key and no check-in", async () => {
+  const d = deps({ resolveModel: async () => reply("https://gw.example"), token: () => "task-grant" })
+  const hooks = await createGibsonPlugin(d, SANDBOX_CHILD_ENV)
+  const config: Config = {}
+  await hooks.config?.(config as never)
+  assert.equal(d.checkedIn, 0, "the granted run does not check in as a component")
+  assert.equal(config.model, "gibson/primary")
+  assert.ok(config.provider?.gibson)
+  await hooks.dispose?.()
+  assert.deepEqual(d.stops, ["harness"], "the harness stops, and there is no session to stop")
+})
+
+test("a granted run opens the harness from the callback variables of the environment", async () => {
+  const seen: { slot?: string; endpoint?: string; token?: string; insecure?: boolean } = {}
+  const d: PluginDeps = {
+    connect: (async () => assert.fail("no check-in")) as never,
+    selectKnowledge: (() => assert.fail("no component knowledge")) as never,
+    openHarness: ((opts: { endpoint: string; token: string; insecure?: boolean }) => {
+      Object.assign(seen, { endpoint: opts.endpoint, token: opts.token, insecure: opts.insecure })
+      return {
+        resolveModel: async (slot: string) => {
+          seen.slot = slot
+          return reply("https://gw.example")
+        },
+        token: () => opts.token,
+        stop: () => {},
+      }
+    }) as never,
+  }
+  const hooks = await createGibsonPlugin(d, { ...SANDBOX_CHILD_ENV, GIBSON_CALLBACK_INSECURE: "1" })
+  const config: Config = {}
+  await hooks.config?.(config as never)
+  assert.deepEqual(seen, { endpoint: "https://api.example.test", token: "task-grant", insecure: true, slot: "primary" })
+  assert.equal(config.provider?.gibson?.models?.primary?.id, "claude-sonnet-x")
+  await hooks.dispose?.()
+})
+
+test("a granted run with the grant and no endpoint, or the reverse, fails", async () => {
+  await assert.rejects(() => createGibsonPlugin(deps(), { GIBSON_CALLBACK_TOKEN: "g" }), /must both be set/)
+  await assert.rejects(() => createGibsonPlugin(deps(), { GIBSON_CALLBACK_ENDPOINT: "https://x" }), /must both be set/)
 })

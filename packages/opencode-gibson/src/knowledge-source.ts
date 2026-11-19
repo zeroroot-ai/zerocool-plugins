@@ -67,19 +67,35 @@ export function selectKnowledgeSource(
   session: GibsonSession,
   deps: KnowledgeSourceDeps = {},
 ): SelectedKnowledge {
-  const endpoint = process.env.GIBSON_CALLBACK_ENDPOINT
-  const token = process.env.GIBSON_CALLBACK_TOKEN
-
-  if (!endpoint) {
+  if (!process.env.GIBSON_CALLBACK_ENDPOINT) {
     return {
       knowledge: componentKnowledge(session.clients.component),
       scope: "component",
       stop: () => {},
     }
   }
-  if (!token) {
+  return openTaskRun(process.env, deps)
+}
+
+/**
+ * Open the task harness of a granted run from the `GIBSON_CALLBACK_*`
+ * variables, and read knowledge through it. It needs no component check-in:
+ * no platform URL, no host key and no bootstrap token. A sandboxed run has
+ * none of them, and the grant is its only credential.
+ *
+ * It fails when only one of the endpoint and the token is set. A half-set
+ * pair is a defect in the launch, and a fallback would widen the authority of
+ * the run.
+ */
+export function openTaskRun(
+  env: NodeJS.ProcessEnv,
+  deps: KnowledgeSourceDeps = {},
+): SelectedKnowledge & { harness: TaskHarness } {
+  const endpoint = env.GIBSON_CALLBACK_ENDPOINT
+  const token = env.GIBSON_CALLBACK_TOKEN
+  if (!endpoint || !token) {
     throw new Error(
-      "GIBSON_CALLBACK_ENDPOINT is set but GIBSON_CALLBACK_TOKEN is not. A dispatched run " +
+      "GIBSON_CALLBACK_ENDPOINT and GIBSON_CALLBACK_TOKEN must both be set. A dispatched run " +
         "must read with its task grant; falling back to the component grant would silently " +
         "widen this run's authority.",
     )
@@ -88,7 +104,7 @@ export function selectKnowledgeSource(
     endpoint,
     token,
     // A local or kind daemon may serve the callback listener without TLS.
-    insecure: process.env.GIBSON_CALLBACK_INSECURE === "1",
+    insecure: env.GIBSON_CALLBACK_INSECURE === "1",
   })
   return {
     knowledge: taskKnowledge(harness),
