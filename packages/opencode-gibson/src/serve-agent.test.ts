@@ -38,7 +38,7 @@ const message = (goal: string, envelope: Record<string, unknown> = { mission_run
 interface Submitted {
   workId: string
   result: Uint8Array
-  error?: { code: string; message: string }
+  error?: { code: string; message: string; retryable?: boolean }
 }
 
 type Task = { status?: { state?: string }; artifacts?: { parts?: { text?: string }[] }[]; metadata?: Record<string, unknown> }
@@ -109,8 +109,9 @@ test("the child gets the task grant and the endpoint in its environment, and no 
   const grant = grantFor("first")
   const probe = await probeEnv({ ANTHROPIC_API_KEY: "sk-direct", OPENAI_API_KEY: "sk-direct" })
   await withChildEnv(probe.env, async () => {
-    const { submitted, errors } = await serve(grant)
+    const { submitted, text, errors } = await serve(grant)
     assert.equal(submitted.error, undefined)
+    assert.equal((JSON.parse(text) as Task).status?.state, "TASK_STATE_COMPLETED")
     assert.deepEqual(errors, [])
     const { env } = await probeOf(probe.out)
     assert.equal(env.GIBSON_CALLBACK_TOKEN, grant)
@@ -196,8 +197,12 @@ test("the grant is removed from the error of a child that fails", async () => {
   const grant = grantFor("in-error")
   const probe = await probeEnv({ ZEROCOOL_TEST_PROBE_FAIL: "1" })
   await withChildEnv(probe.env, async () => {
-    const { submitted, errors } = await serve(grant)
+    const { submitted, text, errors } = await serve(grant)
+    // A child that fails is a work item error and no Task: the SDK answers a
+    // throwing handler that way, and the mission node fails fast with the reason.
+    assert.equal(text, "", "no Task for a failed child")
     assert.equal(submitted.error?.code, "EXECUTION_ERROR")
+    assert.equal(submitted.error?.retryable, false)
     assert.match(submitted.error?.message ?? "", /opencode exited 1: boom with \[task grant\]/)
     assert.ok(!(submitted.error?.message ?? "").includes(grant))
     for (const e of errors) assert.ok(!String((e as Error).message).includes(grant))

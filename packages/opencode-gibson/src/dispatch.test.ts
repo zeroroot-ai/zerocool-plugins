@@ -11,6 +11,8 @@ import {
   dispatchTaskKind,
   formatTerminalResult,
   readDispatchContext,
+  REDACTED_GRANT,
+  redactGrant,
   runDispatch,
   taskContextStrings,
   type DispatchContext,
@@ -365,4 +367,38 @@ test("runDispatch selects the gateway model of the configured slot, and never th
     if (saved === undefined) delete process.env.GIBSON_MODEL_SLOT
     else process.env.GIBSON_MODEL_SLOT = saved
   }
+})
+
+test("a dispatched run that completes is a COMPLETED Task, and one that fails reports FAILED", async () => {
+  const done = await runDispatch(ctx(), { run: async () => fakeRunResult() })
+  assert.equal(done.state, TaskState.TASK_STATE_COMPLETED)
+  assert.equal(JSON.parse(formatTerminalResult(done)).success, true)
+
+  // A crashed child throws. The driver turns the throw into the failed outcome.
+  await assert.rejects(() => runDispatch(ctx(), { run: async () => { throw new Error("opencode exited 1") } }), /opencode exited 1/)
+  const failed = failedOutcome("opencode exited 1")
+  assert.equal(failed.state, TaskState.TASK_STATE_FAILED)
+  assert.equal(JSON.parse(formatTerminalResult(failed)).success, false)
+})
+
+test("a dispatched run removes the task grant from the output, the events and the error", async () => {
+  const events: string[] = []
+  const outcome = await runDispatch(ctx(), {
+    run: async (opts) => {
+      opts.onEvent?.('{"type":"text","part":{"text":"value is tok"}}')
+      return fakeRunResult({ text: "the grant is tok" })
+    },
+    onEvent: (line) => events.push(line),
+  })
+  assert.equal(outcome.output, `the grant is ${REDACTED_GRANT}`)
+  assert.deepEqual(events, [`{"type":"text","part":{"text":"value is ${REDACTED_GRANT}"}}`])
+  await assert.rejects(
+    () => runDispatch(ctx(), { run: async () => { throw new Error("opencode exited 1: boom tok") } }),
+    (e: Error) => e.message === `opencode exited 1: boom ${REDACTED_GRANT}` && e.cause === undefined,
+  )
+})
+
+test("redactGrant replaces each grant and skips an empty value", () => {
+  assert.equal(redactGrant("a tok b new c", ["tok", "", "new"]), `a ${REDACTED_GRANT} b ${REDACTED_GRANT} c`)
+  assert.equal(redactGrant("no secret", ["tok"]), "no secret")
 })
