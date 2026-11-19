@@ -351,25 +351,58 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
   if (kind === "fix") {
     return runFixDispatch(ctx, deps)
   }
+  return runOpencodeTask(
+    {
+      goal: ctx.goal,
+      workspace: ctx.workspace,
+      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
+      timeoutMs: ctx.timeoutMs,
+      grant: {
+        callbackEndpoint: ctx.callbackEndpoint,
+        callbackToken: ctx.grant,
+        insecure: ctx.insecure,
+        missionRunId: ctx.missionRunId,
+        agentRunId: ctx.agentRunId,
+        traceId: ctx.traceId,
+      },
+    },
+    deps,
+  )
+}
+
+/** What one opencode run needs: the goal, where it runs, and the grant the child gets. */
+export interface OpencodeTask {
+  goal: string
+  /** opencode edits files here. */
+  workspace: string
+  /** Continue an earlier opencode session instead of starting a new one. */
+  sessionId?: string
+  /** Hard deadline for the run, in ms. `0` when none was set. */
+  timeoutMs: number
+  /** The grant and the endpoint the child receives, in its environment only. */
+  grant: CallbackGrant
+}
+
+/**
+ * Drive `opencode run` on a goal and map the result to a terminal outcome.
+ *
+ * Both dispatched shapes end here: the sandboxed run (`runDispatch`) and the
+ * pull worker (`serve-agent.ts`). The child gets the same environment from
+ * {@link dispatchChildEnv} in both, so it opens one task harness the same way.
+ */
+export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDeps, "run" | "onEvent"> = {}): Promise<AgentOutcome> {
   const run = deps.run ?? runOpencode
   const result = await run({
-    goal: ctx.goal,
-    dir: ctx.workspace,
-    // `gibson/<slot>`, the model of the gateway provider. `ctx.model` is a bare
-    // tenant model name that no provider registers, so it is not passed.
+    goal: task.goal,
+    dir: task.workspace,
+    // `gibson/<slot>`, the model of the gateway provider. A bare tenant model
+    // name is no model of any provider, so it is not passed.
     model: modelSelector(),
-    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
-    ...(ctx.timeoutMs > 0 ? { timeoutMs: ctx.timeoutMs } : {}),
+    ...(task.sessionId ? { sessionId: task.sessionId } : {}),
+    ...(task.timeoutMs > 0 ? { timeoutMs: task.timeoutMs } : {}),
     // The child speaks the opencode plugin's own contract, whose token name is
     // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
-    env: dispatchChildEnv({
-      callbackEndpoint: ctx.callbackEndpoint,
-      callbackToken: ctx.grant,
-      insecure: ctx.insecure,
-      missionRunId: ctx.missionRunId,
-      agentRunId: ctx.agentRunId,
-      traceId: ctx.traceId,
-    }),
+    env: dispatchChildEnv(task.grant),
     ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
   })
 

@@ -5,12 +5,23 @@ import assert from "node:assert/strict"
 import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { EXTENSION_KEY, startAgentWorker, type InstanceRef } from "@zeroroot-ai/sdk"
 
-import { agentHandler, NO_GATEWAY_PATH } from "./serve-agent.js"
+import { agentHandler, callbackEndpointOf } from "./serve-agent.js"
 
 /** The agent worker submits an A2A Task. These tests drive the real SDK worker with a fake daemon. */
+
+const FAKE_ENV_BIN = fileURLToPath(new URL("../test/bin/fake-opencode-env.mjs", import.meta.url))
+const ENDPOINT = "https://api.example.test:8443"
+
+const jwt = (payload: Record<string, unknown>): string => {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url")
+  return `${b64({ alg: "EdDSA" })}.${b64(payload)}.sig`
+}
+const grantFor = (tag: string, expiresInMs = 30 * 60_000): string =>
+  jwt({ sub: "component:agent:zerocool-opencode", mission_id: "m-1", task_id: "t-1", mission_run_id: "run-1", exp: Math.floor((Date.now() + expiresInMs) / 1000), tag })
 
 const message = (goal: string) =>
   new TextEncoder().encode(
@@ -30,53 +41,126 @@ interface Submitted {
   error?: { code: string; message: string }
 }
 
-type Task = { id?: string; contextId?: string; status?: { state?: string }; metadata?: Record<string, unknown> }
+type Task = { status?: { state?: string }; artifacts?: { parts?: { text?: string }[] }[]; metadata?: Record<string, unknown> }
 
 /** Serve one work item, and return what the worker submitted for it. */
-async function serve(goal: string): Promise<{ submitted: Submitted; task: Task }> {
+async function serve(
+  taskGrant: string,
+  renewGrant?: (cur: string) => Promise<string>,
+): Promise<{ submitted: Submitted; text: string; errors: unknown[] }> {
   let served = false
   let done!: (s: Submitted) => void
   const submittedP = new Promise<Submitted>((r) => (done = r))
+  const errors: unknown[] = []
   const component = {
     pollWork: async () => {
       if (served) return await new Promise<never>(() => {})
       served = true
-      return { workId: "w-1", workType: "execute", context: {}, payload: message(goal), timeoutMs: 0n, taskGrant: "grant" }
+      return { workId: "w-1", workType: "execute", context: {}, payload: message("scan the repo"), timeoutMs: 0n, taskGrant }
     },
     submitResult: async (r: Submitted) => done(r),
   } as unknown as Parameters<typeof startAgentWorker>[0]
   const ref = { current: () => "inst-1", renew: async () => "inst-1" } as unknown as InstanceRef
-  const stop = startAgentWorker(component, ref, { handler: agentHandler })
+  const stop = startAgentWorker(component, ref, {
+    handler: agentHandler({ callbackEndpoint: ENDPOINT }),
+    onError: (e) => errors.push(e),
+    ...(renewGrant ? { renewGrant } : {}),
+  })
   try {
     const submitted = await submittedP
-    const text = new TextDecoder().decode(submitted.result)
-    return { submitted, task: text ? JSON.parse(text) : {} }
+    return { submitted, text: new TextDecoder().decode(submitted.result), errors }
   } finally {
     stop()
   }
 }
 
-test("a polled work item gets a failed A2A Task that says why, and no opencode child starts", async () => {
-  // A child that would run opencode. It writes a marker file when it starts.
+/** The environment the fake opencode child saw. It prints its env as the text of the run. */
+function childEnvOf(result: string): Record<string, string | undefined> {
+  const task = JSON.parse(result) as Task
+  const text = JSON.stringify(task)
+  const m = /"text":"((?:[^"\\]|\\.)*)"/.exec(text)
+  assert.ok(m, "the Task carries the child output")
+  return JSON.parse(JSON.parse(`"${m[1]}"`)) as Record<string, string | undefined>
+}
+
+async function withChildEnv<T>(set: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const saved: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries(set)) {
+    saved[k] = process.env[k]
+    if (v === undefined) delete process.env[k]
+    else process.env[k] = v
+  }
+  try {
+    return await fn()
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  }
+}
+
+test("the child gets the task grant and the endpoint in its environment, and no direct provider key", async () => {
+  const grant = grantFor("first")
+  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN, ANTHROPIC_API_KEY: "sk-direct", OPENAI_API_KEY: "sk-direct" }, async () => {
+    const { submitted, text, errors } = await serve(grant)
+    assert.equal(submitted.error, undefined)
+    assert.deepEqual(errors, [])
+    const env = childEnvOf(text)
+    assert.equal(env.GIBSON_CALLBACK_TOKEN, grant)
+    assert.equal(env.GIBSON_CALLBACK_ENDPOINT, ENDPOINT)
+    assert.equal(env.GIBSON_MISSION_RUN_ID, "run-1")
+    assert.equal(env.GIBSON_AGENT_RUN_ID, "ar-1")
+    assert.equal(env.ANTHROPIC_API_KEY, undefined)
+    assert.equal(env.OPENAI_API_KEY, undefined)
+  })
+})
+
+test("the child gets the renewed grant when the grant of the work item is near its expiry", async () => {
+  const old = grantFor("old", 60_000)
+  const fresh = grantFor("fresh")
+  const seen: string[] = []
+  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN }, async () => {
+    const { text } = await serve(old, async (cur) => (seen.push(cur), fresh))
+    assert.equal(childEnvOf(text).GIBSON_CALLBACK_TOKEN, fresh)
+    assert.deepEqual(seen, [old])
+  })
+})
+
+test("the grant is in no log line of the worker", async () => {
+  const grant = grantFor("secret")
+  const lines: string[] = []
+  const orig = console.error
+  console.error = (...a: unknown[]) => void lines.push(a.join(" "))
+  try {
+    await withChildEnv({ ZEROCOOL_OPENCODE_BIN: FAKE_ENV_BIN }, async () => {
+      const { errors } = await serve(grant)
+      for (const e of errors) lines.push(String((e as Error).message))
+    })
+  } finally {
+    console.error = orig
+  }
+  assert.ok(!lines.some((l) => l.includes(grant)))
+})
+
+test("a work item with no grant fails and no child starts", async () => {
   const dir = await mkdtemp(join(tmpdir(), "zerocool-agent-"))
   const marker = join(dir, "started")
   const bin = join(dir, "opencode")
   await writeFile(bin, `#!/bin/sh\necho started > ${marker}\n`)
   await chmod(bin, 0o755)
-  const saved = process.env.ZEROCOOL_OPENCODE_BIN
-  process.env.ZEROCOOL_OPENCODE_BIN = bin
-  try {
-    const { submitted, task } = await serve("scan the repo")
-    assert.equal(submitted.error, undefined, "a Task, not a work item error")
-    assert.equal(task.status?.state, "TASK_STATE_FAILED")
-    assert.equal(task.id, "t-1")
-    assert.equal(task.contextId, "c-1")
-    const ext = task.metadata?.[EXTENSION_KEY] as { error?: { code?: string; message?: string } } | undefined
-    assert.equal(ext?.error?.code, NO_GATEWAY_PATH)
-    assert.match(ext?.error?.message ?? "", /direct provider key is not a substitute/)
-    await assert.rejects(() => readFile(marker), "no child ran, so no direct key and no component-grant knowledge read")
-  } finally {
-    if (saved === undefined) delete process.env.ZEROCOOL_OPENCODE_BIN
-    else process.env.ZEROCOOL_OPENCODE_BIN = saved
-  }
+  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: bin }, async () => {
+    const { submitted } = await serve("")
+    assert.equal(submitted.error?.code, "EXECUTION_ERROR")
+    await assert.rejects(() => readFile(marker), "no child ran")
+  })
+})
+
+test("the callback endpoint is the endpoint the worker polls", () => {
+  assert.equal(callbackEndpointOf({ GIBSON_PLATFORM_URL: "https://api.example.test/" }), "https://api.example.test")
+  assert.equal(
+    callbackEndpointOf({ GIBSON_PLATFORM_URL: "https://api.example.test", GIBSON_DAEMON_URL: "https://edge.example.test" }),
+    "https://edge.example.test",
+  )
+  assert.throws(() => callbackEndpointOf({}), /GIBSON_PLATFORM_URL is required/)
 })
