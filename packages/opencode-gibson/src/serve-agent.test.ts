@@ -20,10 +20,10 @@ const jwt = (payload: Record<string, unknown>): string => {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url")
   return `${b64({ alg: "EdDSA" })}.${b64(payload)}.sig`
 }
-const grantFor = (tag: string, expiresInMs = 30 * 60_000): string =>
-  jwt({ sub: "component:agent:zerocool-opencode", mission_id: "m-1", task_id: "t-1", mission_run_id: "run-1", exp: Math.floor((Date.now() + expiresInMs) / 1000), tag })
+const grantFor = (tag: string, expiresInMs = 30 * 60_000, run = "run-1"): string =>
+  jwt({ sub: "component:agent:zerocool-opencode", mission_id: "m-1", task_id: "t-1", mrid: run, exp: Math.floor((Date.now() + expiresInMs) / 1000), tag })
 
-const message = (goal: string) =>
+const message = (goal: string, envelope: Record<string, unknown> = { mission_run_id: "run-1", agent_run_id: "ar-1", trace_id: "tr-1" }) =>
   new TextEncoder().encode(
     JSON.stringify({
       messageId: "m-1",
@@ -31,7 +31,7 @@ const message = (goal: string) =>
       contextId: "c-1",
       role: "ROLE_USER",
       parts: [{ text: goal }],
-      metadata: { [EXTENSION_KEY]: { mission_run_id: "run-1", agent_run_id: "ar-1", trace_id: "tr-1" } },
+      metadata: { [EXTENSION_KEY]: envelope },
     }),
   )
 
@@ -47,6 +47,7 @@ type Task = { status?: { state?: string }; artifacts?: { parts?: { text?: string
 async function serve(
   taskGrant: string,
   renewGrant?: (cur: string) => Promise<string>,
+  envelope?: Record<string, unknown>,
 ): Promise<{ submitted: Submitted; text: string; errors: unknown[] }> {
   let served = false
   let done!: (s: Submitted) => void
@@ -56,7 +57,7 @@ async function serve(
     pollWork: async () => {
       if (served) return await new Promise<never>(() => {})
       served = true
-      return { workId: "w-1", workType: "execute", context: {}, payload: message("scan the repo"), timeoutMs: 0n, taskGrant }
+      return { workId: "w-1", workType: "execute", context: {}, payload: message("scan the repo", envelope), timeoutMs: 0n, taskGrant }
     },
     submitResult: async (r: Submitted) => done(r),
   } as unknown as Parameters<typeof startAgentWorker>[0]
@@ -129,6 +130,27 @@ test("the child gets the renewed grant when the grant of the work item is near i
     await serve(old, async (cur) => (seen.push(cur), fresh))
     assert.equal((await probeOf(probe.out)).env.GIBSON_CALLBACK_TOKEN, fresh)
     assert.deepEqual(seen, [old])
+  })
+})
+
+test("an envelope with no mission run takes the run of the grant", async () => {
+  const probe = await probeEnv()
+  await withChildEnv(probe.env, async () => {
+    const { submitted } = await serve(grantFor("g", 30 * 60_000, "run-from-grant"), undefined, {})
+    assert.equal(submitted.error, undefined)
+    const { env } = await probeOf(probe.out)
+    assert.equal(env.GIBSON_MISSION_RUN_ID, "run-from-grant")
+    assert.equal(env.GIBSON_AGENT_RUN_ID, undefined)
+  })
+})
+
+test("a work item whose envelope and grant name no run fails and starts no child", async () => {
+  const probe = await probeEnv()
+  await withChildEnv(probe.env, async () => {
+    const { submitted } = await serve(grantFor("g", 30 * 60_000, ""), undefined, {})
+    assert.equal(submitted.error?.code, "EXECUTION_ERROR")
+    assert.match(submitted.error?.message ?? "", /no mission run id/)
+    await assert.rejects(() => readFile(probe.out), "no child ran")
   })
 })
 
