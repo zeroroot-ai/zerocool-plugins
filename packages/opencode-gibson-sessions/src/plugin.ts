@@ -70,8 +70,8 @@ export async function sessionsPlugin(input: PluginInput, deps: SessionsPluginDep
 
   // Restore: adopt the stored version for the session this process continues,
   // so the first checkpoint extends that chain instead of racing it as a
-  // create. GIBSON_OPENCODE_SESSION_ID is the name `zerocool-dispatch` already
-  // uses to continue an opencode session.
+  // create. GIBSON_OPENCODE_SESSION_ID is for an interactive run: a person sets
+  // it to continue a session. A dispatched run is one session and sets none.
   const priorId = env.GIBSON_OPENCODE_SESSION_ID
   if (priorId) {
     const prior = await mirror.restore(priorId)

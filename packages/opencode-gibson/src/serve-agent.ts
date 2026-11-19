@@ -133,7 +133,7 @@ async function main(): Promise<void> {
   }
   // A worker that died in a run left its per-task directory. Remove those first.
   const stale = await removeStaleRunDirs()
-  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run directories`)
+  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run base directories`)
   const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const checkedIn = existsSync(hostKeyPath)

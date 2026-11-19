@@ -76,8 +76,9 @@ environment contract, and `CONTEXT.md` § Glossary for the vocabulary.
 
 With a platform it copies each session to the daemon session store on every
 `session.updated` and `message.updated`, keyed by opencode's own session id and
-by your tenant. Set `GIBSON_OPENCODE_SESSION_ID` to the session you are
-continuing and it reads that session back on start. Writes are debounced;
+by your tenant. In an interactive run, set `GIBSON_OPENCODE_SESSION_ID` to the
+session you are continuing and it reads that session back on start. A
+dispatched run is one session and does not use this variable. Writes are debounced;
 `ZEROCOOL_SESSION_MIRROR_DEBOUNCE_MS` changes the window, which defaults to
 2000 ms.
 

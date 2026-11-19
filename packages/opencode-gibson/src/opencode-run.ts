@@ -2,7 +2,8 @@
 // Copyright 2026 Zero Root AI
 
 import { spawn } from "node:child_process"
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises"
+import { randomBytes } from "node:crypto"
+import { chmod, lstat, mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -269,19 +270,23 @@ export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.Proces
 /**
  * Join two `OPENCODE_CONFIG_CONTENT` values. The keys of `ours` win, and the
  * `plugin` lists join with no duplicate. A value of the operator that is not
- * a JSON object is dropped: opencode would not load it either.
+ * a JSON object throws: opencode refuses it too, and a run must not continue
+ * with a config that the operator wrote and that nothing applies.
  */
 export function mergeConfigContent(operator: string, ours: string): string {
-  let base: Record<string, unknown> = {}
+  let base: unknown
   try {
-    const parsed: unknown = JSON.parse(operator)
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>
-  } catch {
-    base = {}
+    base = JSON.parse(operator)
+  } catch (e) {
+    throw new Error(`OPENCODE_CONFIG_CONTENT is not valid JSON: ${(e as Error).message}`)
   }
+  if (!base || typeof base !== "object" || Array.isArray(base)) {
+    throw new Error("OPENCODE_CONFIG_CONTENT must be a JSON object")
+  }
+  const operatorConfig = base as Record<string, unknown>
   const mine = JSON.parse(ours) as Record<string, unknown>
-  const plugins = [...asList(base.plugin), ...asList(mine.plugin)]
-  return JSON.stringify({ ...base, ...mine, plugin: [...new Set(plugins)] })
+  const plugins = [...asList(operatorConfig.plugin), ...asList(mine.plugin)]
+  return JSON.stringify({ ...operatorConfig, ...mine, plugin: [...new Set(plugins)] })
 }
 
 function asList(v: unknown): unknown[] {
@@ -327,7 +332,7 @@ export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRun
   // A run with a task grant gets a fresh home and fresh XDG directories, so the
   // stored keys and the config of the worker user are not there for a shell
   // command of the model to read. The directory is removed when the run ends.
-  const home = opts.env?.GIBSON_CALLBACK_TOKEN ? await mkdtemp(join(tmpdir(), RUN_DIR_PREFIX(process.pid))) : undefined
+  const home = opts.env?.GIBSON_CALLBACK_TOKEN ? await mkdtemp(join(await runBaseDir(), "run-")) : undefined
   try {
     return await spawnOpencode(opts, home)
   } finally {
@@ -341,53 +346,75 @@ export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRun
   }
 }
 
-/** The name of a per-task directory starts with this. The pid lets a later worker tell a live run from a dead one. */
-const RUN_DIR_PREFIX = (pid: number): string => `zerocool-run-${pid}-`
-const RUN_DIR_NAME = /^zerocool-run-(\d+)-/
+/**
+ * The run directories of one worker start live under one base directory that
+ * only this start uses. Its name holds the uid and a random id of this start
+ * (`zerocool-runs-<uid>-<id>`), and its mode is 0700. A pid is no key for this:
+ * it is valid only in the PID namespace of the worker, and a container restart
+ * gives pid 1 again. The worker touches `.alive` in its base each minute, and a
+ * base that nobody touched for a grant life belongs to no live worker.
+ */
+const BOOT_ID = randomBytes(8).toString("hex")
+const BASE_NAME = /^zerocool-runs-(\d+)-([0-9a-f]{16})$/
+const ALIVE_FILE = ".alive"
+const HEARTBEAT_MS = 60_000
 
-/** The longest life of one task grant (gibson `capabilitygrant.MaxLifetime`). A run directory older than this belongs to no live grant. */
+/** The longest life of one task grant (gibson `capabilitygrant.MaxLifetime`). A base that nobody touched for longer belongs to no live grant. */
 export const MAX_GRANT_LIFE_MS = 30 * 60 * 1000
 
 /** The time between SIGTERM and SIGKILL of a child that passed its deadline. */
 export const KILL_GRACE_MS = 5_000
 
+let runBase: Promise<string> | undefined
+
+/** The base directory of this worker start. It is made on first use, with mode 0700. */
+export function runBaseDir(): Promise<string> {
+  runBase ??= (async () => {
+    const base = join(tmpdir(), `zerocool-runs-${process.getuid?.() ?? 0}-${BOOT_ID}`)
+    await mkdir(base, { mode: 0o700 })
+    await chmod(base, 0o700)
+    const alive = join(base, ALIVE_FILE)
+    await writeFile(alive, "")
+    const timer = setInterval(() => void utimes(alive, new Date(), new Date()).catch(() => {}), HEARTBEAT_MS)
+    timer.unref()
+    return base
+  })().catch((e: unknown) => {
+    runBase = undefined
+    throw e
+  })
+  return runBase
+}
+
 /**
- * Remove the per-task directories that an earlier worker left behind. A
- * directory goes when the user of this process owns it, it is older than the
- * longest grant life, and the process that made it has ended. It returns the
- * names it removed.
+ * Remove the base directories that an earlier worker start left behind. A base
+ * goes when it is a real directory (no symbolic link), the user of this process
+ * owns it, it is not the base of this start, and nothing touched it for longer
+ * than a grant life. It returns the names it removed.
  */
 export async function removeStaleRunDirs(
-  opts: { root?: string; now?: number; alive?: (pid: number) => boolean } = {},
+  opts: { root?: string; now?: number; bootId?: string } = {},
 ): Promise<string[]> {
   const root = opts.root ?? tmpdir()
   const now = opts.now ?? Date.now()
-  const alive = opts.alive ?? processIsAlive
+  const bootId = opts.bootId ?? BOOT_ID
   const uid = process.getuid?.()
   const removed: string[] = []
   for (const name of await readdir(root).catch(() => [] as string[])) {
-    const match = RUN_DIR_NAME.exec(name)
-    if (!match) continue
+    const match = BASE_NAME.exec(name)
+    if (!match || match[2] === bootId) continue
+    if (uid !== undefined && Number(match[1]) !== uid) continue
     const path = join(root, name)
-    const info = await stat(path).catch(() => undefined)
+    const info = await lstat(path).catch(() => undefined)
     if (!info?.isDirectory() || (uid !== undefined && info.uid !== uid)) continue
-    if (now - info.mtimeMs <= MAX_GRANT_LIFE_MS || alive(Number(match[1]))) continue
+    const alive = await lstat(join(path, ALIVE_FILE)).catch(() => undefined)
+    const lastTouch = alive?.isFile() ? alive.mtimeMs : info.mtimeMs
+    if (now - lastTouch <= MAX_GRANT_LIFE_MS) continue
     await rm(path, { recursive: true, force: true }).then(
       () => void removed.push(name),
       (e: unknown) => console.error(`[zerocool] could not remove the stale run directory ${path}: ${(e as Error).message}`),
     )
   }
   return removed
-}
-
-function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (e) {
-    // EPERM means the process exists and belongs to another user.
-    return (e as NodeJS.ErrnoException).code === "EPERM"
-  }
 }
 
 async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined): Promise<OpencodeRunResult> {
@@ -399,7 +426,21 @@ async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined)
       cwd: opts.dir,
       env: opencodeChildEnv(process.env, opts.env, home),
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so one signal reaches opencode and every
+      // process that opencode or the model started. A background shell command
+      // must not outlive the run with the task grant in its environment.
+      detached: true,
     })
+
+    /** Signal the whole group of the child. A group with no process left is not an error. */
+    const killGroup = (signal: NodeJS.Signals): void => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, signal)
+        else child.kill(signal)
+      } catch {
+        // ESRCH: nothing is left in the group.
+      }
+    }
 
     let stdout = ""
     let stderr = ""
@@ -441,9 +482,9 @@ async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined)
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       termTimer = setTimeout(() => {
         timedOut = true
-        child.kill("SIGTERM")
+        killGroup("SIGTERM")
         killTimer = setTimeout(() => {
-          child.kill("SIGKILL")
+          killGroup("SIGKILL")
           child.stdout.destroy()
           child.stderr.destroy()
           settle(() => reject(timedOutError("SIGKILL")))
@@ -452,12 +493,20 @@ async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined)
     }
 
     child.on("error", (e) => settle(() => reject(new Error(`could not run ${bin}: ${e.message}`))))
+    // opencode ended, however it ended. Kill what is left in its group. This
+    // also closes the pipes that a background process holds, so `close` fires.
+    child.on("exit", () => killGroup("SIGKILL"))
     child.on("close", (code, signal) => {
       streamer?.flush()
-      if (timedOut || signal) {
+      killGroup("SIGKILL")
+      if (timedOut) {
         // Killed by the timeout. Say so with the deadline, because "terminated"
         // alone sends whoever reads the mission looking for a crash.
         settle(() => reject(timedOutError(signal ?? "SIGTERM")))
+        return
+      }
+      if (signal) {
+        settle(() => reject(new Error(`opencode was killed by ${signal}`)))
         return
       }
       if (code !== 0) {

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -16,6 +16,7 @@ import {
   opencodeChildEnv,
   parseOpencodeEvents,
   removeStaleRunDirs,
+  runBaseDir,
   runOpencode,
 } from "./opencode-run.js"
 
@@ -328,23 +329,135 @@ test("a home that cannot be removed does not replace the result of the run", asy
   }
 })
 
-test("removeStaleRunDirs removes only the old directories of a dead worker that this user owns", async () => {
+const uidNow = process.getuid?.() ?? 0
+const baseName = (id: string): string => `zerocool-runs-${uidNow}-${id}`
+
+test("removeStaleRunDirs removes only the old bases of other starts that this user owns", async () => {
   const root = await mkdtemp(join(tmpdir(), "zerocool-stale-"))
   const now = Date.now()
-  const make = async (name: string, ageMs: number): Promise<void> => {
+  const make = async (name: string, ageMs: number, alive = true): Promise<void> => {
     await mkdir(join(root, name))
+    await mkdir(join(root, name, "run-x"))
     const t = new Date(now - ageMs)
+    if (alive) {
+      await writeFile(join(root, name, ".alive"), "")
+      await utimes(join(root, name, ".alive"), t, t)
+    }
     await utimes(join(root, name), t, t)
   }
-  await make("zerocool-run-111-aaaaaa", 60 * 60_000) // old, dead pid
-  await make("zerocool-run-222-bbbbbb", 60 * 60_000) // old, live pid
-  await make("zerocool-run-111-cccccc", 60_000) // fresh, dead pid
+  const old = baseName("aaaaaaaaaaaaaaaa")
+  const live = baseName("bbbbbbbbbbbbbbbb")
+  const mine = baseName("cccccccccccccccc")
+  const noHeartbeat = baseName("dddddddddddddddd")
+  await make(old, 60 * 60_000) // nobody touched it for an hour
+  await make(live, 60_000) // a live worker touched it a minute ago
+  await make(mine, 60 * 60_000) // the base of this start, whatever its age
+  await make(noHeartbeat, 60 * 60_000, false) // no heartbeat file: the base age counts
+  await make("zerocool-runs-0-eeeeeeeeeeeeeeee", 60 * 60_000) // another user, by name
   await make("other-dir", 60 * 60_000) // not ours by name
-  const removed = await removeStaleRunDirs({ root, now, alive: (pid) => pid === 222 })
-  assert.deepEqual(removed, ["zerocool-run-111-aaaaaa"])
-  assert.equal(existsSync(join(root, "zerocool-run-222-bbbbbb")), true)
-  assert.equal(existsSync(join(root, "zerocool-run-111-cccccc")), true)
-  assert.equal(existsSync(join(root, "other-dir")), true)
+  const removed = await removeStaleRunDirs({ root, now, bootId: "cccccccccccccccc" })
+  assert.deepEqual(removed.sort(), [old, noHeartbeat].sort())
+  for (const keep of [live, mine, "zerocool-runs-0-eeeeeeeeeeeeeeee", "other-dir"]) {
+    assert.equal(existsSync(join(root, keep)), true, `${keep} stays`)
+  }
+})
+
+test("removeStaleRunDirs skips a symbolic link, and never touches what it points at", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zerocool-stale-"))
+  const target = await mkdtemp(join(tmpdir(), "zerocool-target-"))
+  await writeFile(join(target, "keep"), "x")
+  const t = new Date(Date.now() - 60 * 60_000)
+  await utimes(target, t, t)
+  const link = baseName("ffffffffffffffff")
+  await symlink(target, join(root, link))
+  const removed = await removeStaleRunDirs({ root, bootId: "0000000000000000" })
+  assert.deepEqual(removed, [])
+  assert.equal(existsSync(join(target, "keep")), true, "the target is untouched")
+})
+
+test("a granted run lives under one 0700 base of this worker start, and the home goes after the run", async () => {
+  const bin = fileURLToPath(new URL("../test/bin/fake-opencode-env.mjs", import.meta.url))
+  const run = await runOpencode({ goal: "g", dir: process.cwd(), bin, env: { GIBSON_CALLBACK_TOKEN: "g" } })
+  const home = (JSON.parse(run.text) as Record<string, string>).HOME
+  const base = await runBaseDir()
+  assert.equal(home.startsWith(`${base}/run-`), true, "the home is inside the base")
+  assert.match(base, new RegExp(`/zerocool-runs-${uidNow}-[0-9a-f]{16}$`))
+  assert.equal((await stat(base)).mode & 0o777, 0o700)
+  assert.equal(existsSync(home), false)
+})
+
+/** A fake opencode that starts a background process in its own group, as a shell command of the model would. */
+const WITH_GRANDCHILD = (pidFile: string, tail: string): string => `
+  const fs = require("node:fs")
+  const { spawn } = require("node:child_process")
+  const g = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] })
+  fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid))
+  ${tail}
+`
+
+const isDead = async (pid: number): Promise<boolean> => {
+  for (let i = 0; i < 50; i++) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return true
+    }
+    await new Promise((r) => setTimeout(r, 40))
+  }
+  return false
+}
+
+test("a background process of the child is dead after a timeout", async () => {
+  const pidFile = join(await mkdtemp(join(tmpdir(), "zerocool-pid-")), "pid")
+  const bin = await script(WITH_GRANDCHILD(pidFile, "setInterval(() => {}, 1000)"))
+  await assert.rejects(
+    () => runOpencode({ goal: "g", dir: process.cwd(), bin, timeoutMs: 600, killGraceMs: 300, env: { GIBSON_CALLBACK_TOKEN: "g" } }),
+    /timed out/,
+  )
+  assert.equal(await isDead(Number(readFileSync(pidFile, "utf8"))), true, "the grandchild is dead")
+})
+
+test("a background process of the child is dead after a normal end, even when it holds the pipes", async () => {
+  const pidFile = join(await mkdtemp(join(tmpdir(), "zerocool-pid-")), "pid")
+  const event = JSON.stringify({ type: "text", sessionID: "ses_ok", part: { type: "text", text: "done" } })
+  const bin = await script(WITH_GRANDCHILD(pidFile, `process.stdout.write(${JSON.stringify(event + "\n")}); setTimeout(() => process.exit(0), 150)`))
+  const run = await runOpencode({ goal: "g", dir: process.cwd(), bin, env: { GIBSON_CALLBACK_TOKEN: "g" } })
+  assert.equal(run.text, "done")
+  assert.equal(await isDead(Number(readFileSync(pidFile, "utf8"))), true, "the grandchild is dead")
+})
+
+test("a child that dies on a signal with no deadline is reported with the signal, not as a timeout", async () => {
+  const bin = await script('process.kill(process.pid, "SIGKILL")')
+  await assert.rejects(
+    () => runOpencode({ goal: "g", dir: process.cwd(), bin, timeoutMs: 60_000 }),
+    (e: Error) => e.message === "opencode was killed by SIGKILL",
+  )
+})
+
+test("an invalid operator OPENCODE_CONFIG_CONTENT fails the run before any child starts", async () => {
+  const marker = join(await mkdtemp(join(tmpdir(), "zerocool-marker-")), "started")
+  const bin = await script(`require("node:fs").writeFileSync(${JSON.stringify(marker)}, "x")`)
+  const prev = process.env.OPENCODE_CONFIG_CONTENT
+  try {
+    for (const bad of ["{not json", "[1]", "null"]) {
+      process.env.OPENCODE_CONFIG_CONTENT = bad
+      await assert.rejects(
+        () =>
+          runOpencode({
+            goal: "g",
+            dir: process.cwd(),
+            bin,
+            env: { GIBSON_CALLBACK_TOKEN: "g", OPENCODE_CONFIG_CONTENT: '{"plugin":["file:///x"]}' },
+          }),
+        /OPENCODE_CONFIG_CONTENT (is not valid JSON|must be a JSON object)/,
+        bad,
+      )
+    }
+  } finally {
+    if (prev === undefined) delete process.env.OPENCODE_CONFIG_CONTENT
+    else process.env.OPENCODE_CONFIG_CONTENT = prev
+  }
+  assert.equal(existsSync(marker), false, "no child ran")
 })
 
 test("a granted child never gets OPENCODE_API_KEY, and a child with no grant keeps it", () => {
@@ -366,5 +479,5 @@ test("the plugin registration joins the operator OPENCODE_CONFIG_CONTENT and doe
   assert.deepEqual(merged.plugin, ["@acme/extra", "file:///app/dist/index.js"])
   assert.equal(merged.theme, "x")
   assert.equal(opencodeChildEnv({ PATH: "/bin" }, { GIBSON_CALLBACK_TOKEN: "g", OPENCODE_CONFIG_CONTENT: ours }).OPENCODE_CONFIG_CONTENT, ours)
-  assert.deepEqual(JSON.parse(mergeConfigContent("not json", ours)).plugin, ["file:///app/dist/index.js"])
+  assert.throws(() => mergeConfigContent("not json", ours), /not valid JSON/)
 })
