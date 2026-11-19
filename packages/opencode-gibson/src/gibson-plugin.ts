@@ -185,13 +185,41 @@ async function grantedPlugin(deps: PluginDeps, env: NodeJS.ProcessEnv): Promise<
   })
 }
 
-/** Select the `gibson` provider and its model. The provider replaces any entry of the same name. */
+/**
+ * Make opencode use the `gibson` provider and no other.
+ *
+ * `enabled_providers` is the opencode switch for this: when it is set, only
+ * these providers are enabled and all others are ignored. The user config and
+ * the stored keys of the user can still add providers and name a model, so the
+ * hook also:
+ *  - replaces the `provider` block with the one `gibson` entry,
+ *  - removes `gibson` from `disabled_providers`,
+ *  - removes the `model` of each agent, command and mode, so each one uses the
+ *    top-level `model`, which is `gibson/<slot>`.
+ */
 export function lockToGateway(config: unknown, provider: Record<string, unknown>, selector: string): void {
-  const cfg = config as { provider?: Record<string, unknown>; model?: string; small_model?: string }
-  cfg.provider = cfg.provider ?? {}
-  cfg.provider[PROVIDER_ID] = provider
+  const cfg = config as {
+    provider?: Record<string, unknown>
+    model?: string
+    small_model?: string
+    enabled_providers?: string[]
+    disabled_providers?: string[]
+    agent?: Record<string, { model?: string } | undefined>
+    command?: Record<string, { model?: string } | undefined>
+    mode?: Record<string, { model?: string } | undefined>
+  }
+  cfg.provider = { [PROVIDER_ID]: provider }
+  cfg.enabled_providers = [PROVIDER_ID]
+  if (Array.isArray(cfg.disabled_providers)) {
+    cfg.disabled_providers = cfg.disabled_providers.filter((p) => p !== PROVIDER_ID)
+  }
   cfg.model = selector
   cfg.small_model = selector
+  for (const group of [cfg.agent, cfg.command, cfg.mode]) {
+    for (const entry of Object.values(group ?? {})) {
+      if (entry && typeof entry === "object") delete entry.model
+    }
+  }
 }
 
 interface HookInputs {

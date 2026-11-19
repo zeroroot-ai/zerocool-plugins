@@ -223,3 +223,46 @@ test("a granted run with the grant and no endpoint, or the reverse, fails", asyn
   await assert.rejects(() => createGibsonPlugin(deps(), { GIBSON_CALLBACK_TOKEN: "g" }), /must both be set/)
   await assert.rejects(() => createGibsonPlugin(deps(), { GIBSON_CALLBACK_ENDPOINT: "https://x" }), /must both be set/)
 })
+
+test("a granted run locks opencode to the gibson provider, whatever the user config names", async () => {
+  const d = deps({ resolveModel: async () => reply("https://gw.example"), token: () => "task-grant" })
+  const hooks = await createGibsonPlugin(d, SANDBOX_CHILD_ENV)
+  // A user config with a direct provider, a stored-key style provider, a model
+  // for each agent and command, and the gateway provider disabled.
+  const config = {
+    model: "anthropic/claude-sonnet-x",
+    small_model: "openai/gpt-x",
+    provider: { anthropic: { options: { apiKey: "sk-user" } }, openai: {} },
+    disabled_providers: ["gibson", "other"],
+    agent: {
+      build: { model: "anthropic/claude-opus-x", prompt: "keep" },
+      review: { model: "openai/gpt-x" },
+      plan: {},
+    },
+    command: { fix: { model: "anthropic/claude-x", template: "keep" } },
+    mode: { old: { model: "anthropic/claude-x" } },
+  }
+  await hooks.config?.(config as never)
+  assert.deepEqual((config as { enabled_providers?: string[] }).enabled_providers, ["gibson"])
+  assert.deepEqual(Object.keys(config.provider), ["gibson"], "no direct provider and no key of the user stays")
+  assert.deepEqual(config.disabled_providers, ["other"], "gibson is not disabled")
+  assert.equal(config.model, "gibson/primary")
+  assert.equal(config.small_model, "gibson/primary")
+  assert.equal(config.agent.build.model, undefined, "the agent uses the top-level model")
+  assert.equal(config.agent.build.prompt, "keep", "the rest of the agent stays")
+  assert.equal(config.agent.review.model, undefined)
+  assert.equal(config.command.fix.model, undefined)
+  assert.equal(config.command.fix.template, "keep")
+  assert.equal(config.mode.old.model, undefined)
+})
+
+test("an interactive run leaves the providers and the agent models of the user alone", async () => {
+  await withEnv({}, async () => {
+    const hooks = await createGibsonPlugin(deps(undefined), {})
+    const config = { agent: { build: { model: "anthropic/x" } }, provider: { anthropic: {} } }
+    await hooks.config?.(config as never)
+    assert.equal(config.agent.build.model, "anthropic/x")
+    assert.deepEqual(Object.keys(config.provider), ["anthropic"])
+    assert.equal((config as { enabled_providers?: string[] }).enabled_providers, undefined)
+  })
+})
