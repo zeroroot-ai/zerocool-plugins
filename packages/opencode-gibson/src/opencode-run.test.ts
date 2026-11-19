@@ -2,11 +2,22 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { createLineStreamer, opencodeArgs, opencodeChildEnv, parseOpencodeEvents, runOpencode } from "./opencode-run.js"
+import {
+  createLineStreamer,
+  mergeConfigContent,
+  opencodeArgs,
+  opencodeChildEnv,
+  parseOpencodeEvents,
+  removeStaleRunDirs,
+  runOpencode,
+} from "./opencode-run.js"
 
 /**
  * The fixture below is REAL output, not a hand-written guess: it is what
@@ -148,17 +159,15 @@ test("opencodeArgs puts the goal last so it cannot swallow a flag", () => {
     goal: "fix the build",
     dir: "/srv/work",
     model: "gibson/primary",
-    sessionId: "ses_1",
   })
   assert.equal(args[args.length - 1], "fix the build")
   assert.ok(args.includes("--model") && args.includes("gibson/primary"))
-  assert.ok(args.includes("--session") && args.includes("ses_1"))
+  assert.ok(!args.includes("--session"), "a run is one session")
 })
 
-test("opencodeArgs omits model and session when unset", () => {
+test("opencodeArgs omits the model when unset", () => {
   const args = opencodeArgs({ goal: "g", dir: "." })
   assert.ok(!args.includes("--model"))
-  assert.ok(!args.includes("--session"))
 })
 
 /**
@@ -263,4 +272,99 @@ test("runOpencode runs a granted child in a fresh home that it removes, and neve
     if (prev.key === undefined) delete process.env.GIBSON_HOST_KEY_PATH
     else process.env.GIBSON_HOST_KEY_PATH = prev.key
   }
+})
+
+/** Write an executable node script and return its path. */
+async function script(body: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-fake-"))
+  const path = join(dir, "opencode")
+  await writeFile(path, `#!/usr/bin/env node\n${body}\n`)
+  await chmod(path, 0o755)
+  return path
+}
+
+test("a child that ignores SIGTERM gets SIGKILL after the grace period, and its home goes", async () => {
+  const marker = join(await mkdtemp(join(tmpdir(), "zerocool-marker-")), "home")
+  const bin = await script(`
+    const fs = require("node:fs")
+    fs.writeFileSync(${JSON.stringify(marker)}, process.env.HOME)
+    process.on("SIGTERM", () => {})
+    setInterval(() => {}, 1000)
+  `)
+  const started = Date.now()
+  await assert.rejects(
+    () => runOpencode({ goal: "g", dir: process.cwd(), bin, timeoutMs: 300, killGraceMs: 300, env: { GIBSON_CALLBACK_TOKEN: "g" } }),
+    /opencode timed out after 300ms \(killed with SIG(KILL|TERM)\)/,
+  )
+  assert.ok(Date.now() - started < 5_000, "the run ended; it did not hang")
+  assert.equal(existsSync(readFileSync(marker, "utf8")), false, "the per-task home is gone")
+})
+
+test("a home that cannot be removed does not replace the result of the run", async () => {
+  const bin = await script(`
+    const fs = require("node:fs")
+    const locked = process.env.HOME + "/locked"
+    fs.mkdirSync(locked)
+    fs.writeFileSync(locked + "/f", "x")
+    fs.chmodSync(locked, 0o500)
+    process.stdout.write(JSON.stringify({ type: "text", sessionID: "ses_ok", part: { type: "text", text: "fine" } }) + "\\n")
+  `)
+  const lines: string[] = []
+  const orig = console.error
+  console.error = (...a: unknown[]) => void lines.push(a.join(" "))
+  let home = ""
+  try {
+    const run = await runOpencode({ goal: "g", dir: process.cwd(), bin, env: { GIBSON_CALLBACK_TOKEN: "g" } })
+    assert.equal(run.text, "fine", "the result stands")
+  } finally {
+    console.error = orig
+  }
+  const logged = lines.find((l) => l.includes("could not remove the run directory"))
+  assert.ok(logged, "the failure is logged")
+  home = /run directory (\S+):/.exec(logged ?? "")?.[1] ?? ""
+  if (home) {
+    await chmod(join(home, "locked"), 0o700)
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("removeStaleRunDirs removes only the old directories of a dead worker that this user owns", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zerocool-stale-"))
+  const now = Date.now()
+  const make = async (name: string, ageMs: number): Promise<void> => {
+    await mkdir(join(root, name))
+    const t = new Date(now - ageMs)
+    await utimes(join(root, name), t, t)
+  }
+  await make("zerocool-run-111-aaaaaa", 60 * 60_000) // old, dead pid
+  await make("zerocool-run-222-bbbbbb", 60 * 60_000) // old, live pid
+  await make("zerocool-run-111-cccccc", 60_000) // fresh, dead pid
+  await make("other-dir", 60 * 60_000) // not ours by name
+  const removed = await removeStaleRunDirs({ root, now, alive: (pid) => pid === 222 })
+  assert.deepEqual(removed, ["zerocool-run-111-aaaaaa"])
+  assert.equal(existsSync(join(root, "zerocool-run-222-bbbbbb")), true)
+  assert.equal(existsSync(join(root, "zerocool-run-111-cccccc")), true)
+  assert.equal(existsSync(join(root, "other-dir")), true)
+})
+
+test("a granted child never gets OPENCODE_API_KEY, and a child with no grant keeps it", () => {
+  const parent = { PATH: "/bin", OPENCODE_API_KEY: "oc-key", OPENCODE_CONFIG: "/etc/opencode.json" }
+  const granted = opencodeChildEnv(parent, { GIBSON_CALLBACK_TOKEN: "g" })
+  assert.equal(granted.OPENCODE_API_KEY, undefined)
+  assert.equal(granted.OPENCODE_CONFIG, "/etc/opencode.json", "the operator config path stays")
+  assert.equal(opencodeChildEnv(parent, {}).OPENCODE_API_KEY, "oc-key")
+})
+
+test("the plugin registration joins the operator OPENCODE_CONFIG_CONTENT and does not replace it", () => {
+  const ours = JSON.stringify({ plugin: ["file:///app/dist/index.js"] })
+  const merged = JSON.parse(
+    opencodeChildEnv(
+      { PATH: "/bin", OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: ["@acme/extra", "file:///app/dist/index.js"], theme: "x" }) },
+      { GIBSON_CALLBACK_TOKEN: "g", OPENCODE_CONFIG_CONTENT: ours },
+    ).OPENCODE_CONFIG_CONTENT ?? "",
+  )
+  assert.deepEqual(merged.plugin, ["@acme/extra", "file:///app/dist/index.js"])
+  assert.equal(merged.theme, "x")
+  assert.equal(opencodeChildEnv({ PATH: "/bin" }, { GIBSON_CALLBACK_TOKEN: "g", OPENCODE_CONFIG_CONTENT: ours }).OPENCODE_CONFIG_CONTENT, ours)
+  assert.deepEqual(JSON.parse(mergeConfigContent("not json", ours)).plugin, ["file:///app/dist/index.js"])
 })

@@ -398,7 +398,8 @@ test("a dispatched run removes the task grant from the output, the events and th
   )
 })
 
-test("redactGrant replaces each grant and skips an empty value", () => {
-  assert.equal(redactGrant("a tok b new c", ["tok", "", "new"]), `a ${REDACTED_GRANT} b ${REDACTED_GRANT} c`)
-  assert.equal(redactGrant("no secret", ["tok"]), "no secret")
+test("redactGrant replaces the grant and skips an empty value", () => {
+  assert.equal(redactGrant("a tok b tok c", "tok"), `a ${REDACTED_GRANT} b ${REDACTED_GRANT} c`)
+  assert.equal(redactGrant("no secret", "tok"), "no secret")
+  assert.equal(redactGrant("keep", ""), "keep", "an empty grant replaces nothing")
 })

@@ -55,7 +55,6 @@
  *   ZEROCOOL_TASK              force a task kind ("source-analysis", "watch",
  *                              "fix"); the Task's own context `zerocool.task`
  *                              is the normal way
- *   GIBSON_OPENCODE_SESSION_ID continue an earlier opencode session
  *   GIBSON_TIMEOUT_MS          hard deadline for the run, in ms
  *
  * The child `opencode run` still receives the grant as GIBSON_CALLBACK_TOKEN via
@@ -75,6 +74,7 @@ import {
   type TaskHarness,
 } from "@zeroroot-ai/sdk"
 import { join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { taskFindingsBackend, type FindingsBackend } from "./findings.js"
 import {
@@ -131,6 +131,15 @@ export interface CallbackGrant {
 }
 
 /**
+ * The `file://` URL of the entry module of this package, which exports the
+ * plugin. The driver and the plugin are in the same package, so the entry is
+ * the `index.js` beside this file, in `dist` or in the test build.
+ */
+export function pluginEntryUrl(): string {
+  return pathToFileURL(fileURLToPath(new URL("./index.js", import.meta.url))).href
+}
+
+/**
  * Render the per-dispatch grant back to environment for the opencode child, so
  * the child's harness callbacks travel on the task grant rather than on any
  * component identity. Empty fields are omitted rather than set blank.
@@ -149,6 +158,10 @@ export function dispatchChildEnv(g: CallbackGrant): NodeJS.ProcessEnv {
     // The Gibson MCP server of the child joins the run on this name, with the
     // endpoint above. With no host key in the child, the grant is its only way in.
     ...(g.callbackToken && g.callbackEndpoint ? { GIBSON_CG_JWT: g.callbackToken } : {}),
+    // A granted run has no user config, so the driver registers the plugin for
+    // the child. opencode merges OPENCODE_CONFIG_CONTENT over the other
+    // config sources and joins their plugin lists. It does not replace them.
+    ...(g.callbackToken ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [pluginEntryUrl()] }) } : {}),
     ...(g.insecure ? { GIBSON_CALLBACK_INSECURE: "1" } : {}),
     GIBSON_MISSION_RUN_ID: g.missionRunId,
     ...(g.agentRunId ? { GIBSON_AGENT_RUN_ID: g.agentRunId } : {}),
@@ -175,8 +188,6 @@ export interface DispatchContext extends SandboxDispatch {
   insecure: boolean
   /** opencode edits files here; it is the run's workspace. */
   workspace: string
-  /** Continue an earlier opencode session instead of starting a new one. */
-  sessionId?: string
   /** Hard deadline for the run, in ms. `0` when none was set. */
   timeoutMs: number
 }
@@ -265,7 +276,6 @@ export function readDispatchContext(
     taskContext: taskContextStrings(dispatch.task.context),
     insecure: env.GIBSON_CALLBACK_INSECURE === "1",
     workspace: env.ZEROCOOL_WORKSPACE ?? opts.cwd ?? process.cwd(),
-    ...(env.GIBSON_OPENCODE_SESSION_ID ? { sessionId: env.GIBSON_OPENCODE_SESSION_ID } : {}),
     timeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 0,
   }
 }
@@ -358,7 +368,6 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
     {
       goal: ctx.goal,
       workspace: ctx.workspace,
-      ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
       timeoutMs: ctx.timeoutMs,
       grant: {
         callbackEndpoint: ctx.callbackEndpoint,
@@ -378,17 +387,10 @@ export interface OpencodeTask {
   goal: string
   /** opencode edits files here. */
   workspace: string
-  /** Continue an earlier opencode session instead of starting a new one. */
-  sessionId?: string
   /** Hard deadline for the run, in ms. `0` when none was set. */
   timeoutMs: number
   /** The grant and the endpoint the child receives, in its environment only. */
   grant: CallbackGrant
-  /**
-   * Other grant values of this run that the parent knows, such as a renewed
-   * grant. They are read after the run and removed from the result.
-   */
-  knownGrants?: () => Promise<string[]>
 }
 
 /**
@@ -397,12 +399,12 @@ export interface OpencodeTask {
  * Both dispatched shapes end here: the sandboxed run (`runDispatch`) and the
  * pull worker (`serve-agent.ts`). The child gets the same environment from
  * {@link dispatchChildEnv} in both, so it opens one task harness the same way.
- * The task grant is removed from the output, the metadata, the events and the
+ * The task grant that the child started with is removed from the output, the metadata, the events and the
  * error text before they leave this process.
  */
 export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDeps, "run" | "onEvent"> = {}): Promise<AgentOutcome> {
   const run = deps.run ?? runOpencode
-  const known = [task.grant.callbackToken]
+  const secret = task.grant.callbackToken
   let result: Awaited<ReturnType<typeof runOpencode>>
   try {
     result = await run({
@@ -411,18 +413,15 @@ export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDep
       // `gibson/<slot>`, the model of the gateway provider. A bare tenant model
       // name is no model of any provider, so it is not passed.
       model: modelSelector(),
-      ...(task.sessionId ? { sessionId: task.sessionId } : {}),
       ...(task.timeoutMs > 0 ? { timeoutMs: task.timeoutMs } : {}),
       // The child speaks the opencode plugin's own contract, whose token name is
       // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
       env: dispatchChildEnv(task.grant),
-      ...(deps.onEvent ? { onEvent: (line) => deps.onEvent?.(redactGrant(line, known)) } : {}),
+      ...(deps.onEvent ? { onEvent: (line) => deps.onEvent?.(redactGrant(line, secret)) } : {}),
     })
   } catch (e) {
-    const secrets = await currentSecrets(task, known)
-    throw new Error(redactGrant((e as Error).message, secrets))
+    throw new Error(redactGrant((e as Error).message, secret))
   }
-  const secrets = await currentSecrets(task, known)
   const metadata = {
     opencode_session_id: result.sessionId,
     finish_reason: result.finishReason,
@@ -431,26 +430,18 @@ export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDep
     cost: String(result.cost),
   }
   return {
-    output: redactGrant(result.text, secrets),
+    output: redactGrant(result.text, secret),
     state: TaskState.TASK_STATE_COMPLETED,
-    metadata: Object.fromEntries(Object.entries(metadata).map(([k, v]) => [k, redactGrant(v, secrets)])),
+    metadata: Object.fromEntries(Object.entries(metadata).map(([k, v]) => [k, redactGrant(v, secret)])),
   }
 }
 
 /** The text that replaces a task grant in anything that leaves the process. */
 export const REDACTED_GRANT = "[task grant]"
 
-/** Replace each grant in `text`. An empty value is skipped. */
-export function redactGrant(text: string, grants: readonly string[]): string {
-  let out = text
-  for (const g of grants) if (g) out = out.split(g).join(REDACTED_GRANT)
-  return out
-}
-
-/** The grant the child started with, and the renewed grant when the parent knows one. */
-async function currentSecrets(task: OpencodeTask, known: string[]): Promise<string[]> {
-  const more = task.knownGrants ? await task.knownGrants().catch(() => []) : []
-  return [...known, ...more]
+/** Replace the grant in `text`. An empty grant replaces nothing. */
+export function redactGrant(text: string, grant: string): string {
+  return grant ? text.split(grant).join(REDACTED_GRANT) : text
 }
 
 /**

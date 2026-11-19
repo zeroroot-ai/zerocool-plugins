@@ -43,6 +43,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { runOpencodeTask, type DispatchDeps } from "./dispatch.js"
+import { removeStaleRunDirs } from "./opencode-run.js"
 
 /** Version reported to the daemon on registration. */
 const VERSION = "0.1.0"
@@ -111,12 +112,6 @@ export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocati
         goal: item.goal,
         workspace: options.workspace ?? process.env.ZEROCOOL_WORKSPACE ?? process.cwd(),
         timeoutMs: item.timeoutMs,
-        // Continuity across dispatches: opencode's own session id carries the
-        // conversation. The result returns it in `opencode_session_id`, and a
-        // later dispatch passes it back in the context of the work item.
-        ...(item.context.opencode_session_id ? { sessionId: item.context.opencode_session_id } : {}),
-        // The grant may be renewed during the run. Remove that value too.
-        knownGrants: async () => [await item.harness.token()],
         grant: {
           callbackEndpoint: options.callbackEndpoint,
           callbackToken: token,
@@ -136,6 +131,9 @@ async function main(): Promise<void> {
     console.error("[zerocool-agent] GIBSON_PLATFORM_URL is required")
     process.exit(2)
   }
+  // A worker that died in a run left its per-task directory. Remove those first.
+  const stale = await removeStaleRunDirs()
+  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run directories`)
   const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const checkedIn = existsSync(hostKeyPath)

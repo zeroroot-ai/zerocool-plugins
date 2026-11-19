@@ -48,7 +48,7 @@ async function serve(
   taskGrant: string,
   renewGrant?: (cur: string) => Promise<string>,
   envelope?: Record<string, unknown>,
-  work: { goal?: string; context?: Record<string, string> } = {},
+  work: { goal?: string } = {},
 ): Promise<{ submitted: Submitted; text: string; errors: unknown[] }> {
   let served = false
   let done!: (s: Submitted) => void
@@ -58,7 +58,7 @@ async function serve(
     pollWork: async () => {
       if (served) return await new Promise<never>(() => {})
       served = true
-      return { workId: "w-1", workType: "execute", context: work.context ?? {}, payload: message(work.goal ?? "scan the repo", envelope), timeoutMs: 0n, taskGrant }
+      return { workId: "w-1", workType: "execute", context: {}, payload: message(work.goal ?? "scan the repo", envelope), timeoutMs: 0n, taskGrant }
     },
     submitResult: async (r: Submitted) => done(r),
   } as unknown as Parameters<typeof startAgentWorker>[0]
@@ -153,21 +153,6 @@ test("a work item whose envelope and grant name no run fails and starts no child
     assert.equal(submitted.error?.code, "EXECUTION_ERROR")
     assert.match(submitted.error?.message ?? "", /no mission run id/)
     await assert.rejects(() => readFile(probe.out), "no child ran")
-  })
-})
-
-test("a later dispatch continues the opencode session that the context names", async () => {
-  const probe = await probeEnv()
-  await withChildEnv(probe.env, async () => {
-    const { submitted } = await serve(grantFor("g"), undefined, undefined, { context: { opencode_session_id: "ses_earlier" } })
-    assert.equal(submitted.error, undefined)
-    const { argv } = await probeOf(probe.out)
-    assert.equal(argv[argv.indexOf("--session") + 1], "ses_earlier")
-  })
-  const none = await probeEnv()
-  await withChildEnv(none.env, async () => {
-    await serve(grantFor("g"))
-    assert.ok(!(await probeOf(none.out)).argv.includes("--session"), "no session in the context, no --session")
   })
 })
 
