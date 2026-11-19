@@ -2,6 +2,9 @@
 // Copyright 2026 Zero Root AI
 
 import { spawn } from "node:child_process"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 /**
  * Drive opencode headless — the external driver half of the `kind=agent`
@@ -173,6 +176,9 @@ export function createLineStreamer(onLine: (line: string) => void): {
  * `GIBSON_CALLBACK_ENDPOINT` and `GIBSON_CALLBACK_TOKEN`, which the caller
  * passes in `opts.env`, and nothing of the launch environment.
  *
+ * A child that has the task grant gets no `GIBSON_HOST_KEY_PATH`, and its
+ * `HOME` and `XDG_*` point at a per-task directory (see `opencodeChildEnv`).
+ *
  * `GIBSON_` names are listed one by one and never by prefix: the grant and
  * the token share that prefix with the addressing the child plugin reads.
  * The provider credential passes through because opencode itself reads it
@@ -237,19 +243,37 @@ const DIRECT_PROVIDER_PREFIXES: readonly string[] = ["ANTHROPIC_", "OPENAI_", "A
  * the child. When `extra` carries the task grant, the direct provider
  * credentials of `parent` do not pass.
  */
-export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}, home?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
   const gatewayOnly = Boolean(extra.GIBSON_CALLBACK_TOKEN)
   for (const [k, v] of Object.entries(parent)) {
     if (v === undefined) continue
     if (!CHILD_ENV_ALLOW_EXACT.includes(k) && !CHILD_ENV_ALLOW_PREFIX.some((p) => k.startsWith(p))) continue
     if (gatewayOnly && (DIRECT_PROVIDER_EXACT.includes(k) || DIRECT_PROVIDER_PREFIXES.some((p) => k.startsWith(p)))) continue
+    // A granted child has no path to the home of the worker user. That home
+    // holds the host key and the stored provider keys of opencode.
+    if (gatewayOnly && (GRANTED_DROP_EXACT.includes(k) || k === "HOME" || k.startsWith("XDG_"))) continue
     out[k] = v
   }
+  if (gatewayOnly && home) Object.assign(out, isolatedHomeEnv(home))
   for (const [k, v] of Object.entries(extra)) {
     if (v !== undefined) out[k] = v
   }
   return out
+}
+
+/** Names that a granted child never gets. The host key is the long-lived identity of the worker host. */
+const GRANTED_DROP_EXACT: readonly string[] = ["GIBSON_HOST_KEY_PATH"]
+
+/** `HOME` and the XDG directories of a granted child, all inside one per-task directory. */
+function isolatedHomeEnv(home: string): NodeJS.ProcessEnv {
+  return {
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, "config"),
+    XDG_DATA_HOME: join(home, "data"),
+    XDG_CACHE_HOME: join(home, "cache"),
+    XDG_STATE_HOME: join(home, "state"),
+  }
 }
 
 /** Build the argv for a headless run. Exported so a test can assert it. */
@@ -275,13 +299,25 @@ export function opencodeArgs(opts: OpencodeRunOptions): string[] {
  * with a reason instead of stalling it until the dispatch times out.
  */
 export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRunResult> {
+  // A run with a task grant gets a fresh home and fresh XDG directories, so the
+  // stored keys and the config of the worker user are not there for a shell
+  // command of the model to read. The directory is removed when the run ends.
+  const home = opts.env?.GIBSON_CALLBACK_TOKEN ? await mkdtemp(join(tmpdir(), "zerocool-run-")) : undefined
+  try {
+    return await spawnOpencode(opts, home)
+  } finally {
+    if (home) await rm(home, { recursive: true, force: true })
+  }
+}
+
+async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined): Promise<OpencodeRunResult> {
   const bin = opts.bin ?? process.env.ZEROCOOL_OPENCODE_BIN ?? "opencode"
   const args = opencodeArgs(opts)
 
   return await new Promise<OpencodeRunResult>((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.dir,
-      env: opencodeChildEnv(process.env, opts.env),
+      env: opencodeChildEnv(process.env, opts.env, home),
       stdio: ["ignore", "pipe", "pipe"],
       ...(opts.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs, killSignal: "SIGTERM" as const } : {}),
     })

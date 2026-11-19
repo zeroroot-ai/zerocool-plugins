@@ -146,6 +146,9 @@ export function dispatchChildEnv(g: CallbackGrant): NodeJS.ProcessEnv {
   return {
     ...(g.callbackEndpoint ? { GIBSON_CALLBACK_ENDPOINT: g.callbackEndpoint } : {}),
     ...(g.callbackToken ? { GIBSON_CALLBACK_TOKEN: g.callbackToken } : {}),
+    // The Gibson MCP server of the child joins the run on this name, with the
+    // endpoint above. With no host key in the child, the grant is its only way in.
+    ...(g.callbackToken && g.callbackEndpoint ? { GIBSON_CG_JWT: g.callbackToken } : {}),
     ...(g.insecure ? { GIBSON_CALLBACK_INSECURE: "1" } : {}),
     GIBSON_MISSION_RUN_ID: g.missionRunId,
     ...(g.agentRunId ? { GIBSON_AGENT_RUN_ID: g.agentRunId } : {}),

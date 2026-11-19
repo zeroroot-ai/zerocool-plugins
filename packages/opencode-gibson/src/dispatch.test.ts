@@ -148,6 +148,7 @@ test("dispatchChildEnv hands the child the per-dispatch grant", () => {
   })
   assert.equal(env.GIBSON_CALLBACK_ENDPOINT, "gibson:50001")
   assert.equal(env.GIBSON_CALLBACK_TOKEN, "tok")
+  assert.equal(env.GIBSON_CG_JWT, "tok", "the MCP server of the child joins the run on the grant")
   assert.equal(env.GIBSON_CALLBACK_INSECURE, "1")
   assert.equal(env.GIBSON_MISSION_RUN_ID, "mr-1")
   assert.equal(env.GIBSON_AGENT_RUN_ID, "ar-1")
