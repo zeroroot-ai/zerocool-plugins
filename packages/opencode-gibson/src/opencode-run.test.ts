@@ -18,6 +18,7 @@ import {
   removeStaleRunDirs,
   runBaseDir,
   runOpencode,
+  stopAllRuns,
 } from "./opencode-run.js"
 
 /**
@@ -386,7 +387,7 @@ test("a granted run lives under one 0700 base of this worker start, and the home
   assert.equal(existsSync(home), false)
 })
 
-/** A fake opencode that starts a background process in its own group, as a shell command of the model would. */
+/** A fake opencode that starts a background process that stays in its group, as a shell command of the model would. */
 const WITH_GRANDCHILD = (pidFile: string, tail: string): string => `
   const fs = require("node:fs")
   const { spawn } = require("node:child_process")
@@ -480,4 +481,42 @@ test("the plugin registration joins the operator OPENCODE_CONFIG_CONTENT and doe
   assert.equal(merged.theme, "x")
   assert.equal(opencodeChildEnv({ PATH: "/bin" }, { GIBSON_CALLBACK_TOKEN: "g", OPENCODE_CONFIG_CONTENT: ours }).OPENCODE_CONFIG_CONTENT, ours)
   assert.throws(() => mergeConfigContent("not json", ours), /not valid JSON/)
+})
+
+test("an invalid operator OPENCODE_CONFIG_CONTENT gives a fixed error that holds no part of the input", () => {
+  const secret = "sk-ant-SECRET-0123456789"
+  const inputs = [`{"provider":{"anthropic":{"options":{"apiKey":"${secret}"`, `{"apiKey": "${secret}",}`, `${secret}`]
+  for (const bad of inputs) {
+    let error: Error | undefined
+    try {
+      mergeConfigContent(bad, "{}")
+    } catch (e) {
+      error = e as Error
+    }
+    assert.ok(error, "it throws")
+    assert.equal(error.message, "OPENCODE_CONFIG_CONTENT is not valid JSON")
+    assert.equal(error.cause, undefined)
+    assert.ok(!error.message.includes("SECRET") && !String(error.stack).includes("SECRET"))
+  }
+  assert.throws(() => mergeConfigContent(`["${secret}"]`, "{}"), (e: Error) => e.message === "OPENCODE_CONFIG_CONTENT must be a JSON object")
+})
+
+test("stopAllRuns ends a live run and its group, removes the run directories, and a later run still works", async () => {
+  const pidFile = join(await mkdtemp(join(tmpdir(), "zerocool-pid-")), "pid")
+  const bin = await script(WITH_GRANDCHILD(pidFile, "process.on(\"SIGTERM\", () => {}); setInterval(() => {}, 1000)"))
+  const running = runOpencode({ goal: "g", dir: process.cwd(), bin, env: { GIBSON_CALLBACK_TOKEN: "g" } })
+  const settled = running.then(
+    () => "resolved",
+    (e: Error) => e.message,
+  )
+  for (let i = 0; i < 100 && !existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 30))
+  const base = await runBaseDir()
+  assert.equal(existsSync(base), true)
+  await stopAllRuns(300) // the child ignores SIGTERM, so this reaches SIGKILL
+  assert.match(await settled, /^opencode was killed by SIG(KILL|TERM)$/)
+  assert.equal(await isDead(Number(readFileSync(pidFile, "utf8"))), true, "the grandchild is dead")
+  assert.equal(existsSync(base), false, "the base and its run directories are removed")
+  const bin2 = fileURLToPath(new URL("../test/bin/fake-opencode-env.mjs", import.meta.url))
+  const again = await runOpencode({ goal: "g", dir: process.cwd(), bin: bin2, env: { GIBSON_CALLBACK_TOKEN: "g" } })
+  assert.ok(again.text.length > 0, "a later run makes a new base")
 })

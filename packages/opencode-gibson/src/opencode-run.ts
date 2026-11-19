@@ -277,8 +277,10 @@ export function mergeConfigContent(operator: string, ours: string): string {
   let base: unknown
   try {
     base = JSON.parse(operator)
-  } catch (e) {
-    throw new Error(`OPENCODE_CONFIG_CONTENT is not valid JSON: ${(e as Error).message}`)
+  } catch {
+    // A fixed text. The message of JSON.parse quotes part of the input, and the
+    // input can hold a provider key. This error goes to the mission record.
+    throw new Error("OPENCODE_CONFIG_CONTENT is not valid JSON")
   }
   if (!base || typeof base !== "object" || Array.isArray(base)) {
     throw new Error("OPENCODE_CONFIG_CONTENT must be a JSON object")
@@ -366,23 +368,86 @@ export const MAX_GRANT_LIFE_MS = 30 * 60 * 1000
 export const KILL_GRACE_MS = 5_000
 
 let runBase: Promise<string> | undefined
+let heartbeat: ReturnType<typeof setInterval> | undefined
 
-/** The base directory of this worker start. It is made on first use, with mode 0700. */
+const ownBasePath = (): string => join(tmpdir(), `zerocool-runs-${process.getuid?.() ?? 0}-${BOOT_ID}`)
+
+/**
+ * The base directory of this worker start. It is made on first use, with mode
+ * 0700. A failure after the `mkdir` removes the base again, so it cannot block
+ * the next run with EEXIST.
+ *
+ * Limit: the age of a base is the wall clock minus the mtime of `.alive`. A
+ * clock that jumps forward by more than a grant life can make a live base look
+ * stale. The scan runs only at worker start, and the heartbeat refreshes the
+ * file each minute, so the window is small. No monotonic clock can compare
+ * with an mtime of another process.
+ */
 export function runBaseDir(): Promise<string> {
   runBase ??= (async () => {
-    const base = join(tmpdir(), `zerocool-runs-${process.getuid?.() ?? 0}-${BOOT_ID}`)
-    await mkdir(base, { mode: 0o700 })
-    await chmod(base, 0o700)
-    const alive = join(base, ALIVE_FILE)
-    await writeFile(alive, "")
-    const timer = setInterval(() => void utimes(alive, new Date(), new Date()).catch(() => {}), HEARTBEAT_MS)
-    timer.unref()
-    return base
+    const base = ownBasePath()
+    let created = false
+    try {
+      await mkdir(base, { mode: 0o700 })
+      created = true
+      await chmod(base, 0o700)
+      const alive = join(base, ALIVE_FILE)
+      await writeFile(alive, "")
+      heartbeat = setInterval(() => void utimes(alive, new Date(), new Date()).catch(() => {}), HEARTBEAT_MS)
+      heartbeat.unref()
+      return base
+    } catch (e) {
+      if (created) await rm(base, { recursive: true, force: true }).catch(() => {})
+      throw e
+    }
   })().catch((e: unknown) => {
     runBase = undefined
     throw e
   })
   return runBase
+}
+
+/**
+ * Stop the heartbeat and remove the base of this worker start, with every run
+ * directory in it. Call it after {@link stopAllRuns}. A later run makes a new base.
+ */
+export async function stopRunBase(): Promise<void> {
+  const pending = runBase
+  runBase = undefined
+  clearInterval(heartbeat)
+  heartbeat = undefined
+  await pending?.catch(() => {})
+  await rm(ownBasePath(), { recursive: true, force: true }).catch((e: unknown) =>
+    console.error(`[zerocool] could not remove the run base directory: ${(e as Error).message}`),
+  )
+}
+
+/** The pids of the process groups of the runs that are live now. */
+const liveGroups = new Set<number>()
+
+/** Send a signal to a process group. ESRCH, no process left, is not an error. Any other error is logged. */
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ESRCH") {
+      console.error(`[zerocool] could not send ${signal} to process group ${pid}: ${(e as Error).message}`)
+    }
+  }
+}
+
+/**
+ * End every live run. The worker calls it when it stops. A run is detached in
+ * its own process group, so Ctrl-C of the worker does not reach it. Each group
+ * gets SIGTERM, then SIGKILL after the grace period, and the run directories
+ * go. The runs then end with `opencode was killed by <signal>`.
+ */
+export async function stopAllRuns(graceMs: number = KILL_GRACE_MS): Promise<void> {
+  for (const pid of liveGroups) signalGroup(pid, "SIGTERM")
+  const until = Date.now() + graceMs
+  while (liveGroups.size > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 25))
+  for (const pid of liveGroups) signalGroup(pid, "SIGKILL")
+  await stopRunBase()
 }
 
 /**
@@ -427,19 +492,21 @@ async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined)
       env: opencodeChildEnv(process.env, opts.env, home),
       stdio: ["ignore", "pipe", "pipe"],
       // Its own process group, so one signal reaches opencode and every
-      // process that opencode or the model started. A background shell command
-      // must not outlive the run with the task grant in its environment.
+      // process that stays in the group. A background shell command of the
+      // model must not outlive the run with the task grant in its environment.
+      // A process that starts a new session (setsid) or a new group leaves the
+      // group, and this does not reach it.
       detached: true,
     })
 
-    /** Signal the whole group of the child. A group with no process left is not an error. */
+    // The group is signaled until opencode exits, and never after. After the
+    // group is gone its id could belong to another process.
+    let groupDone = false
+    if (child.pid !== undefined) liveGroups.add(child.pid)
     const killGroup = (signal: NodeJS.Signals): void => {
-      try {
-        if (child.pid !== undefined) process.kill(-child.pid, signal)
-        else child.kill(signal)
-      } catch {
-        // ESRCH: nothing is left in the group.
-      }
+      if (groupDone) return
+      if (child.pid !== undefined) signalGroup(child.pid, signal)
+      else child.kill(signal)
     }
 
     let stdout = ""
@@ -495,10 +562,13 @@ async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined)
     child.on("error", (e) => settle(() => reject(new Error(`could not run ${bin}: ${e.message}`))))
     // opencode ended, however it ended. Kill what is left in its group. This
     // also closes the pipes that a background process holds, so `close` fires.
-    child.on("exit", () => killGroup("SIGKILL"))
+    child.on("exit", () => {
+      killGroup("SIGKILL")
+      groupDone = true
+      if (child.pid !== undefined) liveGroups.delete(child.pid)
+    })
     child.on("close", (code, signal) => {
       streamer?.flush()
-      killGroup("SIGKILL")
       if (timedOut) {
         // Killed by the timeout. Say so with the deadline, because "terminated"
         // alone sends whoever reads the mission looking for a crash.
