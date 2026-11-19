@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
-import { EXTENSION_KEY, startAgentWorker, type InstanceRef } from "@zeroroot-ai/sdk"
+import { EXTENSION_KEY, GRANT_RENEW_BEFORE_MS, startAgentWorker, type InstanceRef } from "@zeroroot-ai/sdk"
 
 import { agentHandler, callbackEndpointOf } from "./serve-agent.js"
 
@@ -64,7 +64,7 @@ async function serve(
   const stop = startAgentWorker(component, ref, {
     handler: agentHandler({ callbackEndpoint: ENDPOINT }),
     onError: (e) => errors.push(e),
-    ...(renewGrant ? { renewGrant } : {}),
+    renewGrant: renewGrant ?? (async () => { throw new Error("no renewal expected") }),
   })
   try {
     const submitted = await submittedP
@@ -124,6 +124,23 @@ test("the child gets the renewed grant when the grant of the work item is near i
     const { text } = await serve(old, async (cur) => (seen.push(cur), fresh))
     assert.equal(childEnvOf(text).GIBSON_CALLBACK_TOKEN, fresh)
     assert.deepEqual(seen, [old])
+  })
+})
+
+test("a grant with less than one renewal window left after the renewal starts no child", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-agent-"))
+  const marker = join(dir, "started")
+  const bin = join(dir, "opencode")
+  await writeFile(bin, `#!/bin/sh\necho started > ${marker}\n`)
+  await chmod(bin, 0o755)
+  const near = grantFor("near", GRANT_RENEW_BEFORE_MS - 30_000)
+  await withChildEnv({ ZEROCOOL_OPENCODE_BIN: bin }, async () => {
+    // The renewal returns a grant that is still near its expiry.
+    const { submitted } = await serve(near, async () => grantFor("still-near", GRANT_RENEW_BEFORE_MS - 20_000))
+    assert.equal(submitted.error?.code, "EXECUTION_ERROR")
+    assert.match(submitted.error?.message ?? "", /ends in less than 120 seconds/)
+    assert.ok(!(submitted.error?.message ?? "").includes(near))
+    await assert.rejects(() => readFile(marker), "no child ran")
   })
 })
 

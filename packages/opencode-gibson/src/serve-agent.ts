@@ -30,6 +30,7 @@ import {
   connectGibson,
   daemonGrantRenewer,
   decodeGrantClaims,
+  GRANT_RENEW_BEFORE_MS,
   normalizePlatformURL,
   registerInstance,
   startAgentWorker,
@@ -82,11 +83,22 @@ export interface AgentHandlerOptions {
  * grant that the handler reads at the start is enough.
  *
  * The handler never logs the grant. A work item with no grant fails here, in
- * `item.harness.token()`, before any child starts.
+ * `item.harness.token()`, before any child starts. A grant that has less than
+ * one renewal window left after `token()` also fails before any child starts.
  */
 export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocation) => Promise<AgentOutcome> {
   return async (item) => {
     const token = await item.harness.token()
+    // `token()` renews a grant that is within the renewal window of its expiry.
+    // A grant still inside that window after `token()` means the renewal failed.
+    // The child starts with one grant and renews it itself, so it would start on
+    // a grant that is about to end. Refuse, and fail the work item with a reason.
+    const expiresAt = item.harness.expiresAt()
+    if (expiresAt > 0 && expiresAt - Date.now() < GRANT_RENEW_BEFORE_MS) {
+      throw new Error(
+        `work ${item.workId}: the task grant ends in less than ${GRANT_RENEW_BEFORE_MS / 1000} seconds and the renewal did not extend it, so no child starts`,
+      )
+    }
     const missionRunId = item.task.run.missionRunId || decodeGrantClaims(token).missionRunId
     return await runOpencodeTask(
       {
