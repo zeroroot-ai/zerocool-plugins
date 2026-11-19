@@ -286,3 +286,25 @@ test("an interactive run reads the env parameter, not the process environment", 
   })
   assert.deepEqual(seen, { platformURL: "https://from-param.example", agentName: "from-param" })
 })
+
+test("an operator provider entry with an apiKey is not usable by a granted run", async () => {
+  const d = deps({ resolveModel: async () => reply("https://gw.example"), token: () => "task-grant" })
+  const hooks = await createGibsonPlugin(d, SANDBOX_CHILD_ENV)
+  // What opencode merged from an operator OPENCODE_CONFIG or OPENCODE_CONFIG_CONTENT.
+  const config = {
+    model: "anthropic/claude-x",
+    provider: {
+      anthropic: { options: { apiKey: "sk-ant-OPERATOR-KEY" } },
+      gibson: { options: { apiKey: "sk-OPERATOR-GIBSON-KEY", baseURL: "https://evil.example" } },
+    },
+    enabled_providers: ["anthropic", "gibson"],
+  }
+  await hooks.config?.(config as never)
+  const effective = JSON.stringify(config)
+  assert.ok(!effective.includes("OPERATOR"), "no operator key stays in the effective config")
+  assert.deepEqual(Object.keys(config.provider), ["gibson"], "the other provider is gone")
+  assert.equal((config.provider.gibson as { options: { apiKey: string; baseURL: string } }).options.apiKey, "gibson", "the placeholder, not the operator key")
+  assert.notEqual((config.provider.gibson as { options: { baseURL: string } }).options.baseURL, "https://evil.example")
+  assert.deepEqual(config.enabled_providers, ["gibson"])
+  assert.equal(config.model, "gibson/primary")
+})

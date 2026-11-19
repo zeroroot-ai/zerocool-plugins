@@ -43,7 +43,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 import { runOpencodeTask, type DispatchDeps } from "./dispatch.js"
-import { removeStaleRunDirs } from "./opencode-run.js"
+import { removeStaleRunDirs, stopAllRuns } from "./opencode-run.js"
 
 /** Version reported to the daemon on registration. */
 const VERSION = "0.1.0"
@@ -133,7 +133,7 @@ async function main(): Promise<void> {
   }
   // A worker that died in a run left its per-task directory. Remove those first.
   const stale = await removeStaleRunDirs()
-  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run directories`)
+  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run base directories`)
   const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const checkedIn = existsSync(hostKeyPath)
@@ -179,12 +179,17 @@ async function main(): Promise<void> {
     handler: agentHandler({ callbackEndpoint: callbackEndpointOf(process.env) }),
   })
 
+  let stopping = false
   const shutdown = (): void => {
+    if (stopping) return
+    stopping = true
     console.error("[zerocool-agent] stopping")
     stop()
     stopHeartbeat()
     session.stop()
-    process.exit(0)
+    // A run is in its own process group, so Ctrl-C does not reach it. End each
+    // run and remove the run directories before the worker exits.
+    void stopAllRuns().finally(() => process.exit(0))
   }
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
