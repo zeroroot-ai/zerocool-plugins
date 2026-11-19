@@ -1,0 +1,60 @@
+name: opencode-smoke
+
+# The real opencode binary, the real plugin and the real driver, end to end.
+#
+# `pnpm test` uses fake binaries, so it cannot tell whether opencode loads the
+# zerocool plugin from the environment that the driver gives a granted child.
+# This job can. It runs the opencode CLI that the agent image pins
+# (packages/opencode-gibson/image/package-lock.json) with only that environment.
+# A fake callback service answers `ResolveModel`, and a fake TLS gateway must
+# receive the call of the `gibson` provider with the route headers of the reply
+# and the task grant. No model, no API key and no real daemon.
+#
+# Trigger discipline (ADR-0080): main and dispatch, never on a pull request.
+# It installs from the npm registry, which a PR gate must not depend on.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/opencode-gibson/**'
+      - '.github/workflows/opencode-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: opencode-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+
+      - name: Install the opencode CLI of the image pin
+        run: |
+          npm ci --prefix packages/opencode-gibson/image --no-audit --no-fund
+          echo "$PWD/packages/opencode-gibson/image/node_modules/.bin" >> "$GITHUB_PATH"
+          packages/opencode-gibson/image/node_modules/.bin/opencode --version
+
+      - name: Install pnpm and the workspace
+        run: |
+          npm ci --prefix tools/pnpm --no-audit --no-fund
+          echo "$PWD/tools/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+          tools/pnpm/node_modules/.bin/pnpm install --frozen-lockfile
+
+      - name: Build the plugin and the test helpers
+        run: |
+          pnpm --filter @zeroroot-ai/zerocool build
+          pnpm --filter @zeroroot-ai/zerocool exec tsc -p tsconfig.test.json
+
+      - name: The real opencode loads the plugin and the gibson provider reaches the gateway
+        env:
+          ZEROCOOL_OPENCODE_BIN: ${{ github.workspace }}/packages/opencode-gibson/image/node_modules/.bin/opencode
+        run: node packages/opencode-gibson/test/real-opencode/smoke.mjs
