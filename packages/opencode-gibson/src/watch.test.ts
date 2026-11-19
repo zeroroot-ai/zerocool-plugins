@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
+import { TaskState } from "@zeroroot-ai/sdk"
 
 import { readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
 import { allowedGitLabHosts, gitlabRest, GITLAB_HOSTS_ENV, parsePipeline, resolveGitLabBaseUrl, TRIGGER_STATUS, type GitLabClient, type Pipeline } from "./gitlab.js"
@@ -698,7 +699,7 @@ test("the watch dispatch drives the loop and reports what it did", async () => {
     },
   )
 
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(outcome.metadata?.task, "watch")
   assert.equal(outcome.metadata?.scans, "1")
   assert.equal(outcome.metadata?.last_pipeline_id, "41")

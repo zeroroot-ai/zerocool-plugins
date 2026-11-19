@@ -16,6 +16,12 @@ export interface SelectedKnowledge {
   knowledge: KnowledgeSource
   scope: "task" | "component"
   /**
+   * The task harness of a dispatched run. The model path resolves its slot on
+   * it, so the run opens one harness and renews one grant. Unset for a
+   * component-scoped run, which has no task grant.
+   */
+  harness?: TaskHarness
+  /**
    * Release the task harness. Safe to call on either scope, and safe to call
    * twice. A component-scoped run opens nothing, so this does nothing.
    */
@@ -29,7 +35,24 @@ export interface KnowledgeSourceDeps {
 }
 
 /**
- * Pick the grant this process should read the knowledge graph with.
+ * The knowledge source of an INTERACTIVE run. It has no callback seam and no
+ * task to scope to, so it keeps the component grant, which is correct: a human
+ * started it. A run with a task grant never comes here. It opens the task
+ * harness with {@link openTaskRun}.
+ */
+export function selectKnowledgeSource(session: GibsonSession): SelectedKnowledge {
+  return {
+    knowledge: componentKnowledge(session.clients.component),
+    scope: "component",
+    stop: () => {},
+  }
+}
+
+/**
+ * Open the task harness of a granted run from the `GIBSON_CALLBACK_*` variables,
+ * and read knowledge through it. It needs no component check-in: no platform URL,
+ * no host key and no bootstrap token. A sandboxed run has none of them, and the
+ * grant is its only credential.
  *
  * A DISPATCHED run must read as the TASK, not as the component. gibson mints a
  * per-dispatch capability grant, and the driver passes it to this opencode
@@ -45,11 +68,8 @@ export interface KnowledgeSourceDeps {
  * opencode, whose environment `dispatchChildEnv` writes. It never sees the
  * launch environment, so it reads the child names and nothing else.
  *
- * An INTERACTIVE run has no callback seam and keeps the component grant, which
- * is correct: a human started it, and there is no task to scope to.
- *
- * A dispatch that carries an endpoint but no token FAILS rather than falling
- * back. Falling back is how the gap reappears silently, and a caller who wanted
+ * A dispatch that carries only one of the endpoint and the token FAILS rather
+ * than falling back. Falling back is how the gap reappears silently, and a caller who wanted
  * task-scoped reads would get component-scoped ones without being told.
  *
  * `openTaskHarness` derives the `ContextInfo` every callback RPC carries from
@@ -57,23 +77,15 @@ export interface KnowledgeSourceDeps {
  * mission it belongs to. It also renews the grant on a timer, which is why the
  * caller must {@link SelectedKnowledge.stop} the source when the session ends.
  */
-export function selectKnowledgeSource(
-  session: GibsonSession,
+export function openTaskRun(
+  env: NodeJS.ProcessEnv,
   deps: KnowledgeSourceDeps = {},
-): SelectedKnowledge {
-  const endpoint = process.env.GIBSON_CALLBACK_ENDPOINT
-  const token = process.env.GIBSON_CALLBACK_TOKEN
-
-  if (!endpoint) {
-    return {
-      knowledge: componentKnowledge(session.clients.component),
-      scope: "component",
-      stop: () => {},
-    }
-  }
-  if (!token) {
+): SelectedKnowledge & { harness: TaskHarness } {
+  const endpoint = env.GIBSON_CALLBACK_ENDPOINT
+  const token = env.GIBSON_CALLBACK_TOKEN
+  if (!endpoint || !token) {
     throw new Error(
-      "GIBSON_CALLBACK_ENDPOINT is set but GIBSON_CALLBACK_TOKEN is not. A dispatched run " +
+      "GIBSON_CALLBACK_ENDPOINT and GIBSON_CALLBACK_TOKEN must both be set. A dispatched run " +
         "must read with its task grant; falling back to the component grant would silently " +
         "widen this run's authority.",
     )
@@ -82,11 +94,12 @@ export function selectKnowledgeSource(
     endpoint,
     token,
     // A local or kind daemon may serve the callback listener without TLS.
-    insecure: process.env.GIBSON_CALLBACK_INSECURE === "1",
+    insecure: env.GIBSON_CALLBACK_INSECURE === "1",
   })
   return {
     knowledge: taskKnowledge(harness),
     scope: "task",
+    harness,
     stop: () => harness.stop(),
   }
 }

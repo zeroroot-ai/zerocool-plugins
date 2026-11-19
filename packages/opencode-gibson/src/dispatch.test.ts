@@ -3,12 +3,16 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
+import { TaskState } from "@zeroroot-ai/sdk"
 
 import {
   dispatchChildEnv,
+  failedOutcome,
   dispatchTaskKind,
   formatTerminalResult,
   readDispatchContext,
+  REDACTED_GRANT,
+  redactGrant,
   runDispatch,
   taskContextStrings,
   type DispatchContext,
@@ -55,7 +59,7 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
       GIBSON_MISSION_RUN_ID: "mr-1",
       GIBSON_AGENT_RUN_ID: "ar-1",
       GIBSON_TRACE_ID: "tr-1",
-      GIBSON_MODEL: "gibson/default",
+      GIBSON_MODEL: "claude-sonnet-x",
       GIBSON_TIMEOUT_MS: "60000",
     },
     { cwd: "/srv/work" },
@@ -66,7 +70,7 @@ test("readDispatchContext reads the grant, the task and provenance from env", ()
   assert.equal(ctx.missionRunId, "mr-1")
   assert.equal(ctx.agentRunId, "ar-1")
   assert.equal(ctx.traceId, "tr-1")
-  assert.equal(ctx.model, "gibson/default")
+  assert.equal(ctx.model, "claude-sonnet-x")
   assert.equal(ctx.missionId, "m-1")
   assert.equal(ctx.workspace, "/srv/work")
   assert.equal(ctx.timeoutMs, 60000)
@@ -146,6 +150,7 @@ test("dispatchChildEnv hands the child the per-dispatch grant", () => {
   })
   assert.equal(env.GIBSON_CALLBACK_ENDPOINT, "gibson:50001")
   assert.equal(env.GIBSON_CALLBACK_TOKEN, "tok")
+  assert.equal(env.GIBSON_CG_JWT, "tok", "the MCP server of the child joins the run on the grant")
   assert.equal(env.GIBSON_CALLBACK_INSECURE, "1")
   assert.equal(env.GIBSON_MISSION_RUN_ID, "mr-1")
   assert.equal(env.GIBSON_AGENT_RUN_ID, "ar-1")
@@ -197,7 +202,7 @@ const ctx = (over: Partial<DispatchContext> = {}): DispatchContext => ({
 
 test("runDispatch drives opencode with the goal, workspace and the grant env", async () => {
   let seen: OpencodeRunOptions | undefined
-  const outcome = await runDispatch(ctx({ model: "gibson/default" }), {
+  const outcome = await runDispatch(ctx({ model: "claude-sonnet-x" }), {
     run: async (opts) => {
       seen = opts
       return fakeRunResult()
@@ -205,11 +210,12 @@ test("runDispatch drives opencode with the goal, workspace and the grant env", a
   })
   assert.equal(seen?.goal, "do the thing")
   assert.equal(seen?.dir, "/srv/work")
-  assert.equal(seen?.model, "gibson/default")
+  // The launcher names a bare tenant model. The child selects the gateway provider.
+  assert.equal(seen?.model, "gibson/primary")
   // The child's callbacks must authenticate as the task — the grant is in its env.
   assert.equal(seen?.env?.GIBSON_CALLBACK_ENDPOINT, "gibson:50001")
   assert.equal(seen?.env?.GIBSON_CALLBACK_TOKEN, "tok")
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(outcome.output, "found nothing")
   assert.equal(outcome.metadata?.opencode_session_id, "ses_1")
   assert.equal(outcome.metadata?.tokens_total, "100")
@@ -265,7 +271,7 @@ test("runDispatch lets a crashed run throw so the caller can fail the dispatch",
 // ---------------------------------------------------------------------------
 
 test("formatTerminalResult marks the terminal line apart from the event stream", () => {
-  const line = formatTerminalResult({ output: "done", success: true, metadata: { finish_reason: "stop" } })
+  const line = formatTerminalResult({ output: "done", state: TaskState.TASK_STATE_COMPLETED, metadata: { finish_reason: "stop" } })
   const parsed = JSON.parse(line)
   assert.equal(parsed.type, "result")
   assert.equal(parsed.success, true)
@@ -274,7 +280,7 @@ test("formatTerminalResult marks the terminal line apart from the event stream",
 })
 
 test("formatTerminalResult carries a self-reported failure", () => {
-  const parsed = JSON.parse(formatTerminalResult({ success: false, output: "goal unreachable" }))
+  const parsed = JSON.parse(formatTerminalResult(failedOutcome("goal unreachable")))
   assert.equal(parsed.success, false)
   assert.equal(parsed.output, "goal unreachable")
 })
@@ -343,4 +349,57 @@ test("taskContextStrings drops what a task cannot read as one string", () => {
   )
   assert.deepEqual(ctx.taskContext, { keep: "yes" })
   assert.deepEqual(taskContextStrings({}), {})
+})
+
+test("runDispatch selects the gateway model of the configured slot, and never the bare launcher name", async () => {
+  const saved = process.env.GIBSON_MODEL_SLOT
+  process.env.GIBSON_MODEL_SLOT = "review"
+  try {
+    let seen: OpencodeRunOptions | undefined
+    await runDispatch(ctx({ model: "claude-sonnet-x" }), {
+      run: async (opts) => {
+        seen = opts
+        return fakeRunResult()
+      },
+    })
+    assert.equal(seen?.model, "gibson/review")
+  } finally {
+    if (saved === undefined) delete process.env.GIBSON_MODEL_SLOT
+    else process.env.GIBSON_MODEL_SLOT = saved
+  }
+})
+
+test("a dispatched run that completes is a COMPLETED Task, and one that fails reports FAILED", async () => {
+  const done = await runDispatch(ctx(), { run: async () => fakeRunResult() })
+  assert.equal(done.state, TaskState.TASK_STATE_COMPLETED)
+  assert.equal(JSON.parse(formatTerminalResult(done)).success, true)
+
+  // A crashed child throws. The driver turns the throw into the failed outcome.
+  await assert.rejects(() => runDispatch(ctx(), { run: async () => { throw new Error("opencode exited 1") } }), /opencode exited 1/)
+  const failed = failedOutcome("opencode exited 1")
+  assert.equal(failed.state, TaskState.TASK_STATE_FAILED)
+  assert.equal(JSON.parse(formatTerminalResult(failed)).success, false)
+})
+
+test("a dispatched run removes the task grant from the output, the events and the error", async () => {
+  const events: string[] = []
+  const outcome = await runDispatch(ctx(), {
+    run: async (opts) => {
+      opts.onEvent?.('{"type":"text","part":{"text":"value is tok"}}')
+      return fakeRunResult({ text: "the grant is tok" })
+    },
+    onEvent: (line) => events.push(line),
+  })
+  assert.equal(outcome.output, `the grant is ${REDACTED_GRANT}`)
+  assert.deepEqual(events, [`{"type":"text","part":{"text":"value is ${REDACTED_GRANT}"}}`])
+  await assert.rejects(
+    () => runDispatch(ctx(), { run: async () => { throw new Error("opencode exited 1: boom tok") } }),
+    (e: Error) => e.message === `opencode exited 1: boom ${REDACTED_GRANT}` && e.cause === undefined,
+  )
+})
+
+test("redactGrant replaces the grant and skips an empty value", () => {
+  assert.equal(redactGrant("a tok b tok c", "tok"), `a ${REDACTED_GRANT} b ${REDACTED_GRANT} c`)
+  assert.equal(redactGrant("no secret", "tok"), "no secret")
+  assert.equal(redactGrant("keep", ""), "keep", "an empty grant replaces nothing")
 })

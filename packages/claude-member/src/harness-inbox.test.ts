@@ -148,8 +148,17 @@ function fakeHarness(over: Record<string, unknown> = {}): TaskHarness & { calls:
     token: () => "base-grant",
     expiresAt: () => 0,
     stop: () => {},
+    // The inbox never calls the model or an agent. A call would be a defect.
+    resolveModel: unused,
+    resolveAgent: unused,
+    model: unused,
+    delegate: unused,
     calls,
   }
+}
+
+async function unused(): Promise<never> {
+  throw new Error("the job inbox must not call the model or the agent gateway")
 }
 
 test("the subscription forwards every input, in order", async () => {

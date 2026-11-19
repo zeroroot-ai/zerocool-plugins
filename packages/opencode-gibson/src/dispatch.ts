@@ -55,7 +55,6 @@
  *   ZEROCOOL_TASK              force a task kind ("source-analysis", "watch",
  *                              "fix"); the Task's own context `zerocool.task`
  *                              is the normal way
- *   GIBSON_OPENCODE_SESSION_ID continue an earlier opencode session
  *   GIBSON_TIMEOUT_MS          hard deadline for the run, in ms
  *
  * The child `opencode run` still receives the grant as GIBSON_CALLBACK_TOKEN via
@@ -67,6 +66,7 @@ import {
   parkAfterResult,
   readSandboxDispatch,
   sandboxHarness,
+  TaskState,
   Watcher,
   taskKnowledge,
   type AgentOutcome,
@@ -74,6 +74,7 @@ import {
   type TaskHarness,
 } from "@zeroroot-ai/sdk"
 import { join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { taskFindingsBackend, type FindingsBackend } from "./findings.js"
 import {
@@ -86,6 +87,7 @@ import {
   type Workspace,
 } from "./fix.js"
 import { allowedGitLabHosts, gitlabRest, gitlabRestWriter, resolveGitLabBaseUrl, type GitLabClient, type GitLabWriter } from "./gitlab.js"
+import { modelSelector } from "./model-provider.js"
 import { runOpencode } from "./opencode-run.js"
 import type { SemgrepRunner } from "./semgrep.js"
 import {
@@ -129,6 +131,15 @@ export interface CallbackGrant {
 }
 
 /**
+ * The `file://` URL of the entry module of this package, which exports the
+ * plugin. The driver and the plugin are in the same package, so the entry is
+ * the `index.js` beside this file, in `dist` or in the test build.
+ */
+export function pluginEntryUrl(): string {
+  return pathToFileURL(fileURLToPath(new URL("./index.js", import.meta.url))).href
+}
+
+/**
  * Render the per-dispatch grant back to environment for the opencode child, so
  * the child's harness callbacks travel on the task grant rather than on any
  * component identity. Empty fields are omitted rather than set blank.
@@ -144,6 +155,13 @@ export function dispatchChildEnv(g: CallbackGrant): NodeJS.ProcessEnv {
   return {
     ...(g.callbackEndpoint ? { GIBSON_CALLBACK_ENDPOINT: g.callbackEndpoint } : {}),
     ...(g.callbackToken ? { GIBSON_CALLBACK_TOKEN: g.callbackToken } : {}),
+    // The Gibson MCP server of the child joins the run on this name, with the
+    // endpoint above. With no host key in the child, the grant is its only way in.
+    ...(g.callbackToken && g.callbackEndpoint ? { GIBSON_CG_JWT: g.callbackToken } : {}),
+    // A granted run has no user config, so the driver registers the plugin for
+    // the child. opencode merges OPENCODE_CONFIG_CONTENT over the other
+    // config sources and joins their plugin lists. It does not replace them.
+    ...(g.callbackToken ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [pluginEntryUrl()] }) } : {}),
     ...(g.insecure ? { GIBSON_CALLBACK_INSECURE: "1" } : {}),
     GIBSON_MISSION_RUN_ID: g.missionRunId,
     ...(g.agentRunId ? { GIBSON_AGENT_RUN_ID: g.agentRunId } : {}),
@@ -170,8 +188,6 @@ export interface DispatchContext extends SandboxDispatch {
   insecure: boolean
   /** opencode edits files here; it is the run's workspace. */
   workspace: string
-  /** Continue an earlier opencode session instead of starting a new one. */
-  sessionId?: string
   /** Hard deadline for the run, in ms. `0` when none was set. */
   timeoutMs: number
 }
@@ -260,7 +276,6 @@ export function readDispatchContext(
     taskContext: taskContextStrings(dispatch.task.context),
     insecure: env.GIBSON_CALLBACK_INSECURE === "1",
     workspace: env.ZEROCOOL_WORKSPACE ?? opts.cwd ?? process.cwd(),
-    ...(env.GIBSON_OPENCODE_SESSION_ID ? { sessionId: env.GIBSON_OPENCODE_SESSION_ID } : {}),
     timeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 0,
   }
 }
@@ -349,43 +364,90 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
   if (kind === "fix") {
     return runFixDispatch(ctx, deps)
   }
-  const run = deps.run ?? runOpencode
-  const result = await run({
-    goal: ctx.goal,
-    dir: ctx.workspace,
-    ...(ctx.model ? { model: ctx.model } : {}),
-    ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
-    ...(ctx.timeoutMs > 0 ? { timeoutMs: ctx.timeoutMs } : {}),
-    // The child speaks the opencode plugin's own contract, whose token name is
-    // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
-    env: dispatchChildEnv({
-      callbackEndpoint: ctx.callbackEndpoint,
-      callbackToken: ctx.grant,
-      insecure: ctx.insecure,
-      missionRunId: ctx.missionRunId,
-      agentRunId: ctx.agentRunId,
-      traceId: ctx.traceId,
-    }),
-    ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
-  })
-
-  return {
-    output: result.text,
-    success: true,
-    metadata: {
-      opencode_session_id: result.sessionId,
-      finish_reason: result.finishReason,
-      tokens_total: String(result.tokens.total),
-      tokens_output: String(result.tokens.output),
-      cost: String(result.cost),
+  return runOpencodeTask(
+    {
+      goal: ctx.goal,
+      workspace: ctx.workspace,
+      timeoutMs: ctx.timeoutMs,
+      grant: {
+        callbackEndpoint: ctx.callbackEndpoint,
+        callbackToken: ctx.grant,
+        insecure: ctx.insecure,
+        missionRunId: ctx.missionRunId,
+        agentRunId: ctx.agentRunId,
+        traceId: ctx.traceId,
+      },
     },
+    deps,
+  )
+}
+
+/** What one opencode run needs: the goal, where it runs, and the grant the child gets. */
+export interface OpencodeTask {
+  goal: string
+  /** opencode edits files here. */
+  workspace: string
+  /** Hard deadline for the run, in ms. `0` when none was set. */
+  timeoutMs: number
+  /** The grant and the endpoint the child receives, in its environment only. */
+  grant: CallbackGrant
+}
+
+/**
+ * Drive `opencode run` on a goal and map the result to a terminal outcome.
+ *
+ * Both dispatched shapes end here: the sandboxed run (`runDispatch`) and the
+ * pull worker (`serve-agent.ts`). The child gets the same environment from
+ * {@link dispatchChildEnv} in both, so it opens one task harness the same way.
+ * The task grant that the child started with is removed from the output, the metadata, the events and the
+ * error text before they leave this process.
+ */
+export async function runOpencodeTask(task: OpencodeTask, deps: Pick<DispatchDeps, "run" | "onEvent"> = {}): Promise<AgentOutcome> {
+  const run = deps.run ?? runOpencode
+  const secret = task.grant.callbackToken
+  let result: Awaited<ReturnType<typeof runOpencode>>
+  try {
+    result = await run({
+      goal: task.goal,
+      dir: task.workspace,
+      // `gibson/<slot>`, the model of the gateway provider. A bare tenant model
+      // name is no model of any provider, so it is not passed.
+      model: modelSelector(),
+      ...(task.timeoutMs > 0 ? { timeoutMs: task.timeoutMs } : {}),
+      // The child speaks the opencode plugin's own contract, whose token name is
+      // GIBSON_CALLBACK_TOKEN. It is fed from the grant the SDK read.
+      env: dispatchChildEnv(task.grant),
+      ...(deps.onEvent ? { onEvent: (line) => deps.onEvent?.(redactGrant(line, secret)) } : {}),
+    })
+  } catch (e) {
+    throw new Error(redactGrant((e as Error).message, secret))
   }
+  const metadata = {
+    opencode_session_id: result.sessionId,
+    finish_reason: result.finishReason,
+    tokens_total: String(result.tokens.total),
+    tokens_output: String(result.tokens.output),
+    cost: String(result.cost),
+  }
+  return {
+    output: redactGrant(result.text, secret),
+    state: TaskState.TASK_STATE_COMPLETED,
+    metadata: Object.fromEntries(Object.entries(metadata).map(([k, v]) => [k, redactGrant(v, secret)])),
+  }
+}
+
+/** The text that replaces a task grant in anything that leaves the process. */
+export const REDACTED_GRANT = "[task grant]"
+
+/** Replace the grant in `text`. An empty grant replaces nothing. */
+export function redactGrant(text: string, grant: string): string {
+  return grant ? text.split(grant).join(REDACTED_GRANT) : text
 }
 
 /**
  * The source-analysis task, sandboxed (zerocool-plugins#87). opencode is not
  * involved: semgrep produces candidates, the model triages them through the
- * harness `LLMComplete` on the task grant, and real ones are submitted through
+ * Model gateway on the task grant, and real ones are submitted through
  * the harness `SubmitFinding` on the same grant. The task reads the checkout
  * (the workspace, or `source.path` under it) and changes nothing.
  *
@@ -420,8 +482,8 @@ export async function runSourceAnalysisDispatch(ctx: DispatchContext, deps: Disp
     })
     return {
       output: formatSourceAnalysis(summary),
-      success: true,
-      findingIds: summary.findingIds,
+      state: TaskState.TASK_STATE_COMPLETED,
+      findings: summary.findingIds,
       metadata: {
         task: "source-analysis",
         matches: String(summary.matches),
@@ -542,7 +604,7 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
       output:
         `watch ${application}@${ref}: ${summary.polls} polls, ${summary.scans} scan missions, ` +
         `${summary.errors} errors; last pipeline ${summary.lastPipelineId || "none"}`,
-      success: true,
+      state: TaskState.TASK_STATE_COMPLETED,
       metadata: {
         task: "watch",
         application,
@@ -669,7 +731,7 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
       output:
         `fix ${application}@${commit.slice(0, 12) || "unknown"}: ${fixing} merge request(s) opened, ` +
         `${merged} merged, ${unfixed} left for a human`,
-      success: true,
+      state: TaskState.TASK_STATE_COMPLETED,
       metadata: {
         task: "fix",
         application,
@@ -710,6 +772,22 @@ export function harnessCredential(harness: TaskHarness): (name: string) => Promi
   }
 }
 
+/** True when the A2A Task state of the outcome is completed and it has no error. */
+export function outcomeSucceeded(outcome: AgentOutcome): boolean {
+  if (outcome.error) return false
+  return outcome.state === undefined || outcome.state === TaskState.TASK_STATE_COMPLETED
+}
+
+/** A failed outcome: the A2A Task state `failed` and the structured error. */
+export function failedOutcome(message: string): AgentOutcome {
+  return {
+    state: TaskState.TASK_STATE_FAILED,
+    output: message,
+    error: { code: "EXECUTION_ERROR", message, retryable: false },
+    metadata: { error: message },
+  }
+}
+
 /**
  * Render a terminal outcome as the last NDJSON line on stdout.
  *
@@ -720,9 +798,9 @@ export function harnessCredential(harness: TaskHarness): (name: string) => Promi
 export function formatTerminalResult(outcome: AgentOutcome): string {
   return JSON.stringify({
     type: "result",
-    success: outcome.success ?? true,
+    success: outcomeSucceeded(outcome),
     output: outcome.output ?? "",
-    ...(outcome.findingIds ? { finding_ids: outcome.findingIds } : {}),
+    ...(outcome.findings ? { finding_ids: outcome.findings } : {}),
     metadata: outcome.metadata ?? {},
   })
 }
@@ -753,7 +831,7 @@ export async function runForkableDispatch(ctx: DispatchContext, env: NodeJS.Proc
   for (;;) {
     const outcome = await runOnce(current, deps)
     deps.onOutcome?.(outcome)
-    if (outcome.success === false) return outcome
+    if (!outcomeSucceeded(outcome)) return outcome
     const next = await parkFor(launch, deps.watcher, { insecure: current.insecure })
     if (!next) return outcome
     console.error("[zerocool-dispatch] this process is a fork: running the task of the fork")
@@ -773,7 +851,7 @@ async function main(): Promise<void> {
     // terminal result so the launcher never blocks waiting for one.
     const message = (e as Error).message
     console.error(`[zerocool-dispatch] ${message}`)
-    process.stdout.write(`${formatTerminalResult({ success: false, output: message, metadata: { error: message } })}\n`)
+    process.stdout.write(`${formatTerminalResult(failedOutcome(message))}\n`)
     process.exit(2)
     return
   }
@@ -800,7 +878,7 @@ async function main(): Promise<void> {
   } catch (e) {
     const message = (e as Error).message
     console.error(`[zerocool-dispatch] run failed: ${message}`)
-    process.stdout.write(`${formatTerminalResult({ success: false, output: message, metadata: { error: message } })}\n`)
+    process.stdout.write(`${formatTerminalResult(failedOutcome(message))}\n`)
     process.exit(1)
   }
 }

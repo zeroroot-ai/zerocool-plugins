@@ -8,8 +8,8 @@
  * The sibling of `zerocool-serve`, and the other half of dispatched mode. Where
  * `zerocool-serve` registers a TOOL — one named capability with declared
  * parameters — this registers an AGENT: a goal-driven executor. A mission node
- * hands over a Task, and this process pursues it by driving opencode headless
- * for as long as the dispatch allows.
+ * hands over a Task. See {@link agentHandler}: it runs the opencode child on
+ * the task grant of the work item, as a sandboxed dispatch does.
  *
  * This is zerocool-plugins#33, Option B, per the owner decision of 2026-08-15.
  * It does not reopen ADR-0155: the driver is a bin in this package, not a fork
@@ -21,7 +21,6 @@
  *   GIBSON_PLATFORM_URL=https://api.example:30443 \
  *   GIBSON_BOOTSTRAP_TOKEN=<one-time token> \
  *   ZEROCOOL_AGENT_NAME=zerocool-opencode \
- *   ZEROCOOL_WORKSPACE=/srv/work \
  *     zerocool-agent
  *
  * The token is needed for the first check-in only; afterwards the persisted host
@@ -29,6 +28,10 @@
  */
 import {
   connectGibson,
+  daemonGrantRenewer,
+  decodeGrantClaims,
+  GRANT_RENEW_BEFORE_MS,
+  normalizePlatformURL,
   registerInstance,
   startAgentWorker,
   startHeartbeat,
@@ -39,61 +42,86 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { dispatchChildEnv } from "./dispatch.js"
-import { runOpencode } from "./opencode-run.js"
+import { runOpencodeTask, type DispatchDeps } from "./dispatch.js"
+import { removeStaleRunDirs } from "./opencode-run.js"
 
 /** Version reported to the daemon on registration. */
 const VERSION = "0.1.0"
 
 /**
- * Turn one dispatched Task into one headless opencode run.
- *
- * Exported for tests: the loop around it is `startAgentWorker`'s, and the value
- * of this function is entirely in what it maps onto and off the wire.
+ * The endpoint that the child dials for the harness callbacks: the daemon
+ * endpoint that this worker polls. The Edge serves ComponentService and
+ * HarnessCallbackService on one host. A sandboxed run dials the advertised
+ * address of the same Edge. The expression is the one `connectGibson` uses for
+ * the base URL of its transport.
  */
-export async function agentHandler(
-  item: AgentInvocation,
-  opts: { workspace: string; model?: string },
-): Promise<AgentOutcome> {
-  if (!item.goal.trim()) {
-    // A dispatch with no goal is a defect upstream, not something to guess at.
-    // Failing loudly beats running opencode against an empty prompt and
-    // reporting whatever it says back as a mission result.
-    throw new Error(`work ${item.workId} carried no task goal`)
-  }
+export function callbackEndpointOf(env: NodeJS.ProcessEnv): string {
+  const raw = env.GIBSON_DAEMON_URL || env.GIBSON_PLATFORM_URL
+  if (!raw) throw new Error("GIBSON_PLATFORM_URL is required")
+  return normalizePlatformURL(raw)
+}
 
-  const run = await runOpencode({
-    goal: item.goal,
-    dir: opts.workspace,
-    model: opts.model,
-    // Continuity across dispatches: the daemon's agent_run_id is stable for a
-    // retried node, but opencode's own session id is what carries the
-    // conversation. It is returned in metadata below so a follow-up dispatch can
-    // pass it back — see the ADR on why this is not yet automatic.
-    sessionId: item.context.opencode_session_id,
-    timeoutMs: item.timeoutMs,
-    // The task-scoped callback seam. The platform mints the grant per dispatch,
-    // so a dispatched run reaches the harness as the TASK rather than as this
-    // component. The same passthrough the sandboxed shape uses (`dispatch.ts`),
-    // so the child sees one environment however it was launched.
-    env: dispatchChildEnv({
-      callbackEndpoint: item.callbackEndpoint,
-      callbackToken: item.callbackToken,
-      missionRunId: item.missionRunId,
-      agentRunId: item.agentRunId,
-      traceId: item.traceId,
-    }),
-  })
+/** What the handler needs from the worker process. */
+export interface AgentHandlerOptions {
+  /** The callback endpoint the child dials. See {@link callbackEndpointOf}. */
+  callbackEndpoint: string
+  /** opencode edits files here. Defaults to `ZEROCOOL_WORKSPACE` or the current directory. */
+  workspace?: string
+  /** Overridable opencode driver and event tap, for a test. */
+  deps?: Pick<DispatchDeps, "run" | "onEvent">
+}
 
-  return {
-    output: run.text,
-    metadata: {
-      opencode_session_id: run.sessionId,
-      finish_reason: run.finishReason,
-      tokens_total: String(run.tokens.total),
-      tokens_output: String(run.tokens.output),
-      cost: String(run.cost),
-    },
+/**
+ * Make the handler of a polled work item.
+ *
+ * The handler runs the opencode child as a sandboxed dispatch does, through
+ * `runOpencodeTask`. The child gets the task grant of the work item and the
+ * callback endpoint in its environment, and in no other place. It then opens a
+ * task harness with `openTaskHarness`: it resolves the model slot through the
+ * Model gateway and reads knowledge with the task grant. The child gets no
+ * direct provider key, because `opencodeChildEnv` drops them when a grant is
+ * present. The child renews the grant itself, as in a sandboxed run, so the
+ * grant that the handler reads at the start is enough.
+ *
+ * The handler never logs the grant. A work item with no grant fails here, in
+ * `item.harness.token()`, before any child starts. A grant that has less than
+ * one renewal window left after `token()` also fails before any child starts.
+ */
+export function agentHandler(options: AgentHandlerOptions): (item: AgentInvocation) => Promise<AgentOutcome> {
+  return async (item) => {
+    if (!item.goal.trim()) {
+      // A dispatch with no goal is a defect upstream, not something to guess at.
+      // Failing loudly beats running opencode against an empty prompt and
+      // reporting whatever it says back as a mission result.
+      throw new Error(`work ${item.workId} carried no task goal`)
+    }
+    const token = await item.harness.token()
+    // `token()` renews a grant that is within the renewal window of its expiry.
+    // A grant still inside that window after `token()` means the renewal failed.
+    // The child starts with one grant and renews it itself, so it would start on
+    // a grant that is about to end. Refuse, and fail the work item with a reason.
+    const expiresAt = item.harness.expiresAt()
+    if (expiresAt > 0 && expiresAt - Date.now() < GRANT_RENEW_BEFORE_MS) {
+      throw new Error(
+        `work ${item.workId}: the task grant ends in less than ${GRANT_RENEW_BEFORE_MS / 1000} seconds and the renewal did not extend it, so no child starts`,
+      )
+    }
+    const missionRunId = item.task.run.missionRunId || decodeGrantClaims(token).missionRunId
+    return await runOpencodeTask(
+      {
+        goal: item.goal,
+        workspace: options.workspace ?? process.env.ZEROCOOL_WORKSPACE ?? process.cwd(),
+        timeoutMs: item.timeoutMs,
+        grant: {
+          callbackEndpoint: options.callbackEndpoint,
+          callbackToken: token,
+          missionRunId,
+          agentRunId: item.task.run.agentRunId,
+          traceId: item.task.run.traceId,
+        },
+      },
+      options.deps,
+    )
   }
 }
 
@@ -103,9 +131,10 @@ async function main(): Promise<void> {
     console.error("[zerocool-agent] GIBSON_PLATFORM_URL is required")
     process.exit(2)
   }
+  // A worker that died in a run left its per-task directory. Remove those first.
+  const stale = await removeStaleRunDirs()
+  if (stale.length > 0) console.error(`[zerocool-agent] removed ${stale.length} stale run directories`)
   const agentName = process.env.ZEROCOOL_AGENT_NAME ?? "zerocool-opencode"
-  const workspace = process.env.ZEROCOOL_WORKSPACE ?? process.cwd()
-  const model = process.env.ZEROCOOL_MODEL
   const hostKeyPath = process.env.GIBSON_HOST_KEY_PATH ?? join(homedir(), ".zerocool", "host.key")
   const checkedIn = existsSync(hostKeyPath)
 
@@ -127,7 +156,7 @@ async function main(): Promise<void> {
     name: agentName,
     version: VERSION,
     capabilities: ["code"],
-    metadata: { served_by: "zerocool", workspace },
+    metadata: { served_by: "zerocool" },
   })
 
   const stopHeartbeat = startHeartbeat(session.clients.component, ref, (e: unknown) =>
@@ -136,24 +165,18 @@ async function main(): Promise<void> {
 
   console.error(
     `[zerocool-agent] registered agent "${agentName}" (instance=${ref.current()}) ` +
-      `workspace=${workspace}; polling for work`,
+      "polling for work",
   )
 
   const stop = startAgentWorker(session.clients.component, ref, {
+    renewGrant: daemonGrantRenewer(session.transport),
     onWork: (item: AgentInvocation) =>
       console.error(
-        `[zerocool-agent] claimed work ${item.workId} run=${item.agentRunId || "-"} ` +
+        `[zerocool-agent] claimed work ${item.workId} run=${item.task.run.agentRunId || "-"} ` +
           `timeout=${item.timeoutMs}ms goal=${JSON.stringify(item.goal.slice(0, 120))}`,
       ),
     onError: (e: unknown) => console.error(`[zerocool-agent] ${(e as Error).message}`),
-    handler: async (item: AgentInvocation) => {
-      const outcome = await agentHandler(item, { workspace, model })
-      console.error(
-        `[zerocool-agent] finished ${item.workId} reason=${outcome.metadata?.finish_reason ?? "-"} ` +
-          `tokens=${outcome.metadata?.tokens_total ?? "-"}`,
-      )
-      return outcome
-    },
+    handler: agentHandler({ callbackEndpoint: callbackEndpointOf(process.env) }),
   })
 
   const shutdown = (): void => {

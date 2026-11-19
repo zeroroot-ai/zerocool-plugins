@@ -2,6 +2,9 @@
 // Copyright 2026 Zero Root AI
 
 import { spawn } from "node:child_process"
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 /**
  * Drive opencode headless — the external driver half of the `kind=agent`
@@ -35,7 +38,7 @@ export interface OpencodeTokens {
 
 /** What one headless opencode run produced. */
 export interface OpencodeRunResult {
-  /** opencode's session id — pass it back as `sessionId` to continue this session. */
+  /** opencode's session id. A run is one session, and the per-task home goes when it ends. */
   sessionId: string
   /** Every `text` part, concatenated in order. The agent's answer. */
   text: string
@@ -109,12 +112,12 @@ export interface OpencodeRunOptions {
   goal: string
   /** Working directory. opencode edits files here, so it is the run's workspace. */
   dir: string
-  /** `provider/model`, e.g. `gibson/default`. Omitted lets opencode choose. */
+  /** `provider/model`, e.g. `gibson/primary`. Omitted lets opencode choose. */
   model?: string
-  /** Continue an earlier opencode session instead of starting a new one. */
-  sessionId?: string
-  /** Hard deadline. The child is killed when it elapses. */
+  /** Hard deadline. The child gets SIGTERM when it elapses, and SIGKILL after `killGraceMs`. */
   timeoutMs?: number
+  /** The time between SIGTERM and SIGKILL, in ms. Defaults to {@link KILL_GRACE_MS}. */
+  killGraceMs?: number
   /** Extra environment for the child, merged over the allow-listed parent environment. */
   env?: NodeJS.ProcessEnv
   /** Binary to run. Overridable for tests and for a pinned install. */
@@ -173,11 +176,16 @@ export function createLineStreamer(onLine: (line: string) => void): {
  * `GIBSON_CALLBACK_ENDPOINT` and `GIBSON_CALLBACK_TOKEN`, which the caller
  * passes in `opts.env`, and nothing of the launch environment.
  *
+ * A child that has the task grant gets no `GIBSON_HOST_KEY_PATH`, and its
+ * `HOME` and `XDG_*` point at a per-task directory (see `opencodeChildEnv`).
+ *
  * `GIBSON_` names are listed one by one and never by prefix: the grant and
  * the token share that prefix with the addressing the child plugin reads.
  * The provider credential passes through because opencode itself reads it
- * for a model that is not served through the Gibson shim, the same posture
- * `claude-member/src/env.ts` takes for Claude Code.
+ * for a model that is not served through the Model gateway, the same posture
+ * `claude-member/src/env.ts` takes for Claude Code. A dispatched run has the
+ * gateway and nothing else, so it gets none of them (see
+ * {@link DIRECT_PROVIDER_PREFIXES}).
  */
 const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
   "PATH",
@@ -199,10 +207,9 @@ const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
   "GIBSON_DAEMON_URL",
   "GIBSON_HOST_KEY_PATH",
   "GIBSON_AGENT_MODE",
-  "GIBSON_SHIM_PORT",
+  "GIBSON_MODEL_SLOT",
   "GIBSON_TARGET_ID",
   "GIBSON_CA_CERT",
-  "GIBSON_OPENCODE_SESSION_ID",
 ]
 
 const CHILD_ENV_ALLOW_PREFIX: readonly string[] = [
@@ -221,22 +228,78 @@ const CHILD_ENV_ALLOW_PREFIX: readonly string[] = [
 ]
 
 /**
+ * The names of a direct model provider credential or region. A child that has
+ * the task grant reaches its model through the Model gateway. It gets none of
+ * these, so a failed gateway path cannot end in a call on a direct key.
+ */
+const DIRECT_PROVIDER_EXACT: readonly string[] = ["CLOUD_ML_REGION", "OPENCODE_API_KEY"]
+const DIRECT_PROVIDER_PREFIXES: readonly string[] = ["ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_"]
+
+/**
  * The environment the opencode child gets: the allow list above from `parent`,
  * then `extra` on top. `extra` is the per-dispatch grant from
  * `dispatchChildEnv`, which is the only way a `GIBSON_CALLBACK_*` name reaches
- * the child.
+ * the child. When `extra` carries the task grant, the direct provider
+ * credentials of `parent` do not pass.
  */
-export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+export function opencodeChildEnv(parent: NodeJS.ProcessEnv, extra: NodeJS.ProcessEnv = {}, home?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
+  const gatewayOnly = Boolean(extra.GIBSON_CALLBACK_TOKEN)
   for (const [k, v] of Object.entries(parent)) {
     if (v === undefined) continue
     if (!CHILD_ENV_ALLOW_EXACT.includes(k) && !CHILD_ENV_ALLOW_PREFIX.some((p) => k.startsWith(p))) continue
+    if (gatewayOnly && (DIRECT_PROVIDER_EXACT.includes(k) || DIRECT_PROVIDER_PREFIXES.some((p) => k.startsWith(p)))) continue
+    // A granted child has no path to the home of the worker user. That home
+    // holds the host key and the stored provider keys of opencode.
+    if (gatewayOnly && (GRANTED_DROP_EXACT.includes(k) || k === "HOME" || k.startsWith("XDG_"))) continue
     out[k] = v
   }
+  if (gatewayOnly && home) Object.assign(out, isolatedHomeEnv(home))
   for (const [k, v] of Object.entries(extra)) {
     if (v !== undefined) out[k] = v
   }
+  // The driver registers the plugin in OPENCODE_CONFIG_CONTENT. An operator may
+  // have set that variable too, so join the two instead of replacing one.
+  if (extra.OPENCODE_CONFIG_CONTENT && out.OPENCODE_CONFIG_CONTENT !== undefined && parent.OPENCODE_CONFIG_CONTENT) {
+    out.OPENCODE_CONFIG_CONTENT = mergeConfigContent(parent.OPENCODE_CONFIG_CONTENT, extra.OPENCODE_CONFIG_CONTENT)
+  }
   return out
+}
+
+/**
+ * Join two `OPENCODE_CONFIG_CONTENT` values. The keys of `ours` win, and the
+ * `plugin` lists join with no duplicate. A value of the operator that is not
+ * a JSON object is dropped: opencode would not load it either.
+ */
+export function mergeConfigContent(operator: string, ours: string): string {
+  let base: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(operator)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>
+  } catch {
+    base = {}
+  }
+  const mine = JSON.parse(ours) as Record<string, unknown>
+  const plugins = [...asList(base.plugin), ...asList(mine.plugin)]
+  return JSON.stringify({ ...base, ...mine, plugin: [...new Set(plugins)] })
+}
+
+function asList(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+
+/** Names that a granted child never gets. The host key is the long-lived identity of the worker host. */
+const GRANTED_DROP_EXACT: readonly string[] = ["GIBSON_HOST_KEY_PATH"]
+
+/** `HOME` and the XDG directories of a granted child, all inside one per-task directory. */
+function isolatedHomeEnv(home: string): NodeJS.ProcessEnv {
+  return {
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, "config"),
+    XDG_DATA_HOME: join(home, "data"),
+    XDG_CACHE_HOME: join(home, "cache"),
+    XDG_STATE_HOME: join(home, "state"),
+  }
 }
 
 /** Build the argv for a headless run. Exported so a test can assert it. */
@@ -246,7 +309,6 @@ export function opencodeArgs(opts: OpencodeRunOptions): string[] {
   // and a run that blocks on one burns its whole timeout and then fails.
   args.push("--auto")
   if (opts.model) args.push("--model", opts.model)
-  if (opts.sessionId) args.push("--session", opts.sessionId)
   // The goal goes last: `message..` is a variadic positional, so anything after
   // it would be swallowed as more message.
   args.push(opts.goal)
@@ -262,15 +324,81 @@ export function opencodeArgs(opts: OpencodeRunOptions): string[] {
  * with a reason instead of stalling it until the dispatch times out.
  */
 export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRunResult> {
+  // A run with a task grant gets a fresh home and fresh XDG directories, so the
+  // stored keys and the config of the worker user are not there for a shell
+  // command of the model to read. The directory is removed when the run ends.
+  const home = opts.env?.GIBSON_CALLBACK_TOKEN ? await mkdtemp(join(tmpdir(), RUN_DIR_PREFIX(process.pid))) : undefined
+  try {
+    return await spawnOpencode(opts, home)
+  } finally {
+    // A failed removal must not replace the result or the error of the run.
+    // The next start of a worker removes what is left.
+    if (home) {
+      await rm(home, { recursive: true, force: true }).catch((e: unknown) =>
+        console.error(`[zerocool] could not remove the run directory ${home}: ${(e as Error).message}`),
+      )
+    }
+  }
+}
+
+/** The name of a per-task directory starts with this. The pid lets a later worker tell a live run from a dead one. */
+const RUN_DIR_PREFIX = (pid: number): string => `zerocool-run-${pid}-`
+const RUN_DIR_NAME = /^zerocool-run-(\d+)-/
+
+/** The longest life of one task grant (gibson `capabilitygrant.MaxLifetime`). A run directory older than this belongs to no live grant. */
+export const MAX_GRANT_LIFE_MS = 30 * 60 * 1000
+
+/** The time between SIGTERM and SIGKILL of a child that passed its deadline. */
+export const KILL_GRACE_MS = 5_000
+
+/**
+ * Remove the per-task directories that an earlier worker left behind. A
+ * directory goes when the user of this process owns it, it is older than the
+ * longest grant life, and the process that made it has ended. It returns the
+ * names it removed.
+ */
+export async function removeStaleRunDirs(
+  opts: { root?: string; now?: number; alive?: (pid: number) => boolean } = {},
+): Promise<string[]> {
+  const root = opts.root ?? tmpdir()
+  const now = opts.now ?? Date.now()
+  const alive = opts.alive ?? processIsAlive
+  const uid = process.getuid?.()
+  const removed: string[] = []
+  for (const name of await readdir(root).catch(() => [] as string[])) {
+    const match = RUN_DIR_NAME.exec(name)
+    if (!match) continue
+    const path = join(root, name)
+    const info = await stat(path).catch(() => undefined)
+    if (!info?.isDirectory() || (uid !== undefined && info.uid !== uid)) continue
+    if (now - info.mtimeMs <= MAX_GRANT_LIFE_MS || alive(Number(match[1]))) continue
+    await rm(path, { recursive: true, force: true }).then(
+      () => void removed.push(name),
+      (e: unknown) => console.error(`[zerocool] could not remove the stale run directory ${path}: ${(e as Error).message}`),
+    )
+  }
+  return removed
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    // EPERM means the process exists and belongs to another user.
+    return (e as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+async function spawnOpencode(opts: OpencodeRunOptions, home: string | undefined): Promise<OpencodeRunResult> {
   const bin = opts.bin ?? process.env.ZEROCOOL_OPENCODE_BIN ?? "opencode"
   const args = opencodeArgs(opts)
 
   return await new Promise<OpencodeRunResult>((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: opts.dir,
-      env: opencodeChildEnv(process.env, opts.env),
+      env: opencodeChildEnv(process.env, opts.env, home),
       stdio: ["ignore", "pipe", "pipe"],
-      ...(opts.timeoutMs && opts.timeoutMs > 0 ? { timeout: opts.timeoutMs, killSignal: "SIGTERM" as const } : {}),
     })
 
     let stdout = ""
@@ -294,21 +422,50 @@ export async function runOpencode(opts: OpencodeRunOptions): Promise<OpencodeRun
     })
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString()))
 
-    child.on("error", (e) => reject(new Error(`could not run ${bin}: ${e.message}`)))
+    // The deadline. SIGTERM first. A child that ignores it gets SIGKILL after a
+    // grace period, and the run then ends at once even when a grandchild still
+    // holds the pipes open, so the promise cannot hang and the directory goes.
+    let settled = false
+    let timedOut = false
+    let termTimer: ReturnType<typeof setTimeout> | undefined
+    let killTimer: ReturnType<typeof setTimeout> | undefined
+    const settle = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(termTimer)
+      clearTimeout(killTimer)
+      fn()
+    }
+    const timedOutError = (signal: string): Error =>
+      new Error(`opencode timed out after ${opts.timeoutMs}ms (killed with ${signal})`)
+    if (opts.timeoutMs && opts.timeoutMs > 0) {
+      termTimer = setTimeout(() => {
+        timedOut = true
+        child.kill("SIGTERM")
+        killTimer = setTimeout(() => {
+          child.kill("SIGKILL")
+          child.stdout.destroy()
+          child.stderr.destroy()
+          settle(() => reject(timedOutError("SIGKILL")))
+        }, opts.killGraceMs ?? KILL_GRACE_MS)
+      }, opts.timeoutMs)
+    }
+
+    child.on("error", (e) => settle(() => reject(new Error(`could not run ${bin}: ${e.message}`))))
     child.on("close", (code, signal) => {
       streamer?.flush()
-      if (signal) {
+      if (timedOut || signal) {
         // Killed by the timeout. Say so with the deadline, because "terminated"
         // alone sends whoever reads the mission looking for a crash.
-        reject(new Error(`opencode timed out after ${opts.timeoutMs}ms (killed with ${signal})`))
+        settle(() => reject(timedOutError(signal ?? "SIGTERM")))
         return
       }
       if (code !== 0) {
         const tail = stderr.trim().split("\n").slice(-5).join("; ")
-        reject(new Error(`opencode exited ${code}${tail ? `: ${tail}` : ""}`))
+        settle(() => reject(new Error(`opencode exited ${code}${tail ? `: ${tail}` : ""}`)))
         return
       }
-      resolve(parseOpencodeEvents(stdout))
+      settle(() => resolve(parseOpencodeEvents(stdout)))
     })
   })
 }
