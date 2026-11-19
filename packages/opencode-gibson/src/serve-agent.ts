@@ -32,6 +32,8 @@ import {
   registerInstance,
   startAgentWorker,
   startHeartbeat,
+  daemonGrantRenewer,
+  TaskState,
   type AgentInvocation,
   type AgentOutcome,
 } from "@zeroroot-ai/sdk"
@@ -39,7 +41,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import { dispatchChildEnv } from "./dispatch.js"
+import { dispatchChildEnv, failedOutcome } from "./dispatch.js"
 import { runOpencode } from "./opencode-run.js"
 
 /** Version reported to the daemon on registration. */
@@ -53,16 +55,17 @@ const VERSION = "0.1.0"
  */
 export async function agentHandler(
   item: AgentInvocation,
-  opts: { workspace: string; model?: string },
+  opts: { workspace: string; model?: string; run?: typeof runOpencode },
 ): Promise<AgentOutcome> {
   if (!item.goal.trim()) {
     // A dispatch with no goal is a defect upstream, not something to guess at.
     // Failing loudly beats running opencode against an empty prompt and
-    // reporting whatever it says back as a mission result.
-    throw new Error(`work ${item.workId} carried no task goal`)
+    // reporting whatever it says back as a mission result. The Task state is
+    // failed, so the daemon sees a finished run with a reason.
+    return failedOutcome(`work ${item.workId} carried no task goal`)
   }
 
-  const run = await runOpencode({
+  const run = await (opts.run ?? runOpencode)({
     goal: item.goal,
     dir: opts.workspace,
     model: opts.model,
@@ -72,20 +75,20 @@ export async function agentHandler(
     // pass it back — see the ADR on why this is not yet automatic.
     sessionId: item.context.opencode_session_id,
     timeoutMs: item.timeoutMs,
-    // The task-scoped callback seam. The platform mints the grant per dispatch,
-    // so a dispatched run reaches the harness as the TASK rather than as this
-    // component. The same passthrough the sandboxed shape uses (`dispatch.ts`),
-    // so the child sees one environment however it was launched.
+    // The run ids of the A2A message. A pulled work item carries no callback
+    // endpoint and no grant for the child: the task grant stays in the SDK of
+    // this process, so the child gets the ids and nothing that authenticates.
     env: dispatchChildEnv({
-      callbackEndpoint: item.callbackEndpoint,
-      callbackToken: item.callbackToken,
-      missionRunId: item.missionRunId,
-      agentRunId: item.agentRunId,
-      traceId: item.traceId,
+      callbackEndpoint: "",
+      callbackToken: "",
+      missionRunId: item.task.run.missionRunId,
+      agentRunId: item.task.run.agentRunId,
+      traceId: item.task.run.traceId,
     }),
   })
 
   return {
+    state: TaskState.TASK_STATE_COMPLETED,
     output: run.text,
     metadata: {
       opencode_session_id: run.sessionId,
@@ -140,9 +143,10 @@ async function main(): Promise<void> {
   )
 
   const stop = startAgentWorker(session.clients.component, ref, {
+    renewGrant: daemonGrantRenewer(session.transport),
     onWork: (item: AgentInvocation) =>
       console.error(
-        `[zerocool-agent] claimed work ${item.workId} run=${item.agentRunId || "-"} ` +
+        `[zerocool-agent] claimed work ${item.workId} run=${item.task.run.agentRunId || "-"} ` +
           `timeout=${item.timeoutMs}ms goal=${JSON.stringify(item.goal.slice(0, 120))}`,
       ),
     onError: (e: unknown) => console.error(`[zerocool-agent] ${(e as Error).message}`),

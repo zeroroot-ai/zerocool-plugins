@@ -16,6 +16,12 @@ export interface SelectedKnowledge {
   knowledge: KnowledgeSource
   scope: "task" | "component"
   /**
+   * The task harness of a dispatched run. The model path resolves its slot on
+   * it, so the run opens one harness and renews one grant. Unset for a
+   * component-scoped run, which has no task grant.
+   */
+  harness?: TaskHarness
+  /**
    * Release the task harness. Safe to call on either scope, and safe to call
    * twice. A component-scoped run opens nothing, so this does nothing.
    */
@@ -87,6 +93,7 @@ export function selectKnowledgeSource(
   return {
     knowledge: taskKnowledge(harness),
     scope: "task",
+    harness,
     stop: () => harness.stop(),
   }
 }

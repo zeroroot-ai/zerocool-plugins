@@ -9,8 +9,8 @@ findings, the knowledge graph, delegation/missions — with a bootstrap key.
 
 1. **`@zeroroot-ai/sdk`** (repo [`sdk-ts`](https://github.com/zeroroot-ai/sdk-ts)) — the
    framework-agnostic TS Gibson SDK: connect-es bindings (BSR), Capability Grant
-   auth, component register/heartbeat, the session singleton, the OpenAI-compat
-   shim. Nothing opencode-specific. Any TS program can use it.
+   auth, component register/heartbeat, the session singleton, the Open Responses
+   model client and A2A agent work. Nothing opencode-specific. Any TS program can use it.
 2. **`zerocool-plugins`** (this repo) — the host plugins that import the SDK.
 
 No fork of opencode exists (ADR-0155). `@opencode-ai/plugin` is a peer
@@ -20,7 +20,7 @@ dependency, and this repo holds no opencode source.
 
 | Package | What | Adoption |
 |---|---|---|
-| **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **zero-config LLM** (a `config` hook adds `provider.gibson` pointing at the SDK shim), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
+| **`@zeroroot-ai/zerocool`** (main) | session check-in (Capability Grant + RegisterComponent + heartbeat), **Model gateway LLM** (in a dispatched run, a `config` hook adds `provider.gibson`. It sends Open Responses calls to the gateway URL of `resolveModel`, with the task grant, the route headers and the CA bundle of the reply), Gibson tools, findings (`event`→Emit), knowledge (`system.transform`/recall tool), delegate/missions | one install, most value |
 | **`@zeroroot-ai/zerocool-exec`** (opt-in) | run the agent's shell commands in the setec **Devbox** through `DevboxExec`, by taking over opencode's `bash` tool id (#12) | invasive — changes where code runs |
 | **`@zeroroot-ai/zerocool-claude`** (Claude Code) | MCP server + hooks. The session is a **live mission** (one AGENT node naming this component, task grant from the dispatch). `remember` = `Observe(MemoryObservation)`, `recall`, `world_view`, findings, Gibson tools, delegation. **Never routes LLM**: the user's Claude subscription pays for the model. ADR-0157. | one install, needs `GIBSON_TARGET_ID` for the live posture |
 | **`@zeroroot-ai/zerocool-sessions`** (opt-in) | mirror the session to the daemon **session-context store** on `session.updated`/`message.updated`, restore on start (#11) | invasive — changes where state lives |
@@ -167,7 +167,7 @@ unbuilt `dist` would land in the type and run paths of every check.
   Decided in ADR-0158.
 - **Host adapter** — the thin per-host bundle around the Gibson MCP server:
   the Claude Code plugin (bundle + SessionStart/SessionEnd hooks), the opencode
-  plugin (LLM provider shim, `system.transform`, `event`), and config snippets
+  plugin (Model gateway provider, `system.transform`, `event`), and config snippets
   for hosts with no hook surface. An adapter holds no tools of its own. Decided in ADR-0158.
 - **Check-in source** — how the Gibson MCP server gets its credential. Three,
   chosen by what is present at start, never mixed: (1) *dispatched grant*: the

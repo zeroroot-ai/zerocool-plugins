@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
+import { TaskState } from "@zeroroot-ai/sdk"
 
 import {
   gitlabRestWriter,
@@ -717,7 +718,7 @@ test("the fix dispatch reads, fixes and reports, driven end to end", async () =>
     },
   })
 
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(outcome.metadata?.task, "fix")
   assert.equal(outcome.metadata?.fixing, "2")
   assert.equal(outcome.metadata?.application, "customer-portal")

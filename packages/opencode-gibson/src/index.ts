@@ -2,13 +2,14 @@
 // Copyright 2026 Zero Root AI
 
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
-import { connectGibson, startCompletionsShim, type GibsonSession, type RunningShim } from "@zeroroot-ai/sdk"
+import { connectGibson, type GibsonSession } from "@zeroroot-ai/sdk"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { ambientKnowledge } from "./knowledge.js"
 import { selectKnowledgeSource } from "./knowledge-source.js"
 import { gibsonMcpServer } from "./mcp-config.js"
+import { DEFAULT_MODEL_SLOT, PROVIDER_ID, resolveProvider } from "./model-provider.js"
 import type { SessionContext } from "./findings.js"
 
 /**
@@ -30,8 +31,9 @@ import type { SessionContext } from "./findings.js"
  * local findings log and a componentize tool, and nothing else. Enrolled, it
  * also:
  *   - checks in as a Gibson component (Capability Grant + RegisterComponent + heartbeat),
- *   - starts a local OpenAI-compatible shim over the harness,
- *   - auto-registers a zero-config `gibson` provider via the `config` hook (#6),
+ *   - in a dispatched run, resolves a model slot with `resolveModel` and
+ *     registers a `gibson` provider that sends Open Responses calls to the
+ *     Model gateway, with the task grant and the route headers of the reply,
  *   - reads the tenant knowledge graph and injects an ambient block (#8).
  *
  * THE TOOLS ARE NOT HERE. Every Gibson tool — findings, knowledge, delegation,
@@ -91,7 +93,6 @@ export const GibsonPlugin: Plugin = async () => {
   // under its own name, so the default differs from every catalog name.
   const agentName = process.env.GIBSON_AGENT_NAME ?? "zerocool-opencode"
   let session: GibsonSession | undefined
-  let shim: RunningShim | undefined
   try {
     session = await connectGibson({
       platformURL,
@@ -102,14 +103,9 @@ export const GibsonPlugin: Plugin = async () => {
       agentMode: process.env.GIBSON_AGENT_MODE ?? "autonomous",
       agent: { name: agentName, version: "0.0.0", capabilities: ["code"] },
     })
-    shim = await startCompletionsShim({
-      component: session.clients.component,
-      port: Number(process.env.GIBSON_SHIM_PORT ?? 8787),
-    })
     console.error(
       `[zerocool] Gibson connected via ${checkedIn ? "the registered host key" : "first check-in"} ` +
-        `(component_scope=${session.componentScope}); provider "gibson" auto-configured at ` +
-        `${shim.url} — select a gibson/<slot> model`,
+        `(component_scope=${session.componentScope})`,
     )
     if (!checkedIn) {
       console.error(
@@ -120,18 +116,32 @@ export const GibsonPlugin: Plugin = async () => {
   } catch (e) {
     // Fail open to standalone: a coding agent must still work if the platform is unreachable.
     console.error(`[zerocool] Gibson connect failed; continuing standalone: ${(e as Error).message}`)
-    await shim?.close()
     return standalone()
   }
 
-  const shimUrl = shim.url
   const live = session
 
   // Which grant this process reads the knowledge graph with. A dispatched run
   // reads as the TASK; an interactive one keeps the component grant. Chosen once
   // here so nothing downstream has to ask.
-  const { knowledge, scope: knowledgeScope, stop: stopKnowledge } = selectKnowledgeSource(live)
+  const { knowledge, scope: knowledgeScope, harness, stop: stopKnowledge } = selectKnowledgeSource(live)
   console.error(`[zerocool] knowledge reads use the ${knowledgeScope} grant`)
+
+  // The model path. `resolveModel` needs a task grant, so only a dispatched run
+  // has one. An interactive run has no task, and opencode uses the provider the
+  // user configured.
+  const slot = process.env.GIBSON_MODEL_SLOT ?? DEFAULT_MODEL_SLOT
+  let provider: Record<string, unknown> | undefined
+  if (harness) {
+    try {
+      provider = await resolveProvider(harness, slot)
+      console.error(`[zerocool] provider "${PROVIDER_ID}" sends Open Responses calls to the Model gateway for slot "${slot}"`)
+    } catch (e) {
+      console.error(`[zerocool] no ${PROVIDER_ID} model provider: ${(e as Error).message}`)
+    }
+  } else {
+    console.error(`[zerocool] no ${PROVIDER_ID} model provider: this run has no task grant`)
+  }
 
   const injectKnowledge = ambientKnowledge(
     knowledge,
@@ -139,23 +149,14 @@ export const GibsonPlugin: Plugin = async () => {
   )
 
   return {
-    // Zero-config LLM, and the one tool surface: inject both at config-load
-    // time (#6, ADR-0158).
-    //
-    // `shimUrl` is always live here, and that is a type-level guarantee rather
-    // than a timing assumption: `Plugin` returns `Promise<Hooks>`, so opencode
-    // cannot reach this hook until the plugin body has resolved — and the body
-    // starts the shim before it builds this object. There is no ordering in
-    // which `config` runs against an unstarted shim.
+    // The Model gateway provider and the one tool surface: inject both at
+    // config-load time (#6, ADR-0158). `Plugin` returns `Promise<Hooks>`, so
+    // opencode cannot reach this hook before the slot has resolved.
     config: async (config) => {
-      const cfg = config as unknown as { provider?: Record<string, unknown> }
-      cfg.provider = cfg.provider ?? {}
-      if (!cfg.provider.gibson) {
-        cfg.provider.gibson = {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Gibson",
-          options: { baseURL: shimUrl, apiKey: "gibson" },
-        }
+      if (provider) {
+        const cfg = config as unknown as { provider?: Record<string, unknown> }
+        cfg.provider = cfg.provider ?? {}
+        if (!cfg.provider[PROVIDER_ID]) cfg.provider[PROVIDER_ID] = provider
       }
       addMcpServer(config)
     },
@@ -177,7 +178,6 @@ export const GibsonPlugin: Plugin = async () => {
       // would keep renewing a grant for a session that has ended.
       stopKnowledge()
       session?.stop()
-      await shim?.close()
     },
   } satisfies Hooks
 }

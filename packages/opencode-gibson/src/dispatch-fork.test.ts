@@ -3,8 +3,8 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
-import { Watcher, type AgentOutcome } from "@zeroroot-ai/sdk"
-import { readDispatchContext, runForkableDispatch } from "./dispatch.js"
+import { TaskState, Watcher, type AgentOutcome } from "@zeroroot-ai/sdk"
+import { failedOutcome, outcomeSucceeded, readDispatchContext, runForkableDispatch } from "./dispatch.js"
 
 /** The opencode dispatch as a fork source (D74). */
 
@@ -23,7 +23,7 @@ test("a fork source parks after a passing run, and a fork runs the task of its c
     watcher: Watcher.withReader(() => "sbx"),
     runOnce: async (ctx) => {
       goals.push(ctx.goal)
-      return { success: true, output: ctx.goal } as AgentOutcome
+      return { state: TaskState.TASK_STATE_COMPLETED, output: ctx.goal }
     },
     park: async (env) => (env === parent ? launch("scan the next host") : undefined),
     onOutcome: (o) => results.push(o.output),
@@ -37,22 +37,23 @@ test("a failed run does not park, and the parent ends after the park", async () 
   const parent = launch("scan")
   const failed = await runForkableDispatch(readDispatchContext(parent), parent, {
     watcher: Watcher.withReader(() => "sbx"),
-    runOnce: async () => ({ success: false }) as AgentOutcome,
+    runOnce: async () => failedOutcome("scan failed"),
     park: async () => {
       parks++
       return undefined
     },
   })
-  assert.equal(failed.success, false)
+  assert.equal(outcomeSucceeded(failed), false)
+  assert.equal(failed.state, TaskState.TASK_STATE_FAILED)
   assert.equal(parks, 0)
   const passed = await runForkableDispatch(readDispatchContext(parent), parent, {
     watcher: Watcher.withReader(() => "sbx"),
-    runOnce: async () => ({ success: true }) as AgentOutcome,
+    runOnce: async () => ({ state: TaskState.TASK_STATE_COMPLETED }) as AgentOutcome,
     park: async () => {
       parks++
       return undefined
     },
   })
-  assert.equal(passed.success, true)
+  assert.equal(outcomeSucceeded(passed), true)
   assert.equal(parks, 1)
 })

@@ -176,7 +176,7 @@ export function createLineStreamer(onLine: (line: string) => void): {
  * `GIBSON_` names are listed one by one and never by prefix: the grant and
  * the token share that prefix with the addressing the child plugin reads.
  * The provider credential passes through because opencode itself reads it
- * for a model that is not served through the Gibson shim, the same posture
+ * for a model that is not served through the Model gateway, the same posture
  * `claude-member/src/env.ts` takes for Claude Code.
  */
 const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
@@ -199,7 +199,7 @@ const CHILD_ENV_ALLOW_EXACT: readonly string[] = [
   "GIBSON_DAEMON_URL",
   "GIBSON_HOST_KEY_PATH",
   "GIBSON_AGENT_MODE",
-  "GIBSON_SHIM_PORT",
+  "GIBSON_MODEL_SLOT",
   "GIBSON_TARGET_ID",
   "GIBSON_CA_CERT",
   "GIBSON_OPENCODE_SESSION_ID",

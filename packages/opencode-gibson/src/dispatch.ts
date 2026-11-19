@@ -67,6 +67,7 @@ import {
   parkAfterResult,
   readSandboxDispatch,
   sandboxHarness,
+  TaskState,
   Watcher,
   taskKnowledge,
   type AgentOutcome,
@@ -371,7 +372,7 @@ export async function runDispatch(ctx: DispatchContext, deps: DispatchDeps = {})
 
   return {
     output: result.text,
-    success: true,
+    state: TaskState.TASK_STATE_COMPLETED,
     metadata: {
       opencode_session_id: result.sessionId,
       finish_reason: result.finishReason,
@@ -420,8 +421,8 @@ export async function runSourceAnalysisDispatch(ctx: DispatchContext, deps: Disp
     })
     return {
       output: formatSourceAnalysis(summary),
-      success: true,
-      findingIds: summary.findingIds,
+      state: TaskState.TASK_STATE_COMPLETED,
+      findings: summary.findingIds,
       metadata: {
         task: "source-analysis",
         matches: String(summary.matches),
@@ -542,7 +543,7 @@ export async function runWatchDispatch(ctx: DispatchContext, deps: DispatchDeps 
       output:
         `watch ${application}@${ref}: ${summary.polls} polls, ${summary.scans} scan missions, ` +
         `${summary.errors} errors; last pipeline ${summary.lastPipelineId || "none"}`,
-      success: true,
+      state: TaskState.TASK_STATE_COMPLETED,
       metadata: {
         task: "watch",
         application,
@@ -669,7 +670,7 @@ export async function runFixDispatch(ctx: DispatchContext, deps: DispatchDeps = 
       output:
         `fix ${application}@${commit.slice(0, 12) || "unknown"}: ${fixing} merge request(s) opened, ` +
         `${merged} merged, ${unfixed} left for a human`,
-      success: true,
+      state: TaskState.TASK_STATE_COMPLETED,
       metadata: {
         task: "fix",
         application,
@@ -710,6 +711,22 @@ export function harnessCredential(harness: TaskHarness): (name: string) => Promi
   }
 }
 
+/** True when the A2A Task state of the outcome is completed and it has no error. */
+export function outcomeSucceeded(outcome: AgentOutcome): boolean {
+  if (outcome.error) return false
+  return outcome.state === undefined || outcome.state === TaskState.TASK_STATE_COMPLETED
+}
+
+/** A failed outcome: the A2A Task state `failed` and the structured error. */
+export function failedOutcome(message: string): AgentOutcome {
+  return {
+    state: TaskState.TASK_STATE_FAILED,
+    output: message,
+    error: { code: "EXECUTION_ERROR", message, retryable: false },
+    metadata: { error: message },
+  }
+}
+
 /**
  * Render a terminal outcome as the last NDJSON line on stdout.
  *
@@ -720,9 +737,9 @@ export function harnessCredential(harness: TaskHarness): (name: string) => Promi
 export function formatTerminalResult(outcome: AgentOutcome): string {
   return JSON.stringify({
     type: "result",
-    success: outcome.success ?? true,
+    success: outcomeSucceeded(outcome),
     output: outcome.output ?? "",
-    ...(outcome.findingIds ? { finding_ids: outcome.findingIds } : {}),
+    ...(outcome.findings ? { finding_ids: outcome.findings } : {}),
     metadata: outcome.metadata ?? {},
   })
 }
@@ -753,7 +770,7 @@ export async function runForkableDispatch(ctx: DispatchContext, env: NodeJS.Proc
   for (;;) {
     const outcome = await runOnce(current, deps)
     deps.onOutcome?.(outcome)
-    if (outcome.success === false) return outcome
+    if (!outcomeSucceeded(outcome)) return outcome
     const next = await parkFor(launch, deps.watcher, { insecure: current.insecure })
     if (!next) return outcome
     console.error("[zerocool-dispatch] this process is a fork: running the task of the fork")
@@ -773,7 +790,7 @@ async function main(): Promise<void> {
     // terminal result so the launcher never blocks waiting for one.
     const message = (e as Error).message
     console.error(`[zerocool-dispatch] ${message}`)
-    process.stdout.write(`${formatTerminalResult({ success: false, output: message, metadata: { error: message } })}\n`)
+    process.stdout.write(`${formatTerminalResult(failedOutcome(message))}\n`)
     process.exit(2)
     return
   }
@@ -800,7 +817,7 @@ async function main(): Promise<void> {
   } catch (e) {
     const message = (e as Error).message
     console.error(`[zerocool-dispatch] run failed: ${message}`)
-    process.stdout.write(`${formatTerminalResult({ success: false, output: message, metadata: { error: message } })}\n`)
+    process.stdout.write(`${formatTerminalResult(failedOutcome(message))}\n`)
     process.exit(1)
   }
 }

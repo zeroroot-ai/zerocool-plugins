@@ -7,6 +7,7 @@ import { join } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
+import { TaskState } from "@zeroroot-ai/sdk"
 import { readDispatchContext, runDispatch, type DispatchContext } from "./dispatch.js"
 import type { FindingsBackend } from "./findings.js"
 import { bareRuleId, parseSemgrepOutput, semgrepArgs, type SemgrepCandidate } from "./semgrep.js"
@@ -571,9 +572,9 @@ test("a source-analysis task runs the analysis and never spawns opencode", async
   })
 
   assert.equal(opencodeRuns, 0)
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(findings.submitted.length, 2)
-  assert.equal(outcome.findingIds?.length, 2)
+  assert.equal(outcome.findings?.length, 2)
   assert.equal(outcome.metadata?.task, "source-analysis")
   assert.equal(outcome.metadata?.submitted, "2")
   assert.equal(outcome.metadata?.noise, "1")
@@ -619,6 +620,53 @@ test("a dispatch with no task selector still drives opencode", async () => {
     },
   )
   assert.equal(ran, 1)
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(outcome.metadata?.task, undefined)
+})
+
+// ---------------------------------------------------------------------------
+// The triage model calls the Model gateway with Open Responses.
+// ---------------------------------------------------------------------------
+
+test("harnessTriageModel sends one Open Responses request and keeps one client for the run", async () => {
+  const { harnessTriageModel } = await import("./source-analysis.js")
+  const requests: Record<string, unknown>[] = []
+  const resolved: string[] = []
+  const harness = {
+    model: async (slot: string) => {
+      resolved.push(slot)
+      return {
+        create: async (req: Record<string, unknown>) => {
+          requests.push(req)
+          return {
+            id: "r",
+            status: "completed",
+            output: [
+              { type: "message", id: "m", role: "assistant", status: "completed", content: [{ type: "output_text", text: '{"verdict":"real","reason":"user input reaches the sink"}' }] },
+            ],
+          }
+        },
+      }
+    },
+  }
+  const candidate = {
+    path: "a.go",
+    line: 3,
+    endLine: 4,
+    ruleIds: ["r1"],
+    vulnerabilityId: "CWE-89",
+    message: "sql built from input",
+    severity: "ERROR",
+  }
+  const model = harnessTriageModel(harness as never, "primary")
+  const first = await model(candidate as never, "q := a + b")
+  await model(candidate as never, "q := a + b")
+  assert.equal(first.verdict, "real")
+  assert.deepEqual(resolved, ["primary"], "the slot resolves once")
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0]?.temperature, 0)
+  assert.match(String(requests[0]?.instructions), /triage static-analysis matches/)
+  const input = requests[0]?.input as { role: string }[]
+  assert.equal(input.length, 1)
+  assert.equal(input[0]?.role, "user")
 })

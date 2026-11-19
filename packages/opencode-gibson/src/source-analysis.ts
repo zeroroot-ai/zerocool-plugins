@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
-import { newFinding, type Finding, type Severity, type TaskHarness } from "@zeroroot-ai/sdk"
+import {
+  newFinding,
+  responseText,
+  userMessage,
+  type Finding,
+  type GatewayCalls,
+  type ModelClient,
+  type Severity,
+} from "@zeroroot-ai/sdk"
 import { randomBytes } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -184,21 +192,29 @@ export function parseTriage(text: string): Triage {
 }
 
 /**
- * The model behind the task grant: one `LLMComplete` on the harness per
- * candidate, on the tenant's own provider, through the harness so the call is
- * traced and budgeted like every other model call the run makes.
+ * The model behind the task grant: one Open Responses call to the Model
+ * gateway for each candidate. The harness resolves the slot to one model, and
+ * the client sends the task grant and the route headers of the reply.
  */
-export function harnessTriageModel(harness: TaskHarness, slot = "primary"): TriageModel {
-  return async (c, snippet) => {
-    const res = await harness.client.lLMComplete({
-      context: harness.context,
-      slot,
-      messages: triageMessages(c, snippet).map((m) => ({ role: m.role, content: m.content })) as never,
-      temperature: 0,
-      stop: [],
+export function harnessTriageModel(harness: GatewayCalls, slot = "primary"): TriageModel {
+  let client: Promise<ModelClient> | undefined
+  const modelClient = (): Promise<ModelClient> => {
+    client ??= harness.model(slot).catch((e: unknown) => {
+      client = undefined
+      throw e
     })
-    if (res.error) throw new Error(`LLMComplete refused: ${res.error.message}`)
-    return parseTriage(res.content)
+    return client
+  }
+  return async (c, snippet) => {
+    const messages = triageMessages(c, snippet)
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n")
+    const user = messages.filter((m) => m.role === "user").map((m) => userMessage(m.content))
+    const res = await (await modelClient()).create({
+      input: user,
+      ...(system ? { instructions: system } : {}),
+      temperature: 0,
+    })
+    return parseTriage(responseText(res))
   }
 }
 

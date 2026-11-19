@@ -69,6 +69,17 @@ test("a dispatched run reads as the task", () => {
   })
 })
 
+test("a dispatched run shares one harness with the model path, and an interactive run has none", () => {
+  withEnv({ GIBSON_CALLBACK_ENDPOINT: "gibson:50001", GIBSON_CALLBACK_TOKEN: TASK_GRANT }, () => {
+    const sel = selectKnowledgeSource(fakeSession)
+    assert.equal(sel.harness?.token(), TASK_GRANT, "resolveModel and the gateway grant come from this harness")
+    sel.stop()
+  })
+  withEnv({ GIBSON_CALLBACK_ENDPOINT: undefined, GIBSON_CALLBACK_TOKEN: undefined }, () => {
+    assert.equal(selectKnowledgeSource(fakeSession).harness, undefined, "no task grant, so no model resolution")
+  })
+})
+
 test("an endpoint with no token FAILS rather than falling back", () => {
   // The whole point. A fallback here is how the authority gap reappears
   // silently: reads keep working, and nobody learns the run held the

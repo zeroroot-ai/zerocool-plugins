@@ -3,9 +3,11 @@
 
 import assert from "node:assert/strict"
 import test from "node:test"
+import { TaskState } from "@zeroroot-ai/sdk"
 
 import {
   dispatchChildEnv,
+  failedOutcome,
   dispatchTaskKind,
   formatTerminalResult,
   readDispatchContext,
@@ -209,7 +211,7 @@ test("runDispatch drives opencode with the goal, workspace and the grant env", a
   // The child's callbacks must authenticate as the task — the grant is in its env.
   assert.equal(seen?.env?.GIBSON_CALLBACK_ENDPOINT, "gibson:50001")
   assert.equal(seen?.env?.GIBSON_CALLBACK_TOKEN, "tok")
-  assert.equal(outcome.success, true)
+  assert.equal(outcome.state, TaskState.TASK_STATE_COMPLETED)
   assert.equal(outcome.output, "found nothing")
   assert.equal(outcome.metadata?.opencode_session_id, "ses_1")
   assert.equal(outcome.metadata?.tokens_total, "100")
@@ -265,7 +267,7 @@ test("runDispatch lets a crashed run throw so the caller can fail the dispatch",
 // ---------------------------------------------------------------------------
 
 test("formatTerminalResult marks the terminal line apart from the event stream", () => {
-  const line = formatTerminalResult({ output: "done", success: true, metadata: { finish_reason: "stop" } })
+  const line = formatTerminalResult({ output: "done", state: TaskState.TASK_STATE_COMPLETED, metadata: { finish_reason: "stop" } })
   const parsed = JSON.parse(line)
   assert.equal(parsed.type, "result")
   assert.equal(parsed.success, true)
@@ -274,7 +276,7 @@ test("formatTerminalResult marks the terminal line apart from the event stream",
 })
 
 test("formatTerminalResult carries a self-reported failure", () => {
-  const parsed = JSON.parse(formatTerminalResult({ success: false, output: "goal unreachable" }))
+  const parsed = JSON.parse(formatTerminalResult(failedOutcome("goal unreachable")))
   assert.equal(parsed.success, false)
   assert.equal(parsed.output, "goal unreachable")
 })
