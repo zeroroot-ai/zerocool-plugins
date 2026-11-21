@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.8.3...claude-gibson-v0.9.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **opencode:** GIBSON_SHIM_PORT is gone. An interactive run has no task grant and gets no gibson provider. GIBSON_MODEL_SLOT names the slot.
+
+### Features
+
+* **opencode:** move the model path to the model gateway ([#195](https://github.com/zeroroot-ai/zerocool-plugins/issues/195)) ([ca2a394](https://github.com/zeroroot-ai/zerocool-plugins/commit/ca2a394d5894cd261a623a8ca926b83cfb8a8865))
+
 ## [0.8.3](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-gibson-v0.8.2...claude-gibson-v0.8.3) (2026-10-25)
 
 
