@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.12.0...opencode-gibson-v0.12.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **image:** raise Python mcp to 1.30.0 for CVE-2026-115563 ([#207](https://github.com/zeroroot-ai/zerocool-plugins/issues/207)) ([e9e4f27](https://github.com/zeroroot-ai/zerocool-plugins/commit/e9e4f270cdfa3ad6d49f62053d20785dfeccc688))
+
 ## [0.12.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.3...opencode-gibson-v0.12.0) (2026-11-23)
 
 
