@@ -5,10 +5,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src packages/claude-gibson/src packages/claude-member/src --deny-warnings && pnpm knip && pnpm knip:selftest",
+    "lint": "oxlint packages/opencode-gibson/src packages/opencode-gibson-exec/src packages/opencode-gibson-sessions/src packages/claude-gibson/src packages/claude-member/src --deny-warnings && pnpm knip && pnpm knip:selftest && pnpm image-guards",
     "test": "sh -c 'pnpm -r test' swallow-forwarded-vitest-args",
     "knip": "knip --treat-config-hints-as-errors",
-    "knip:selftest": "node tools/knip/selftest.mjs"
+    "knip:selftest": "node tools/knip/selftest.mjs",
+    "image-guards": "node tools/image-guards/check-image-pins.mjs && node tools/image-guards/check-image-pins.mjs --selftest"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

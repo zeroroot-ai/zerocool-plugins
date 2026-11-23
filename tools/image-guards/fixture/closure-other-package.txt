@@ -1,0 +1,1 @@
+othertool 2.0 has requirement mcp==1.29.0, but you have mcp 1.30.0.
