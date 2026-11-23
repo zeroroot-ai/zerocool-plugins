@@ -421,8 +421,10 @@ export class Member {
       const input = this.queue[i]!
       // An input for a job this member does not hold is dropped. The race: the daemon closes a job between
       // Claim and ReleaseJob, the member never learns the job from PullJob, and the subscription still sends
-      // its wrap-up. Nothing opens a workspace, reports a state, or leaves a `closing` mark for it. The check
-      // runs here, after the pull in the same step opened any job it got, so a legit input is never early.
+      // its wrap-up. Nothing opens a workspace, reports a state, or leaves a `closing` mark for it. The queue
+      // loop runs before the pull in a step. This is safe because turn(pulled) finishes table.open before
+      // schedule() returns, so an input that arrives during the pull is first seen in the next step, after the
+      // job is in the table.
       if (input.kind !== "open" && !table.has(input.jobId)) {
         this.queue.splice(i, 1)
         i--
