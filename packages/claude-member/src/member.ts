@@ -86,6 +86,8 @@ export interface MemberDeps {
   sessions?: SessionStore
   /** How long a delivery that fails with a transient error is tried again inside the close, ms. Default 5 minutes. */
   deliverRetryMs?: number
+  /** After a stop, how long a delivery with a transient error keeps trying, ms. Default 30 s. */
+  deliverStopMs?: number
   /** The first wait between two tries, ms. It doubles to 30 s. Default 1 s. */
   deliverBackoffMs?: number
   /** Grace for a turn to end after SIGINT before the member stops, ms. Default 30s. */
@@ -120,6 +122,10 @@ export class Member {
   /** Closed jobs whose delivery is running off the pump. Each keeps its slot counted until it ends. */
   private readonly delivering = new Set<string>()
   private readonly deliveries = new Set<Promise<void>>()
+  /** The wrap-up chains: a turn that ended, its `finish`, and the close that follows. The drain waits for each. */
+  private readonly finishes = new Set<Promise<void>>()
+  /** When the stop began, ms. A delivery that fails with a transient error keeps trying for a short while after it. */
+  private stopAt: number | undefined
   /** Aborts on stop. A delivery that waits between two tries wakes at once. */
   private readonly stopSignal = new AbortController()
   /** The grant of a turn of each job, from its latest input. Every connector call runs under it, never under the base grant. */
@@ -217,6 +223,7 @@ export class Member {
 
     const onAbort = () => {
       this.stopping = true
+      this.stopAt = Date.now()
       this.stopSignal.abort()
       this.signInAttempt?.cancel()
       for (const h of this.running.values()) h.interrupt()
@@ -263,8 +270,9 @@ export class Member {
       for (const h of this.running.values()) h.kill()
       await Promise.allSettled(pending)
     }
-    // A delivery in a wait wakes on the stop and ends its tries. Wait for each to finish its cleanup.
-    await Promise.allSettled(this.deliveries)
+    // A turn that ended runs its `finish`, which can start a delivery. A delivery in a wait wakes on the stop
+    // and tries again until the stop deadline. Loop until both sets stay empty.
+    while (this.finishes.size > 0 || this.deliveries.size > 0) await Promise.allSettled([...this.finishes, ...this.deliveries])
     for (const job of this.deps.table.live()) {
       await this.archive(job)
       await this.report(job, "member stopping")
@@ -497,13 +505,15 @@ export class Member {
       { env: this.deps.env, processEnv: this.deps.processEnv, mcp: this.deps.mcp, ...(this.deps.workspaceMcp ? { workspaceMcp: this.deps.workspaceMcp } : {}), ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {}), ...(this.deps.spawn ? { spawn: this.deps.spawn } : {}) },
     )
     this.running.set(job.jobId, handle)
-    void handle.done
+    const chain = handle.done
       .then((r) => this.finish(job.jobId, r))
       .catch((e: Error) => this.finish(job.jobId, { text: e.message, sessionId: "", isError: true, resultSubtype: "spawn_failed", numTurns: 0, costUsd: 0, mcpServerErrors: [], toolCalls: [], events: 0, sawResult: false, stderr: "", exitCode: null, signal: null }))
       .finally(() => {
         this.running.delete(job.jobId)
         this.wake?.()
       })
+    this.finishes.add(chain)
+    void chain.finally(() => this.finishes.delete(chain))
   }
 
   /** Claude Code warns on stderr when a subscription login is close to expiry. The heartbeat carries it. */
@@ -589,7 +599,10 @@ export class Member {
     return Promise.resolve()
   }
 
-  /** Wait `ms`, or until the member stops. */
+  /**
+   * Wait `ms`. A wait that began before the stop wakes at the stop, so the next
+   * try runs at once. A wait that begins after the stop is a plain wait.
+   */
   private waitOrStop(ms: number): Promise<void> {
     return new Promise<void>((resolve) => {
       const done = (): void => {
@@ -598,8 +611,7 @@ export class Member {
         resolve()
       }
       const timer = this.timers.setTimeout(done, ms)
-      if (this.stopSignal.signal.aborted) done()
-      else this.stopSignal.signal.addEventListener("abort", done, { once: true })
+      if (!this.stopSignal.signal.aborted) this.stopSignal.signal.addEventListener("abort", done, { once: true })
     })
   }
 
@@ -614,8 +626,11 @@ export class Member {
   private async deliver(job: JobRecord, verdict: string): Promise<void> {
     const push = verdict !== "abandoned"
     const limitMs = this.deps.deliverRetryMs ?? 5 * 60_000
+    const stopMs = this.deps.deliverStopMs ?? 30_000
     const started = Date.now()
     let backoff = this.deps.deliverBackoffMs ?? 1000
+    // The tries end at the limit, or, once a stop began, a short while after the stop: whichever is first.
+    const deadline = (): number => Math.min(started + limitMs, this.stopAt === undefined ? Infinity : this.stopAt + stopMs)
     let outcomes: WrapUpOutcome[]
     for (;;) {
       outcomes = await this.deps.workspace.wrapUp(job.jobId, job.spec.repositories, {
@@ -625,19 +640,18 @@ export class Member {
         grant: this.lastGrant.get(job.jobId),
       })
       if (!outcomes.some((o) => o.retryable)) break
-      const endTries = (why: string): WrapUpOutcome[] => outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${why}`, retryable: false } : o))
-      if (this.stopping || Date.now() - started + backoff > limitMs) {
-        outcomes = endTries(this.stopping ? "The member is stopping, so the tries ended." : `The tries ended after ${Math.round((Date.now() - started) / 1000)} seconds.`)
+      // After a stop the waits are short, so the tries fit in the stop deadline.
+      const wait = this.stopAt === undefined ? backoff : Math.min(backoff, 2000)
+      if (Date.now() + wait > deadline()) {
+        const spent = `after ${Math.round((Date.now() - started) / 1000)} seconds`
+        const why = this.stopAt === undefined ? `The tries ended ${spent}.` : `The member is stopping, and the tries ended ${spent}.`
+        outcomes = outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${why}`, retryable: false } : o))
         break
       }
       for (const o of outcomes) {
         if (o.retryable) this.console(job.jobId, { subtype: "delivery_waiting", repository: o.repository, message: o.error })
       }
-      await this.waitOrStop(backoff)
-      if (this.stopping) {
-        outcomes = endTries("The member is stopping, so the tries ended.")
-        break
-      }
+      await this.waitOrStop(wait)
       backoff = Math.min(backoff * 2, 30_000)
     }
     const failed = outcomes.some((o) => o.failed)

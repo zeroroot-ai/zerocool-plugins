@@ -58,14 +58,6 @@ const TRANSIENT_HARNESS_CODES = new Set([4, 5, 8])
 /** The gRPC codes of a transport failure that a later try can mend: deadline exceeded, resource exhausted, unavailable. */
 const TRANSIENT_GRPC_CODES = new Set([4, 8, 14])
 
-/**
- * The one text fallback, for a refusal that carries no usable code: the
- * connector's own closing phrase. It is anchored at the end of a sentence. No
- * other word is matched, because the text of an error can hold a path or a
- * name, and "unavailable" in a file name is not a failure to retry.
- */
-const CALL_AGAIN = /(?:^|[.,!;:]\s+)call the tool again\.?\s*$/i
-
 /** A {@link ToolCaller} that also says which grant is in force. */
 export type GrantedToolCaller = ToolCaller & {
   /** Stop the harness of `grant` and its renewal timer. Called when the job that held the grant ends. */
@@ -113,10 +105,9 @@ export function harnessToolCaller(open: (grant: string) => ToolHarness, keep = 1
     }
     if (res.error) {
       const message = res.error.message || "the call was refused"
-      // The code decides. The text is a fallback only when the code says nothing (unspecified).
-      const code = Number(res.error.code ?? 0)
-      const transient = code === 0 ? CALL_AGAIN.test(message) : TRANSIENT_HARNESS_CODES.has(code)
-      throw new ToolCallError(tool, message, transient)
+      // The code is the only classification. A failure with no retryable code is permanent, and the job fails
+      // with the reason in view. The text is never read.
+      throw new ToolCallError(tool, message, TRANSIENT_HARNESS_CODES.has(Number(res.error.code ?? 0)))
     }
     if (res.outputJson.length === 0) return undefined
     const body = JSON.parse(new TextDecoder().decode(res.outputJson)) as { result?: unknown }

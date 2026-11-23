@@ -219,9 +219,13 @@ alive: the harness of the grant calls `RenewCapabilityGrant` before it expires,
 for the whole turn and before the wrap-up open. A pulled job carries no turn
 grant, so its workspace stays unread until an input with a grant arrives.
 
-A failure that a later try can mend (a network failure, UNAVAILABLE, "call the
-tool again") is tried again with backoff inside the close, for at most five
-minutes. After that, or on a permanent refusal, the job is failed with its
+A failure that carries a retryable code (TIMEOUT, UNAVAILABLE or
+RESOURCE_EXHAUSTED, or a transport failure with the matching gRPC code) is tried
+again with backoff inside the close, for at most five minutes. The code is the
+only classification: the text of an error is never read, and a failure with no
+retryable code is permanent. After a stop begins, a delivery keeps trying for at
+most 30 seconds, and the drain waits for it. A newer turn grant of a job
+releases the earlier grants of the job. After that, or on a permanent refusal, the job is failed with its
 reason, the workspace is removed and the job record is dropped. Nothing
 outlives the close.
 

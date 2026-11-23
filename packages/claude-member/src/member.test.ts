@@ -78,7 +78,7 @@ class FakeStatus implements StatusReporter {
 type FakeWorkspace = WorkspaceManager & { wrapped: string[]; wrapGrants: string[]; prepareGrants: string[]; resumedFlags: boolean[]; removed: string[] }
 
 /** `outcomes` is one list of outcome overrides per wrap-up try. The last one repeats. */
-function fakeWorkspace(opts: { prepareError?: Error; outcomes?: Partial<WrapUpOutcome>[][] } = {}): FakeWorkspace {
+function fakeWorkspace(opts: { prepareError?: Error; outcomes?: Partial<WrapUpOutcome>[][]; wrapDelayMs?: number } = {}): FakeWorkspace {
   const wrapped: string[] = []
   const wrapGrants: string[] = []
   const prepareGrants: string[] = []
@@ -101,6 +101,7 @@ function fakeWorkspace(opts: { prepareError?: Error; outcomes?: Partial<WrapUpOu
     wrapUp: async (jobId: string, _repos: unknown, o: { grant: string | undefined }): Promise<WrapUpOutcome[]> => {
       wrapped.push(jobId)
       wrapGrants.push(o.grant ?? "none")
+      if (opts.wrapDelayMs) await new Promise((r) => setTimeout(r, opts.wrapDelayMs))
       const over = (opts.outcomes ?? [[{}]])[Math.min(tries++, (opts.outcomes ?? [[{}]]).length - 1)]!
       return over.map((x) => ({
         repository: "api",
@@ -397,11 +398,11 @@ test("the Member itself refuses a cap above one when fetch_file is wired, and ac
   assert.doesNotThrow(() => member({ workspaceMcp: mcp }, 1))
 })
 
-test("a close delivers off the pump: the slot stays counted, and a stop ends the wait at once", async () => {
+test("a close delivers off the pump: the slot stays counted, and a stop ends the wait and the tries within the stop deadline", async () => {
   const workspace = fakeWorkspace({
     outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
   })
-  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000 })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000, deliverStopMs: 150 })
   inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
@@ -421,10 +422,56 @@ test("a close delivers off the pump: the slot stays counted, and a stop ends the
   const stopped = Date.now()
   ac.abort()
   await run
-  assert.ok(Date.now() - stopped < 3000, "the stop woke the wait")
+  assert.ok(Date.now() - stopped < 3000, "the stop woke the wait, and the stop deadline ended the tries")
+  assert.ok(workspace.wrapped.length >= 2, "a stop does not fail the job at the first error: it tries again until the stop deadline")
   assert.deepEqual(workspace.removed, ["job-1"])
-  assert.match(inbox.deliverables.at(-1)!.error, /The member is stopping, so the tries ended/)
+  assert.match(inbox.deliverables.at(-1)!.error, /The member is stopping, and the tries ended after/)
   assert.equal(table.has("job-1"), false)
+})
+
+test("a stop during a transient failure tries again at once, and delivers when the retry succeeds", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }], [{}]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000, deliverStopMs: 5000 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(workspace.wrapped.length, 1)
+  ac.abort()
+  await run
+  assert.equal(workspace.wrapped.length, 2, "the stop woke the wait and the second try ran")
+  assert.equal(inbox.deliverables.at(-1)!.mergeRequest, "acme/api#1", "the merge request opened during the stop")
+  assert.equal(inbox.deliverables.at(-1)!.error, "")
+  assert.ok(inbox.states.filter((s) => s.state === "closed").every((s) => !s.isError))
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.equal(table.has("job-1"), false)
+})
+
+test("a stop during the wrap-up turn waits for its finish and its delivery before the drain returns", async () => {
+  const workspace = fakeWorkspace({ wrapDelayMs: 120 })
+  const { m, inbox, table, rec } = member({ workspace })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "wrap_up", text: "verified", grant: "wrap-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(rec.calls.length, 2, "the wrap-up turn is running")
+  ac.abort()
+  rec.finish[1]!()
+  await run
+  assert.deepEqual(workspace.wrapped, ["job-1"], "the delivery ran before the drain returned")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.equal(table.has("job-1"), false)
+  assert.equal(inbox.deliverables.length, 1)
 })
 
 test("a waiting delivery does not block the pump: another job runs on a free slot", async () => {

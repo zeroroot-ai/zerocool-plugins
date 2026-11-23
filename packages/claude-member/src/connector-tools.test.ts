@@ -89,19 +89,12 @@ test("the code of the error decides: TIMEOUT, UNAVAILABLE and RESOURCE_EXHAUSTED
   for (const code of [1, 2, 3, 6, 7]) assert.equal(await transientOf(refuses({ code, message: "x" })), false, `code ${code}`)
 })
 
-test("the code wins over the text, in both directions", async () => {
+test("the code is the only classification: the text is never read", async () => {
   assert.equal(await transientOf(refuses({ code: 2, message: "bad input. Call the tool again." })), false, "INVALID_ARGUMENT is never retried, whatever the text says")
   assert.equal(await transientOf(refuses({ code: 5, message: "permission denied" })), true, "UNAVAILABLE is retried, whatever the text says")
-})
-
-test("the text is a fallback only when the code is unspecified, and only the closing phrase counts", async () => {
-  assert.equal(await transientOf(refuses({ code: 0, message: "the host is busy, call the tool again" })), true)
-  assert.equal(await transientOf(refuses({ message: "The host is busy. Call the tool again." })), true)
-  assert.equal(await transientOf(refuses({ code: 0, message: "not authorized to invoke tool" })), false)
-  // Words that a path or a name can hold never decide.
+  assert.equal(await transientOf(refuses({ code: 0, message: "the host is busy, call the tool again" })), false, "an unspecified code is permanent, even with a retry phrase")
+  assert.equal(await transientOf(refuses({ message: "timed out. Call the tool again." })), false)
   assert.equal(await transientOf(refuses({ code: 0, message: "read /srv/unavailable/timeout.go: not found" })), false)
-  assert.equal(await transientOf(refuses({ code: 0, message: "no such file connection reset.txt" })), false)
-  assert.equal(await transientOf(refuses({ code: 0, message: "no such file call the tool again.go" })), false)
 })
 
 test("a thrown transport failure is classified by its gRPC code", async () => {

@@ -409,7 +409,11 @@ export class WorkspaceManager {
     assertNames(jobId, repos)
     const out: Worktree[] = []
     // A job with no repository needs no grant, and opens no harness.
-    if (repos.length > 0) this.track(jobId, grant)
+    if (repos.length > 0 && grant) {
+      // A newer turn grant of the job replaces the earlier ones: release them, and keep only the newest.
+      for (const old of this.grantsOf.get(jobId) ?? []) if (old !== grant) this.releaseGrant(old)
+      this.grantsOf.set(jobId, new Set([grant]))
+    }
     const live = repos.length > 0 && this.isLive(grant)
     for (const repo of repos) {
       assertGitArgument("base branch", repo.baseBranch)

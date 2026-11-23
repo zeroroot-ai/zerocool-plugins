@@ -875,3 +875,29 @@ test("fetch_file on an unread workspace stops when a .gitignore cannot be read",
     await s.cleanup()
   }
 })
+
+// ---- E4: a newer turn grant replaces the earlier ones
+
+test("a newer turn grant of a job releases the earlier grants and keeps only the newest", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-ws-"))
+  try {
+    const f = forge({ "a.txt": "a\n" })
+    const released: string[] = []
+    const has = (g: string) => released.includes(g)
+    const tools = Object.assign(f.tools, { current: (g: string) => g, release: (g: string) => void released.push(g) })
+    const ws = new WorkspaceManager({ root: dir, stateDir: join(dir, "state"), tools, grantLive: () => true })
+    await ws.prepare("j1", [repo], "turn-1", { resumed: false })
+    await ws.prepare("j1", [repo], "turn-1", { resumed: false })
+    assert.deepEqual(released, [], "the same grant is not released")
+    await ws.prepare("j1", [repo], "turn-2", { resumed: false })
+    assert.deepEqual(released, ["turn-1"], "the turn-1 harness and its renewal stop when turn-2 arrives")
+    await ws.prepare("j1", [repo], "turn-3", { resumed: false })
+    assert.deepEqual(released, ["turn-1", "turn-2"])
+    await ws.prepare("j2", [repo], "other", { resumed: false })
+    assert.ok(!has("other") && !has("turn-3"), "another job is not touched")
+    await ws.remove("j1", [repo])
+    assert.deepEqual(released, ["turn-1", "turn-2", "turn-3"], "remove releases only the newest that is left")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
