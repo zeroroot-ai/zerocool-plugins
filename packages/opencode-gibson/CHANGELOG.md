@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.3...opencode-gibson-v0.12.0) (2026-11-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **opencode:** GIBSON_SHIM_PORT is gone. An interactive run has no task grant and gets no gibson provider. GIBSON_MODEL_SLOT names the slot.
+
+### Features
+
+* **claude-member:** deliver a job through the governed connector tools ([#203](https://github.com/zeroroot-ai/zerocool-plugins/issues/203)) ([0c8d3ae](https://github.com/zeroroot-ai/zerocool-plugins/commit/0c8d3ae9d38dbf3df74b6eee44cf54b615066708))
+* **opencode:** move the model path to the model gateway ([#195](https://github.com/zeroroot-ai/zerocool-plugins/issues/195)) ([ca2a394](https://github.com/zeroroot-ai/zerocool-plugins/commit/ca2a394d5894cd261a623a8ca926b83cfb8a8865))
+
+
+### Bug Fixes
+
+* **rework:** end the whole process group of an opencode run ([#197](https://github.com/zeroroot-ai/zerocool-plugins/issues/197)) ([b8147e0](https://github.com/zeroroot-ai/zerocool-plugins/commit/b8147e083026ca17a92c6eac83e4b42b07bac019))
+
 ## [0.11.3](https://github.com/zeroroot-ai/zerocool-plugins/compare/opencode-gibson-v0.11.2...opencode-gibson-v0.11.3) (2026-10-25)
 
 
