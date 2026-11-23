@@ -139,6 +139,7 @@ export function jobInputOf(input: WireInput): JobInput {
     text: input.message,
     grant: input.grant,
     sender: senderOf(input.sender),
+    ...(input.id ? { id: input.id } : {}),
   }
 }
 

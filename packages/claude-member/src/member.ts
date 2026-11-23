@@ -116,6 +116,8 @@ export function wrapUpPrompt(note: string): string {
 
 export class Member {
   private readonly queue: JobInput[] = []
+  /** Input ids already queued, run or finished, per job. A replayed input is dropped. Cleared when the job ends. */
+  private readonly seenInputs = new Map<string, Set<string>>()
   private readonly running = new Map<string, TurnHandle>()
   /** Jobs whose next turn is the wrap-up: after it, the close runs. */
   private readonly closing = new Map<string, { verdict: Verdict; score: number; note: string }>()
@@ -343,6 +345,15 @@ export class Member {
       this.signInControl(input)
       return
     }
+    if (input.id) {
+      const seen = this.seenInputs.get(input.jobId) ?? new Set<string>()
+      if (seen.has(input.id)) {
+        this.log(`job ${input.jobId}: dropped a replayed input ${input.id}`)
+        return
+      }
+      seen.add(input.id)
+      this.seenInputs.set(input.jobId, seen)
+    }
     if (input.kind === "answer" && this.deps.mcp) {
       void this.deliverAnswer(input, this.deps.mcp)
       return
@@ -428,6 +439,7 @@ export class Member {
       if (input.kind !== "open" && !table.has(input.jobId)) {
         this.queue.splice(i, 1)
         i--
+        this.seenInputs.delete(input.jobId)
         this.log(`job ${input.jobId}: dropped a ${input.kind} input, this member does not hold the job`)
         continue
       }
@@ -572,6 +584,7 @@ export class Member {
     }
     await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
     this.lastGrant.delete(job.jobId)
+    this.seenInputs.delete(job.jobId)
     await this.deps.table.drop(job.jobId)
   }
 
@@ -680,6 +693,7 @@ export class Member {
     // A refused or failed delivery is a failed job, whatever the verdict was.
     await this.report(job, failed ? `delivery failed: ${outcomes.find((o) => o.error && o.failed)?.error.slice(0, 500) ?? ""}` : note, failed)
     this.lastGrant.delete(job.jobId)
+    this.seenInputs.delete(job.jobId)
     await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
     await this.deps.table.drop(job.jobId)
   }

@@ -70,6 +70,7 @@ test("an input carries its own grant, which is the whole point of the per-turn r
   assert.equal(input.text, "the verifier failed on pass one")
   assert.equal(input.grant, "turn-grant")
   assert.equal(input.sender, "component:verifier")
+  assert.equal(input.id, "in-1", "the input id is kept so a replay can be dropped")
 })
 
 test("a repository keeps its connector and project and has no clone url", () => {

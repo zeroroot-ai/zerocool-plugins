@@ -40,6 +40,8 @@ export interface JobInput {
   grant: string
   /** Who sent it, for the console line. */
   sender: string
+  /** The daemon id of the input. A reconnect replays an input that was not acknowledged, so the member drops an id it has seen. Empty when the source has none. */
+  id?: string
   spec?: JobSpec
   /**
    * Set on `open` when the daemon already knows the job's Claude Code
