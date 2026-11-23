@@ -142,16 +142,21 @@ export function jobInputOf(input: WireInput): JobInput {
   }
 }
 
-/** A queued job the member pulled, as the `open` input that starts it. */
-export function openInputOf(job: WireJob): JobInput {
+/**
+ * A queued job the member pulled, as the `open` input that starts it.
+ *
+ * `grant` is `PullJobResponse.grant`: a turn grant whose task is the job id,
+ * for the tool calls of the first turn. It is a secret and is never logged. It
+ * is empty when the daemon could not mint one. Then the input carries no grant,
+ * the Gibson MCP server falls back to the member base grant, and no connector
+ * call runs: the workspace waits for an input that carries the grant of a turn.
+ */
+export function openInputOf(job: WireJob, grant = ""): JobInput {
   return {
     jobId: job.id,
     kind: "open",
     text: "",
-    // A pulled job carries no per-input grant. The Gibson MCP server falls back
-    // to the member base grant for the first turn. No connector call runs under
-    // it: the workspace waits for an input that carries the grant of a turn.
-    grant: "",
+    grant,
     sender: senderOf(job.openedBy),
     spec: jobSpecOf(job.id, job.spec),
     ...(job.claudeSessionId ? { claudeSessionId: job.claudeSessionId } : {}),
@@ -211,7 +216,7 @@ export class HarnessInbox implements Inbox {
     const res = await this.client.pullJob({ context: this.context })
     if (res.error) throw new Error(`PullJob refused: ${res.error.message}`)
     if (!res.job) return undefined
-    return openInputOf(res.job)
+    return openInputOf(res.job, res.grant)
   }
 
   async reportState(report: JobStateReport): Promise<void> {

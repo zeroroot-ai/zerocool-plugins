@@ -92,6 +92,32 @@ test("a pulled job becomes the open input that starts it, with no turn grant", (
   assert.match(input.spec?.acceptance ?? "", /component:agent:verifier must score at least 80/)
 })
 
+test("the grant of PullJobResponse is the turn grant of the first turn, and an empty grant leaves the wait path", async () => {
+  const withGrant = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "first-turn-grant" } }), memberId: "mem-1" })
+  const input = await withGrant.pull()
+  assert.equal(input?.grant, "first-turn-grant", "the first turn runs under a grant whose task is the job")
+  const grants = harnessGrants({ ...fakeHarness(), token: () => "member-base" })
+  assert.equal(grants.turnGrant(input!), "first-turn-grant", "the workspace may read and fetch under it")
+  assert.equal(grants.grantFor(input!), "first-turn-grant", "and the MCP server uses it, not the base grant")
+
+  const none = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "" } }), memberId: "mem-1" })
+  const waiting = await none.pull()
+  assert.equal(waiting?.grant, "")
+  assert.equal(grants.turnGrant(waiting!), undefined, "no grant: the workspace waits, and the base grant is never a turn grant")
+
+  const old = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob() } }), memberId: "mem-1" })
+  assert.equal((await old.pull())?.grant, "", "a daemon that sends no grant is the wait path")
+})
+
+test("the grant of a pulled job never reaches a log line", async () => {
+  const lines: string[] = []
+  const inbox = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "SECRET-TURN-GRANT" } }), memberId: "mem-1", log: (l) => lines.push(l) })
+  const input = await inbox.pull()
+  assert.equal(input?.grant, "SECRET-TURN-GRANT")
+  assert.ok(!lines.join("\n").includes("SECRET-TURN-GRANT"))
+  assert.ok(!JSON.stringify(Object.fromEntries(Object.entries(input!).filter(([k]) => k !== "grant"))).includes("SECRET-TURN-GRANT"), "no other field of the input holds it")
+})
+
 test("a job with no spec is still a job, not a crash", () => {
   const input = openInputOf(wireJob({ spec: undefined }))
   assert.equal(input.spec?.goal, "")

@@ -402,7 +402,7 @@ test("a close delivers off the pump: the slot stays counted, and a stop ends the
   const workspace = fakeWorkspace({
     outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
   })
-  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000, deliverStopMs: 150 })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 150 })
   inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
@@ -433,7 +433,7 @@ test("a stop during a transient failure tries again at once, and delivers when t
   const workspace = fakeWorkspace({
     outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }], [{}]],
   })
-  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000, deliverStopMs: 5000 })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 5000 })
   inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
@@ -478,7 +478,7 @@ test("a waiting delivery does not block the pump: another job runs on a free slo
   const workspace = fakeWorkspace({
     outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "busy", failed: true, retryable: true }]],
   })
-  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000 }, 2)
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 100 }, 2)
   inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
