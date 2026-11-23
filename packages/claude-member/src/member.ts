@@ -419,6 +419,16 @@ export class Member {
     // Inputs on held jobs first, oldest first, skipping jobs mid-turn.
     for (let i = 0; i < this.queue.length; i++) {
       const input = this.queue[i]!
+      // An input for a job this member does not hold is dropped. The race: the daemon closes a job between
+      // Claim and ReleaseJob, the member never learns the job from PullJob, and the subscription still sends
+      // its wrap-up. Nothing opens a workspace, reports a state, or leaves a `closing` mark for it. The check
+      // runs here, after the pull in the same step opened any job it got, so a legit input is never early.
+      if (input.kind !== "open" && !table.has(input.jobId)) {
+        this.queue.splice(i, 1)
+        i--
+        this.log(`job ${input.jobId}: dropped a ${input.kind} input, this member does not hold the job`)
+        continue
+      }
       if (this.running.has(input.jobId) || this.delivering.has(input.jobId)) continue
       if (signedOut && input.kind !== "close") continue
       if (input.kind === "close") {

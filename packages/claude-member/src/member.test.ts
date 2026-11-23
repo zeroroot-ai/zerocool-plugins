@@ -496,6 +496,40 @@ test("a waiting delivery does not block the pump: another job runs on a free slo
   await run
 })
 
+test("an input for a job the member does not hold is dropped: no workspace, no state, no turn, no leaked close", async () => {
+  const workspace = fakeWorkspace()
+  const logs: string[] = []
+  const { m, inbox, table, rec } = member({ workspace, log: (l: string) => logs.push(l) })
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  // The daemon closed ghost between Claim and ReleaseJob. PullJob never told this member, and the subscription still sends its inputs.
+  await inbox.deliver({ jobId: "ghost", kind: "wrap_up", text: "verified", grant: "wrap-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await inbox.deliver({ jobId: "ghost", kind: "close", text: "", grant: "g", sender: "s", verdict: "accomplished", score: 95 })
+  await inbox.deliver({ jobId: "ghost", kind: "turn", text: "hello", grant: "g", sender: "s" })
+  await inbox.deliver({ jobId: "ghost", kind: "answer", text: "yes", grant: "g", sender: "s" })
+  await settle()
+  assert.equal(rec.calls.length, 0, "no turn ran")
+  assert.deepEqual(workspace.prepareGrants, [], "no workspace was opened")
+  assert.deepEqual(workspace.wrapped, [], "nothing was delivered")
+  assert.deepEqual(workspace.removed, [])
+  assert.equal(inbox.states.length, 0, "no state was reported for the job")
+  assert.equal(inbox.deliverables.length, 0)
+  assert.equal(table.has("ghost"), false)
+  assert.ok(logs.filter((l) => l.includes("dropped") && l.includes("ghost")).length >= 3, "each input is dropped with a log line")
+  assert.equal(m.status().jobsInFlight, 0)
+
+  // The dropped wrap-up left no `closing` mark: a job that later takes the same id is a normal job.
+  inbox.queued.push(input("ghost"))
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  assert.equal(table.get("ghost").state, "waiting", "the first turn of the new job is not turned into a close")
+  assert.deepEqual(workspace.wrapped, [])
+  ac.abort()
+  await run
+})
+
 test("the heartbeat reports idle, then busy at the cap, with the job ids and the CLI version", async () => {
   const { m, inbox, status, rec } = member()
   const ac = new AbortController()
