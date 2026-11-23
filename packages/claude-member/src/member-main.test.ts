@@ -39,3 +39,16 @@ test("a subscription member refuses to start with an Anthropic key set", async (
   }
   await assert.rejects(runMember({ env }, new AbortController().signal), /would win over the person's login/)
 })
+
+test("a member with a job cap above one refuses to start, because fetch_file is wired", async () => {
+  const env = {
+    GIBSON_MEMBER_ID: "mem-1",
+    GIBSON_BANK_ID: "bank-1",
+    GIBSON_CG_JWT: "base-grant",
+    GIBSON_CALLBACK_ENDPOINT: "gibson:50001",
+    GIBSON_SANDBOX: "launcher",
+    GIBSON_PLATFORM_URL: "https://api.example",
+    ZEROCOOL_JOB_CAP: "2",
+  }
+  await assert.rejects(runMember({ env }, new AbortController().signal), /ZEROCOOL_JOB_CAP is 2, and fetch_file is wired.*Set ZEROCOOL_JOB_CAP to 1/)
+})

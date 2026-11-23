@@ -52,7 +52,7 @@ The daemon sets these when it launches a member sandbox.
 | `GIBSON_MISSION_ID` | no | the mission the member runs under |
 | `ZEROCOOL_LOGIN_SHAPE` | no | `api-key` (default), `subscription`, `bedrock`, `vertex`, `foundry` |
 | `ZEROCOOL_CLAUDE_MODEL` | no | passed as `--model` |
-| `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1 |
+| `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1. The member refuses to start with a value above 1, see below |
 | `ZEROCOOL_WORKSPACE` | no | workspace root, default `/workspace` |
 | `ZEROCOOL_STATE_DIR` | no | driver state. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. See below. |
 | `ZEROCOOL_CLAUDE_BIN` | no | the `claude` bin, default `claude` |
@@ -166,6 +166,14 @@ so its first turn runs on the member base grant.
 A `RepositorySpec` names a connector (`connector/<name>`) and a project in the
 connector's own terms. It names no url and no secret.
 
+## One job at a time
+
+The member refuses to start with `ZEROCOOL_JOB_CAP` above 1, because `fetch_file`
+is wired. Every job's Claude runs as the same user in the sandbox. One job could
+read the worktree of another, or call the `fetch_file` endpoint of the other
+job's turn. The cap rises only when each job's Claude runs under its own user.
+A closed job that is still delivering keeps its slot until the delivery ends.
+
 ## How a job reads and delivers a repository
 
 The workspace uses the git-host tools of the connector. It never clones, never
@@ -186,6 +194,8 @@ link. The workspace is sparse and read on demand.
    fetch is refused.
 3. At wrap-up the driver lists the files that git does not ignore, with the
    `.gitignore` files of the repository in force, and adds the fetched files.
+   The listing runs against an empty index that the driver owns under the state
+   dir, so a file that Claude staged or committed is still in the change.
    The driver fetches every listed `.gitignore`, root and nested, in `prepare`.
    `dist/`, `node_modules/`, a venv and a cache are ignored, and a nested git
    repository is never entered. The driver compares each file with the record by

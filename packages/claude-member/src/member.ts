@@ -22,6 +22,21 @@ export const SIGN_IN_JOB_ID = "sign-in"
 /** The turn text that starts a sign-in (gibson `SignInStart`). */
 export const SIGN_IN_START = "start"
 
+/**
+ * The member refuses more than one job at a time while `fetch_file` is wired.
+ * Every job's Claude runs as the same user in this sandbox, so one job could
+ * read the worktree of another or call the fetch endpoint of its turn. A cap
+ * above one waits for a user for each job.
+ */
+export function assertSingleJob(jobCap: number): void {
+  if (jobCap > 1) {
+    throw new Error(
+      `ZEROCOOL_JOB_CAP is ${jobCap}, and fetch_file is wired. Every job's Claude runs as the same user in this sandbox, so one job could ` +
+        "read the files or call the fetch endpoint of another. Set ZEROCOOL_JOB_CAP to 1 until each job's Claude runs under its own user.",
+    )
+  }
+}
+
 /** What the member needs of one sign-in attempt. */
 export type SignInAttempt = Pick<SignIn, "start" | "submitCode" | "cancel" | "done">
 
@@ -102,6 +117,11 @@ export class Member {
   private readonly running = new Map<string, TurnHandle>()
   /** Jobs whose next turn is the wrap-up: after it, the close runs. */
   private readonly closing = new Map<string, { verdict: Verdict; score: number; note: string }>()
+  /** Closed jobs whose delivery is running off the pump. Each keeps its slot counted until it ends. */
+  private readonly delivering = new Set<string>()
+  private readonly deliveries = new Set<Promise<void>>()
+  /** Aborts on stop. A delivery that waits between two tries wakes at once. */
+  private readonly stopSignal = new AbortController()
   /** The grant of a turn of each job, from its latest input. Every connector call runs under it, never under the base grant. */
   private readonly lastGrant = new Map<string, string>()
   private readonly log: (line: string) => void
@@ -124,6 +144,12 @@ export class Member {
   constructor(private readonly deps: MemberDeps) {
     this.log = deps.log ?? (() => {})
     this.timers = deps.timers ?? globalThis
+    if (deps.workspaceMcp) assertSingleJob(deps.env.jobCap)
+  }
+
+  /** Slots in use: the jobs of the table and the closed jobs that are still delivering. */
+  private get busySlots(): number {
+    return this.deps.table.inFlight + this.delivering.size
   }
 
   /** The heartbeat body. */
@@ -133,15 +159,15 @@ export class Member {
       memberId: this.deps.env.memberId,
       bankId: this.deps.env.bankId,
       state: memberState({
-        inFlight: t.inFlight,
+        inFlight: this.busySlots,
         cap: t.cap,
         needsSignIn: this.deps.needsSignIn?.() ?? false,
         launching: this.launching,
         draining: this.stopping,
       }),
-      jobsInFlight: t.inFlight,
+      jobsInFlight: this.busySlots,
       cap: t.cap,
-      jobs: t.live().map((j) => j.jobId),
+      jobs: [...t.live().map((j) => j.jobId), ...this.delivering],
       claudeCodeVersion: this.deps.claudeCodeVersion,
       signInExpiresInDays: this.signInExpiresInDays,
       lastError: this.lastError,
@@ -191,6 +217,7 @@ export class Member {
 
     const onAbort = () => {
       this.stopping = true
+      this.stopSignal.abort()
       this.signInAttempt?.cancel()
       for (const h of this.running.values()) h.interrupt()
       this.wake?.()
@@ -236,6 +263,8 @@ export class Member {
       for (const h of this.running.values()) h.kill()
       await Promise.allSettled(pending)
     }
+    // A delivery in a wait wakes on the stop and ends its tries. Wait for each to finish its cleanup.
+    await Promise.allSettled([...this.deliveries])
     for (const job of this.deps.table.live()) {
       await this.archive(job)
       await this.report(job, "member stopping")
@@ -382,7 +411,7 @@ export class Member {
     // Inputs on held jobs first, oldest first, skipping jobs mid-turn.
     for (let i = 0; i < this.queue.length; i++) {
       const input = this.queue[i]!
-      if (this.running.has(input.jobId)) continue
+      if (this.running.has(input.jobId) || this.delivering.has(input.jobId)) continue
       if (signedOut && input.kind !== "close") continue
       if (input.kind === "close") {
         this.queue.splice(i, 1)
@@ -392,12 +421,12 @@ export class Member {
       if (input.kind === "wrap_up") {
         this.closing.set(input.jobId, { verdict: input.verdict ?? "accomplished", score: input.score ?? 0, note: input.text })
       }
-      if (table.freeSlots === 0) return false
+      if (table.cap - this.busySlots <= 0) return false
       this.queue.splice(i, 1)
       await this.turn(input)
       return true
     }
-    if (table.freeSlots === 0 || signedOut) return false
+    if (table.cap - this.busySlots <= 0 || signedOut) return false
     let pulled: JobInput | undefined
     const ok = await this.survive("pull", async () => {
       pulled = await this.deps.inbox.pull()
@@ -537,9 +566,41 @@ export class Member {
     await this.cleanupClosed(job, verdict)
   }
 
-  private async cleanupClosed(job: JobRecord, verdict: string): Promise<void> {
-    await this.archive(job)
-    await this.deliver(job, verdict)
+  /**
+   * Start the cleanup of a closed job off the pump: archive, then deliver. The
+   * delivery can wait through retries, and the pump must keep serving the other
+   * jobs. The job keeps its slot counted until the delivery ends.
+   */
+  private cleanupClosed(job: JobRecord, verdict: string): Promise<void> {
+    this.delivering.add(job.jobId)
+    const work = (async () => {
+      try {
+        await this.archive(job)
+        await this.deliver(job, verdict)
+      } catch (e) {
+        this.log(`job ${job.jobId}: cleanup: ${(e as Error).message}`)
+      } finally {
+        this.delivering.delete(job.jobId)
+        this.wake?.()
+      }
+    })()
+    this.deliveries.add(work)
+    void work.finally(() => this.deliveries.delete(work))
+    return Promise.resolve()
+  }
+
+  /** Wait `ms`, or until the member stops. */
+  private waitOrStop(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        this.timers.clearTimeout(timer)
+        this.stopSignal.signal.removeEventListener("abort", done)
+        resolve()
+      }
+      const timer = this.timers.setTimeout(done, ms)
+      if (this.stopSignal.signal.aborted) done()
+      else this.stopSignal.signal.addEventListener("abort", done, { once: true })
+    })
   }
 
   /**
@@ -564,15 +625,19 @@ export class Member {
         grant: this.lastGrant.get(job.jobId),
       })
       if (!outcomes.some((o) => o.retryable)) break
+      const endTries = (why: string): WrapUpOutcome[] => outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${why}`, retryable: false } : o))
       if (this.stopping || Date.now() - started + backoff > limitMs) {
-        const spent = `The tries ended after ${Math.round((Date.now() - started) / 1000)} seconds.`
-        outcomes = outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${spent}`, retryable: false } : o))
+        outcomes = endTries(this.stopping ? "The member is stopping, so the tries ended." : `The tries ended after ${Math.round((Date.now() - started) / 1000)} seconds.`)
         break
       }
       for (const o of outcomes) {
         if (o.retryable) this.console(job.jobId, { subtype: "delivery_waiting", repository: o.repository, message: o.error })
       }
-      await new Promise<void>((resolve) => this.timers.setTimeout(resolve, backoff))
+      await this.waitOrStop(backoff)
+      if (this.stopping) {
+        outcomes = endTries("The member is stopping, so the tries ended.")
+        break
+      }
       backoff = Math.min(backoff * 2, 30_000)
     }
     const failed = outcomes.some((o) => o.failed)

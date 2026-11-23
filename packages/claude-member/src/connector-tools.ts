@@ -49,14 +49,27 @@ export interface ToolHarness {
   stop(): void
 }
 
-/** The texts of a refusal that a later try can mend. */
-const TRANSIENT_TEXT = /unavailable|timed? ?out|deadline|temporar|try again|call the tool again|connection (reset|refused|closed)|econn|network/i
+/**
+ * The codes of `HarnessError` that mean the call did not run to an answer and a
+ * later try can succeed: TIMEOUT (the deadline), UNAVAILABLE, RESOURCE_EXHAUSTED.
+ */
+const TRANSIENT_HARNESS_CODES = new Set([4, 5, 8])
 
-/** The connect codes that mean the call did not run to an answer: unavailable (14) and deadline exceeded (4). */
-const TRANSIENT_CODES = new Set([4, 14])
+/** The gRPC codes of a transport failure that a later try can mend: deadline exceeded, resource exhausted, unavailable. */
+const TRANSIENT_GRPC_CODES = new Set([4, 8, 14])
+
+/**
+ * The one text fallback, for a refusal that carries no usable code: the
+ * connector's own closing phrase. It is anchored at the end of a sentence. No
+ * other word is matched, because the text of an error can hold a path or a
+ * name, and "unavailable" in a file name is not a failure to retry.
+ */
+const CALL_AGAIN = /(?:^|[.,!;:]\s+)call the tool again\.?\s*$/i
 
 /** A {@link ToolCaller} that also says which grant is in force. */
 export type GrantedToolCaller = ToolCaller & {
+  /** Stop the harness of `grant` and its renewal timer. Called when the job that held the grant ends. */
+  release(grant: string): void
   /**
    * The grant in use now for `grant`. The harness of a grant renews it before it
    * expires, so a turn that holds the harness keeps a live grant. The first call
@@ -96,15 +109,24 @@ export function harnessToolCaller(open: (grant: string) => ToolHarness, keep = 1
       })
     } catch (e) {
       const code = (e as { code?: unknown }).code
-      throw new ToolCallError(tool, (e as Error).message, typeof code === "number" && TRANSIENT_CODES.has(code))
+      throw new ToolCallError(tool, (e as Error).message, typeof code === "number" && TRANSIENT_GRPC_CODES.has(code))
     }
     if (res.error) {
       const message = res.error.message || "the call was refused"
-      throw new ToolCallError(tool, message, TRANSIENT_TEXT.test(message))
+      // The code decides. The text is a fallback only when the code says nothing (unspecified).
+      const code = Number(res.error.code ?? 0)
+      const transient = code === 0 ? CALL_AGAIN.test(message) : TRANSIENT_HARNESS_CODES.has(code)
+      throw new ToolCallError(tool, message, transient)
     }
     if (res.outputJson.length === 0) return undefined
     const body = JSON.parse(new TextDecoder().decode(res.outputJson)) as { result?: unknown }
     return body.result
   }
-  return Object.assign(call, { current: (grant: string) => harnessFor(grant).token() })
+  return Object.assign(call, {
+    current: (grant: string) => harnessFor(grant).token(),
+    release: (grant: string) => {
+      held.get(grant)?.stop()
+      held.delete(grant)
+    },
+  })
 }

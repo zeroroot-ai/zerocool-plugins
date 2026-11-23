@@ -474,14 +474,14 @@ test("a turn with no live grant leaves the workspace unread, and a later turn re
   }
 })
 
-test("an expired or missing grant at wrap-up keeps the work and says a later try can open it", async () => {
+test("an expired or missing grant at wrap-up is permanent, and the work is not touched by wrapUp", async () => {
   const s = await setup({ "a.txt": "a\n" }, {}, { live: (g) => g === "live" })
   try {
     const [tree] = await s.ws.prepare("j1", [repo], "live", { resumed: false })
     await writeFile(join(tree!.path, "b.txt"), "b\n")
     for (const grant of ["dead", undefined]) {
       const [out] = await s.ws.wrapUp("j1", [repo], { ...wrap, grant })
-      assert.equal(out!.retryable, true)
+      assert.equal(out!.retryable, false, "no try inside the close brings an expired grant back")
       assert.equal(out!.failed, true)
       assert.match(out!.error, /No live grant of a turn of this job/)
     }
@@ -744,6 +744,133 @@ test("the first failure of a read stops every runner of the pool", async () => {
   try {
     await assert.rejects(s.ws.prepare("j1", [{ ...repo, paths: names }], "g", { resumed: false }), /read_file broke on f03\.txt/)
     assert.ok(s.byTool("read_file").length < 30, `${s.byTool("read_file").length} reads ran after the failure`)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// ---- D1: the agent's index and HEAD do not count
+
+test("a file that Claude staged and a file that Claude committed are both in the change", async () => {
+  const s = await setup({ "a.txt": "a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=c", "-c", "user.email=c@e", ...args], { cwd: tree!.path })
+    await writeFile(join(tree!.path, "staged.txt"), "staged\n")
+    git("add", "staged.txt")
+    await writeFile(join(tree!.path, "committed.txt"), "committed\n")
+    git("add", "committed.txt")
+    git("commit", "-q", "-m", "work")
+    await writeFile(join(tree!.path, "plain.txt"), "plain\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.error, "")
+    const files = (s.byTool("open_merge_request")[0]!.args as { files: { path: string }[] }).files
+    assert.deepEqual(files.map((f) => f.path).sort(), ["committed.txt", "plain.txt", "staged.txt"])
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("a moved HEAD, a rewritten index and an edited exclude file of the agent do not drop a change", async () => {
+  const s = await setup({ ".gitignore": "dist/\n", "a.txt": "a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=c", "-c", "user.email=c@e", ...args], { cwd: tree!.path })
+    await writeFile(join(tree!.path, "x.txt"), "x\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "everything")
+    git("reset", "-q", "--hard")
+    await writeFile(join(tree!.path, "y.txt"), "y\n")
+    await mkdir(join(tree!.path, "dist"), { recursive: true })
+    await writeFile(join(tree!.path, "dist/o.js"), "o\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.error, "")
+    const files = (s.byTool("open_merge_request")[0]!.args as { files: { path: string }[] }).files
+    assert.deepEqual(files.map((f) => f.path).sort(), ["x.txt", "y.txt"], "dist is still ignored")
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// ---- D2: the grants of a job are released when it ends
+
+test("remove releases the harness of each grant the job used, so no renewal runs after it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-ws-"))
+  try {
+    const f = forge({ "a.txt": "a\n" })
+    const released: string[] = []
+    const has = (g: string) => released.includes(g)
+    const tools = Object.assign(f.tools, { current: (g: string) => g, release: (g: string) => void released.push(g) })
+    const ws = new WorkspaceManager({ root: dir, stateDir: join(dir, "state"), tools, grantLive: () => true })
+    await ws.prepare("j1", [repo], "turn-1", { resumed: false })
+    await ws.fetchFile("j1", [repo], undefined, "a.txt", "turn-2")
+    await ws.wrapUp("j1", [repo], { ...wrap, grant: "turn-3" })
+    await ws.prepare("j2", [repo], "other-job", { resumed: false })
+    assert.deepEqual(released, [], "nothing is released while the job runs")
+    await ws.remove("j1", [repo])
+    assert.deepEqual(released.sort(), ["turn-1", "turn-2", "turn-3"])
+    await ws.remove("j1", [repo])
+    assert.equal(released.length, 3, "a second remove releases nothing twice")
+    assert.ok(!has("other-job"), "another job keeps its grant")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- D5: only a grant that is before its exp is retried
+
+const jwt = (exp: number) => `h.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.s`
+
+test("a grant whose exp has passed is permanent, and a grant inside the margin before exp is retryable", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-ws-"))
+  try {
+    const f = forge({ "a.txt": "a\n" })
+    const now = 1_800_000_000_000
+    const ws = new WorkspaceManager({ root: dir, stateDir: join(dir, "state"), tools: f.tools, clock: () => now })
+    const live = jwt(now / 1000 + 3600)
+    const [tree] = await ws.prepare("j1", [repo], live, { resumed: false })
+    await writeFile(join(tree!.path, "b.txt"), "b\n")
+    const [past] = await ws.wrapUp("j1", [repo], { ...wrap, grant: jwt(now / 1000 - 5) })
+    assert.equal(past!.retryable, false)
+    const [soon] = await ws.wrapUp("j1", [repo], { ...wrap, grant: jwt(now / 1000 + 10) })
+    assert.equal(soon!.retryable, true, "10 seconds before exp is inside the 30 second margin")
+    assert.equal(f.byTool("open_merge_request").length, 0)
+    const [ok] = await ws.wrapUp("j1", [repo], { ...wrap, grant: live })
+    assert.equal(ok!.error, "")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- D7: one method reads the listing and the .gitignore files
+
+test("fetch_file on an unread workspace reads the listing and the .gitignore files, like prepare", async () => {
+  const s = await setup({ ".gitignore": "dist/\n", "a.txt": "a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], undefined, { resumed: false })
+    assert.equal(s.calls.length, 0)
+    const r = await s.fetch("j1", "a.txt")
+    assert.equal(r.ok, true)
+    assert.deepEqual(s.byTool("read_file").map((c) => c.args.path).sort(), [".gitignore", "a.txt"], "the .gitignore is read before any other file")
+    await mkdir(join(tree!.path, "dist"), { recursive: true })
+    await writeFile(join(tree!.path, "dist/o.js"), "o\n")
+    await writeFile(join(tree!.path, "a.txt"), "edited\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.error, "")
+    assert.deepEqual((s.byTool("open_merge_request")[0]!.args as { files: unknown[] }).files, [{ path: "a.txt", content: "edited\n" }])
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("fetch_file on an unread workspace stops when a .gitignore cannot be read", async () => {
+  const s = await setup({ ".gitignore": "x\n", "a.txt": "a\n" }, { refuse: { ".gitignore": "the file is not text" } })
+  try {
+    await s.ws.prepare("j1", [repo], undefined, { resumed: false })
+    const r = await s.fetch("j1", "a.txt")
+    assert.equal(r.ok, false)
+    assert.match(r.text, /\.gitignore cannot be read/)
+    assert.equal(s.byTool("read_file").some((c) => c.args.path === "a.txt"), false)
   } finally {
     await s.cleanup()
   }

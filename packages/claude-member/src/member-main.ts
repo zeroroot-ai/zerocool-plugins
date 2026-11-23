@@ -9,7 +9,7 @@ import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
 import { HarnessInbox, harnessGrants } from "./harness-inbox.js"
 import { assertTurnRequiresToken, mcpGateway, startMcpServer, TURN_TOKEN_ENV, type McpServer } from "./mcp.js"
 import { FileJobStore, JobTable } from "./job.js"
-import { Member } from "./member.js"
+import { assertSingleJob, Member } from "./member.js"
 import { childEnv, platformTransport, platformTrust, type PlatformTrust } from "./platform-ca.js"
 import { assertSubscriptionOnly, consoleRelay, readAuthStatus, SignIn } from "./signin.js"
 import { harnessSessionStore } from "./transcript.js"
@@ -60,6 +60,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
   const log = opts.log ?? ((l: string) => process.stderr.write(`[zerocool-claude-member] ${l}\n`))
   const env: MemberEnv = readMemberEnv(opts.env)
   if (env.loginShape === "subscription") assertSubscriptionOnly(opts.env)
+  assertSingleJob(env.jobCap)
   await ensureStateDir(env.stateDir)
 
   // The platform CA, when the edge chains to a private root. Every transport

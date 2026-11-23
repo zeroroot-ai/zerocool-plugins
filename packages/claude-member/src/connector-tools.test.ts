@@ -74,17 +74,58 @@ test("current(grant) opens the harness once and returns the grant it holds now, 
   assert.equal(made.length, 1, "one harness, one renewal timer")
 })
 
-test("a transport failure, UNAVAILABLE and a call-again text are transient, and a refusal is not", async () => {
-  const transport = fakeHarness("g", () => {
-    throw Object.assign(new Error("[unavailable] connection reset"), { code: 14 })
+const refuses = (error: { code?: number; message: string }) => fakeHarness("g", () => ({ outputJson: new Uint8Array(), error }))
+const transientOf = async (h: ReturnType<typeof fakeHarness>): Promise<boolean> => {
+  try {
+    await harnessToolCaller(() => h.harness)("g", "connector/acme", "x", {})
+  } catch (e) {
+    if (e instanceof ToolCallError) return e.transient
+  }
+  throw new Error("the call did not throw a ToolCallError")
+}
+
+test("the code of the error decides: TIMEOUT, UNAVAILABLE and RESOURCE_EXHAUSTED are transient", async () => {
+  for (const code of [4, 5, 8]) assert.equal(await transientOf(refuses({ code, message: "x" })), true, `code ${code}`)
+  for (const code of [1, 2, 3, 6, 7]) assert.equal(await transientOf(refuses({ code, message: "x" })), false, `code ${code}`)
+})
+
+test("the code wins over the text, in both directions", async () => {
+  assert.equal(await transientOf(refuses({ code: 2, message: "bad input. Call the tool again." })), false, "INVALID_ARGUMENT is never retried, whatever the text says")
+  assert.equal(await transientOf(refuses({ code: 5, message: "permission denied" })), true, "UNAVAILABLE is retried, whatever the text says")
+})
+
+test("the text is a fallback only when the code is unspecified, and only the closing phrase counts", async () => {
+  assert.equal(await transientOf(refuses({ code: 0, message: "the host is busy, call the tool again" })), true)
+  assert.equal(await transientOf(refuses({ message: "The host is busy. Call the tool again." })), true)
+  assert.equal(await transientOf(refuses({ code: 0, message: "not authorized to invoke tool" })), false)
+  // Words that a path or a name can hold never decide.
+  assert.equal(await transientOf(refuses({ code: 0, message: "read /srv/unavailable/timeout.go: not found" })), false)
+  assert.equal(await transientOf(refuses({ code: 0, message: "no such file connection reset.txt" })), false)
+  assert.equal(await transientOf(refuses({ code: 0, message: "no such file call the tool again.go" })), false)
+})
+
+test("a thrown transport failure is classified by its gRPC code", async () => {
+  const throws = (code: number) =>
+    fakeHarness("g", () => {
+      throw Object.assign(new Error("transport"), { code })
+    })
+  for (const code of [4, 8, 14]) assert.equal(await transientOf(throws(code)), true, `grpc ${code}`)
+  for (const code of [3, 5, 7, 16]) assert.equal(await transientOf(throws(code)), false, `grpc ${code}`)
+})
+
+test("release(grant) stops the harness and its renewal, and a later call opens a new one", async () => {
+  const made: ReturnType<typeof fakeHarness>[] = []
+  const call = harnessToolCaller((grant) => {
+    const f = fakeHarness(grant, ok(null))
+    made.push(f)
+    return f.harness
   })
-  await assert.rejects(harnessToolCaller(() => transport.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && e.transient)
-  const again = fakeHarness("g", () => ({ outputJson: new Uint8Array(), error: { message: "the host is busy, call the tool again" } }))
-  await assert.rejects(harnessToolCaller(() => again.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && e.transient)
-  const denied = fakeHarness("g", () => ({ outputJson: new Uint8Array(), error: { message: "not authorized to invoke tool" } }))
-  await assert.rejects(harnessToolCaller(() => denied.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && !e.transient)
-  const invalid = fakeHarness("g", () => {
-    throw Object.assign(new Error("[invalid_argument] bad"), { code: 3 })
-  })
-  await assert.rejects(harnessToolCaller(() => invalid.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && !e.transient)
+  call.current("g1")
+  call.current("g2")
+  call.release("g1")
+  assert.equal(made[0]!.state.stopped, true, "the renewal timer of the first grant is stopped")
+  assert.equal(made[1]!.state.stopped, false, "another job's grant is not touched")
+  call.release("unknown")
+  call.current("g1")
+  assert.equal(made.length, 3, "a grant used again opens a new harness")
 })

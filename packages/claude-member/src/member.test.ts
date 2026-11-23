@@ -391,6 +391,64 @@ test("when the tries run out the job is failed with its reason, the workspace is
   await run
 })
 
+test("the Member itself refuses a cap above one when fetch_file is wired, and accepts a cap of one", () => {
+  const mcp = { register: () => ({ url: "http://127.0.0.1:1/t/x/mcp", dispose: () => {} }), stop: async () => {} }
+  assert.throws(() => member({ workspaceMcp: mcp }, 2), /ZEROCOOL_JOB_CAP is 2, and fetch_file is wired/)
+  assert.doesNotThrow(() => member({ workspaceMcp: mcp }, 1))
+})
+
+test("a close delivers off the pump: the slot stays counted, and a stop ends the wait at once", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(workspace.wrapped.length, 1, "the first try ran, and the delivery now waits ten minutes")
+  assert.equal(m.status().jobsInFlight, 1, "the closed job keeps its slot while it delivers")
+  assert.deepEqual(m.status().jobs, ["job-1"])
+  inbox.queued.push(input("job-2"))
+  await settle()
+  assert.equal(table.has("job-2"), false, "the cap of one holds while the delivery waits")
+  assert.equal(rec.calls.length, 1)
+
+  const stopped = Date.now()
+  ac.abort()
+  await run
+  assert.ok(Date.now() - stopped < 3000, "the stop woke the wait")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.match(inbox.deliverables.at(-1)!.error, /The member is stopping, so the tries ended/)
+  assert.equal(table.has("job-1"), false)
+})
+
+test("a waiting delivery does not block the pump: another job runs on a free slot", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 600_000, deliverBackoffMs: 600_000 }, 2)
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "g", sender: "s", verdict: "accomplished", score: 95 })
+  await settle()
+  inbox.queued.push(input("job-2"))
+  await settle()
+  assert.equal(table.get("job-2").state, "working", "the second job started while the first waits to deliver")
+  assert.equal(m.status().jobsInFlight, 2)
+  ac.abort()
+  rec.finish[1]!()
+  await run
+})
+
 test("the heartbeat reports idle, then busy at the cap, with the job ids and the CLI version", async () => {
   const { m, inbox, status, rec } = member()
   const ac = new AbortController()

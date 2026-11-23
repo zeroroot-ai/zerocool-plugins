@@ -154,13 +154,14 @@ function assertNames(jobId: string, repos: { name: string }[]): void {
 }
 
 /** Local git only, to make the repository. No credential, no hook, no fsmonitor. */
-async function git(args: string[], cwd: string): Promise<string> {
+async function git(args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<string> {
   const env: NodeJS.ProcessEnv = {
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
     ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
+    ...extraEnv,
   }
   const full = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.excludesFile=/dev/null", ...args]
   try {
@@ -295,6 +296,9 @@ export class WorkspaceManager {
   private readonly log: (line: string) => void
   private readonly clock: () => number
   private readonly records = new Map<string, RepoRecord>()
+  /** The grants each job used. `remove` releases their harnesses, which stops the renewal. */
+  private readonly grantsOf = new Map<string, Set<string>>()
+  private readonly releaseGrant: (grant: string) => void
   private readonly grantLive: (grant: string) => boolean
   /** The grant in force for a turn grant. The harness renews its grant, so this is the live one. */
   private readonly currentOf: (grant: string) => string
@@ -305,6 +309,15 @@ export class WorkspaceManager {
     this.grantLive = opts.grantLive ?? ((grant) => this.liveByClaims(grant))
     const granted = opts.tools as Partial<GrantedToolCaller>
     this.currentOf = granted.current ? (grant) => granted.current!(grant) : (grant) => grant
+    this.releaseGrant = granted.release ? (grant) => granted.release!(grant) : () => {}
+  }
+
+  /** Note that the job uses `grant`, so `remove` can release it. */
+  private track(jobId: string, grant: string | undefined): void {
+    if (!grant) return
+    const set = this.grantsOf.get(jobId) ?? new Set<string>()
+    set.add(grant)
+    this.grantsOf.set(jobId, set)
   }
 
   /** The `exp` claim, with a margin. A token with no `exp` or no JWT form is not live. */
@@ -312,6 +325,16 @@ export class WorkspaceManager {
     try {
       const exp = decodeGrantClaims(grant).exp
       return exp === 0 || exp * 1000 > this.clock() + GRANT_MARGIN_MS
+    } catch {
+      return false
+    }
+  }
+
+  /** True when the token has an `exp` that is still in the future. A token that is not a JWT is not. */
+  private notYetExpired(token: string): boolean {
+    try {
+      const exp = decodeGrantClaims(token).exp
+      return exp !== 0 && exp * 1000 > this.clock()
     } catch {
       return false
     }
@@ -386,6 +409,7 @@ export class WorkspaceManager {
     assertNames(jobId, repos)
     const out: Worktree[] = []
     // A job with no repository needs no grant, and opens no harness.
+    if (repos.length > 0) this.track(jobId, grant)
     const live = repos.length > 0 && this.isLive(grant)
     for (const repo of repos) {
       assertGitArgument("base branch", repo.baseBranch)
@@ -418,18 +442,9 @@ export class WorkspaceManager {
         if (!live || !grant) {
           notes.push("The repository is not read yet: this turn has no live grant of the job. fetch_file refuses until a turn with a grant arrives. Do not edit repository files now.")
         } else {
-          rec.listing = await this.readTree(grant, repo)
-          await this.saveRecord(jobId, repo.name, rec)
-          // Every listed .gitignore, root and nested, is read first. The wrap-up needs them to tell a change from a build output.
-          const ignores = Object.values(rec.listing)
-            .filter((e) => e.type === "file" && (e.path === ".gitignore" || e.path.endsWith("/.gitignore")) && safeTreePath(e.path))
-            .map((e) => e.path)
+          await this.loadListing(jobId, repo, rec, path, grant)
           const named = [...new Set(repo.paths ?? [])]
-          this.log(`read ${repo.name}: ${Object.keys(rec.listing).length} listed, ${ignores.length} .gitignore, ${named.length} files named by the job`)
-          await inPool(ignores, READ_CONCURRENCY, async (p) => {
-            const res = await this.fetchOne(jobId, repo, rec!, path, p, grant)
-            if (!res.ok) throw new DeliveryRefused(`The file ${p} cannot be read: ${res.text} Without it the workspace cannot tell a change from a build output, so no change is delivered.`)
-          })
+          this.log(`read ${repo.name}: ${Object.keys(rec.listing!).length} listed, ${named.length} files named by the job`)
           await inPool(named, READ_CONCURRENCY, async (p) => {
             const res = await this.fetchOne(jobId, repo, rec!, path, p, grant)
             if (!res.ok) notes.push(`The job names ${p}, and it was not fetched: ${res.text}`)
@@ -453,16 +468,39 @@ export class WorkspaceManager {
     if (!repo) return { ok: false, text: `Name the repository. This job has: ${repos.map((r) => r.name).join(", ") || "none"}.` }
     const rec = await this.recordFor(jobId, repo)
     if (!rec) return { ok: false, text: "The workspace is not prepared for this project and ref." }
+    this.track(jobId, grant)
     if (!this.isLive(grant)) return { ok: false, text: "This turn has no live grant of the job, so the file cannot be read. Wait for the next turn." }
     if (rec.listing === null) {
       try {
-        rec.listing = await this.readTree(grant, repo)
-        await this.saveRecord(jobId, repo.name, rec)
+        await this.loadListing(jobId, repo, rec, worktreePath(this.opts.root, jobId, repo.name), grant)
       } catch (e) {
         return { ok: false, text: (e as Error).message }
       }
     }
     return this.fetchOne(jobId, repo, rec, worktreePath(this.opts.root, jobId, repo.name), file, grant)
+  }
+
+  /**
+   * Read the listing of the base branch and, with it, every listed `.gitignore`
+   * (root and nested). The wrap-up needs them to tell a change from a build
+   * output. The one method serves `prepare` and `fetch_file`, so a listing read
+   * by either way is always complete. A `.gitignore` that cannot be read stops
+   * the workspace, because the filter would be wrong.
+   */
+  private async loadListing(jobId: string, repo: JobRepository, rec: RepoRecord, dir: string, grant: string): Promise<void> {
+    const listing = await this.readTree(grant, repo)
+    const ignores = Object.values(listing)
+      .filter((e) => e.type === "file" && (e.path === ".gitignore" || e.path.endsWith("/.gitignore")) && safeTreePath(e.path))
+      .map((e) => e.path)
+    rec.listing = listing
+    await inPool(ignores, READ_CONCURRENCY, async (p) => {
+      const res = await this.fetchOne(jobId, repo, rec, dir, p, grant)
+      if (!res.ok) {
+        rec.listing = null
+        throw new DeliveryRefused(`The file ${p} cannot be read: ${res.text} Without it the workspace cannot tell a change from a build output, so no change is delivered.`)
+      }
+    })
+    await this.saveRecord(jobId, repo.name, rec)
   }
 
   /** Make the folders above `rel` inside `dir`. A symbolic link or a file on the way is refused, so no write leaves the work tree. */
@@ -540,7 +578,13 @@ export class WorkspaceManager {
     if (listing) for (const p of Object.keys(listing)) for (const a of ancestors(p)) dirs.add(a)
     let total = 0
 
-    const others = (await git(["ls-files", "--others", "--exclude-standard", "-z"], dir)).split("\0").filter(Boolean)
+    // The index is the driver's own and empty, outside the worktree. The agent's index and HEAD do not
+    // count: a file it staged or committed is still listed as not in the (empty) index.
+    const indexFile = join(this.opts.stateDir, "index", jobId, `${repo.name}.idx`)
+    await mkdir(dirname(indexFile), { recursive: true, mode: 0o700 })
+    await rm(indexFile, { force: true })
+    const others = (await git(["ls-files", "--others", "--exclude-standard", "-z"], dir, { GIT_INDEX_FILE: indexFile })).split("\0").filter(Boolean)
+    await rm(indexFile, { force: true })
     if (others.length > MAX_WALK_FILES) {
       throw new DeliveryRefused(`The workspace holds ${others.length} files that no .gitignore excludes, which is not a change a merge request can carry. Remove the files you did not mean to add, or ignore them.`)
     }
@@ -683,8 +727,12 @@ export class WorkspaceManager {
     }
 
     const grant = opts.grant
+    this.track(jobId, grant)
     if (!this.isLive(grant)) {
-      for (const { out } of active) Object.assign(out, { error: "No live grant of a turn of this job is held, so the merge request cannot be opened now.", failed: true, retryable: true })
+      // A grant that is gone, or whose `exp` has passed, is permanent: no try inside the close brings it back.
+      // A grant that is still before `exp` but inside the margin may be renewed in a moment.
+      const retryable = !!grant && this.notYetExpired(this.currentOf(grant))
+      for (const { out } of active) Object.assign(out, { error: "No live grant of a turn of this job is held, so the merge request cannot be opened now.", failed: true, retryable })
       return outcomes
     }
 
@@ -754,7 +802,11 @@ export class WorkspaceManager {
   async remove(jobId: string, repos: { name: string }[]): Promise<void> {
     assertNames(jobId, repos)
     for (const r of repos) this.records.delete(`${jobId}/${r.name}`)
+    // The job is over: stop the harness of each grant it used, and with it the renewal timer.
+    for (const grant of this.grantsOf.get(jobId) ?? []) this.releaseGrant(grant)
+    this.grantsOf.delete(jobId)
     await rm(join(this.opts.root, "jobs", jobId), { recursive: true, force: true })
     await rm(join(this.opts.stateDir, "workspaces", jobId), { recursive: true, force: true })
+    await rm(join(this.opts.stateDir, "index", jobId), { recursive: true, force: true })
   }
 }
