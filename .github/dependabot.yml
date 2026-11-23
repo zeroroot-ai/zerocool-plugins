@@ -64,6 +64,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # A second line behind tools/image-guards (CVE-2026-115563). semgrep pins mcp==1.29.0, so a
+    # compile would move mcp back to a version the vulnerability gate blocks.
+    ignore:
+      - dependency-name: "mcp"
+        versions: ["< 1.30.0"]
     commit-message:
       prefix: "chore(deps)"
 

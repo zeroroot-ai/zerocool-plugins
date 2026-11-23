@@ -67,8 +67,11 @@ RUN cd /opt/opencode \
 # --no-deps: every package is pinned by hash in the file, so pip installs exactly that set. semgrep pins
 # mcp==1.29.0 (CVE-2026-115563, fixed in 1.30.0), and the file pins mcp==1.30.0, which pip's resolver
 # would refuse. mcp 1.30.0 has the same dependencies as 1.29.0. Remove --no-deps and the mcp pin
-# when a semgrep release requires mcp 1.30.0 or newer.
+# when a semgrep release requires mcp 1.30.0 or newer. --no-deps also drops pip's closure check, so
+# check-closure.py runs `pip check` before pip is removed. It fails on a missing requirement and on any
+# conflict except semgrep's exact mcp==1.29.0 pin.
 COPY packages/opencode-gibson/image/requirements.txt /tmp/semgrep-requirements.txt
+COPY packages/opencode-gibson/image/check-closure.py /tmp/check-closure.py
 # APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
 #
 # This image ships gzip, libpcre2-8-0 and libsqlite3-0 one Debian point release
@@ -88,8 +91,9 @@ RUN echo "apt refresh ${APT_CACHE_BUST}" >/dev/null \
  && apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates \
  && python3 -m venv /opt/semgrep \
  && /opt/semgrep/bin/pip install --no-cache-dir --no-deps --require-hashes -r /tmp/semgrep-requirements.txt \
+ && python3 /tmp/check-closure.py /opt/semgrep/bin/pip \
  && /opt/semgrep/bin/pip uninstall -y pip \
- && rm /tmp/semgrep-requirements.txt \
+ && rm /tmp/semgrep-requirements.txt /tmp/check-closure.py \
  && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
  && apt-get purge -y --auto-remove python3-venv \
  && rm -rf /var/lib/apt/lists/* \

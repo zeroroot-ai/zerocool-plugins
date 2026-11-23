@@ -1,0 +1,2 @@
+semgrep 1.182.1 has requirement mcp==1.29.0, but you have mcp 1.30.0.
+mcp 1.30.0 requires pyjwt, which is not installed.
