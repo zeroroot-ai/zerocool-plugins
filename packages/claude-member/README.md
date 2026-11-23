@@ -184,7 +184,11 @@ link. The workspace is sparse and read on demand.
    too large, encoding none) is never written, and the refusal goes back to
    Claude. If the sha differs from the listing, the base branch moved and the
    fetch is refused.
-3. At wrap-up the driver walks the files and compares each with the record by
+3. At wrap-up the driver lists the files that git does not ignore, with the
+   `.gitignore` files of the repository in force, and adds the fetched files.
+   The driver fetches every listed `.gitignore`, root and nested, in `prepare`.
+   `dist/`, `node_modules/`, a venv and a cache are ignored, and a nested git
+   repository is never entered. The driver compares each file with the record by
    content hash. A change is an edit or a delete of a fetched path, or an add of
    a path that the listing does not hold, with no file above it and no folder
    at it. A listed path that was never fetched, a symbolic link, a submodule, a
@@ -200,12 +204,16 @@ link. The workspace is sparse and read on demand.
    reported as failed and the error names the opened merge requests.
 
 Every call runs under a live grant of a turn of the job, never the member base
-grant, so the daemon binds each call to the job. A pulled job carries no turn
-grant. Its workspace stays unread until an input with a grant arrives. If the
-grant has expired at wrap-up, the driver keeps the workspace and the closed job,
-and it tries again when a later input for the job carries a fresh grant. Any
-failure that a later try can mend keeps the work. Only a success or a permanent
-refusal removes it.
+grant, so the daemon binds each call to the job. The driver keeps that grant
+alive: the harness of the grant calls `RenewCapabilityGrant` before it expires,
+for the whole turn and before the wrap-up open. A pulled job carries no turn
+grant, so its workspace stays unread until an input with a grant arrives.
+
+A failure that a later try can mend (a network failure, UNAVAILABLE, "call the
+tool again") is tried again with backoff inside the close, for at most five
+minutes. After that, or on a permanent refusal, the job is failed with its
+reason, the workspace is removed and the job record is dropped. Nothing
+outlives the close.
 
 The tool limits are 100 files, 1 MiB for one file and 8 MiB in all, as UTF-8
 text with the byte order mark kept. An over-limit or refused delivery opens
@@ -244,9 +252,11 @@ reports `member stopping`, then exits.
 
 The tools reach Claude Code from `@zeroroot-ai/gibson-mcp`, run as its own
 process on a loopback port inside the sandbox. The driver starts it, waits
-for `/healthz`, and gives Claude Code `--mcp-config` with
-`{"type":"http","url":"http://127.0.0.1:<port>/mcp"}`, `--strict-mcp-config`
-and `--permission-prompt-tool mcp__gibson__ask`.
+for `/healthz`, and gives Claude Code `--mcp-config <path>`, `--strict-mcp-config`
+and `--permission-prompt-tool mcp__gibson__ask`. The file holds
+`{"type":"http","url":"http://127.0.0.1:<port>/mcp"}` and the per-turn
+`fetch_file` endpoint. It has mode 0600 in a 0700 folder of the job under the
+state dir, and it is deleted when the turn ends. The argv never carries a URL.
 
 Before each turn the driver puts that dispatch's grant in force with
 `POST /turn {job_id, grant, callback_endpoint, insecure}`, and ends it with

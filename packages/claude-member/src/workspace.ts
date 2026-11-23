@@ -3,11 +3,11 @@
 
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmod, lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { dirname, join, sep } from "node:path"
 import { promisify } from "node:util"
 import { decodeGrantClaims } from "@zeroroot-ai/sdk"
-import { ToolCallError, type ToolCaller } from "./connector-tools.js"
+import { ToolCallError, type GrantedToolCaller, type ToolCaller } from "./connector-tools.js"
 import type { Deliverable, JobRepository } from "./job.js"
 
 const execFileAsync = promisify(execFile)
@@ -79,7 +79,7 @@ export const MAX_TOTAL_BYTES = 8 * 1024 * 1024
 export const MAX_TITLE_BYTES = 256
 export const MAX_DESCRIPTION_BYTES = 20_000
 
-/** The most files the wrap-up walk looks at. A tree of `node_modules` is not a change. */
+/** The most files that git lists as not ignored. A tree of `node_modules` is not a change. */
 const MAX_WALK_FILES = 20_000
 
 /** How many `read_file` calls run at once. */
@@ -154,7 +154,7 @@ function assertNames(jobId: string, repos: { name: string }[]): void {
 }
 
 /** Local git only, to make the repository. No credential, no hook, no fsmonitor. */
-async function git(args: string[], cwd: string): Promise<void> {
+async function git(args: string[], cwd: string): Promise<string> {
   const env: NodeJS.ProcessEnv = {
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
     ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
@@ -162,9 +162,10 @@ async function git(args: string[], cwd: string): Promise<void> {
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
   }
-  const full = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args]
+  const full = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.excludesFile=/dev/null", ...args]
   try {
-    await execFileAsync("git", full, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
+    const { stdout } = await execFileAsync("git", full, { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+    return stdout
   } catch (e) {
     const err = e as { stderr?: string; message: string }
     throw new Error(`git ${args[0]} failed: ${(err.stderr ?? err.message).trim().slice(0, 500)}`)
@@ -225,12 +226,24 @@ export function isRefusedFile(e: unknown): boolean {
   return e instanceof ToolCallError && /the file is not text|the file is larger than|encoding\b[^\n]{0,20}\bnone\b/i.test(e.message)
 }
 
+/** A failure that a later try can mend: a network failure, UNAVAILABLE, or "call the tool again". */
+function isTransient(e: unknown): boolean {
+  return e instanceof ToolCallError && e.transient
+}
+
 async function inPool<T>(items: T[], width: number, work: (item: T) => Promise<void>): Promise<void> {
   let next = 0
+  let failed = false
   const runner = async (): Promise<void> => {
-    while (next < items.length) {
+    // The first failure stops every runner: no new call starts after it.
+    while (next < items.length && !failed) {
       const item = items[next++]!
-      await work(item)
+      try {
+        await work(item)
+      } catch (e) {
+        failed = true
+        throw e
+      }
     }
   }
   await Promise.all(Array.from({ length: Math.min(width, items.length) }, runner))
@@ -278,29 +291,20 @@ function ancestors(path: string): string[] {
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"))
 }
 
-async function* walk(dir: string, rel: string, budget: { left: number }): AsyncGenerator<string> {
-  for (const e of await readdir(dir, { withFileTypes: true })) {
-    if (rel === "" && e.name === ".git") continue
-    const child = rel === "" ? e.name : `${rel}/${e.name}`
-    if (e.isDirectory()) {
-      yield* walk(join(dir, e.name), child, budget)
-    } else {
-      if (--budget.left < 0) throw new DeliveryRefused(`The workspace holds more than ${MAX_WALK_FILES} files, which is not a change a merge request can carry. Remove the files you did not mean to add.`)
-      yield child
-    }
-  }
-}
-
 export class WorkspaceManager {
   private readonly log: (line: string) => void
   private readonly clock: () => number
   private readonly records = new Map<string, RepoRecord>()
   private readonly grantLive: (grant: string) => boolean
+  /** The grant in force for a turn grant. The harness renews its grant, so this is the live one. */
+  private readonly currentOf: (grant: string) => string
 
   constructor(private readonly opts: WorkspaceOptions) {
     this.log = opts.log ?? (() => {})
     this.clock = opts.clock ?? Date.now
     this.grantLive = opts.grantLive ?? ((grant) => this.liveByClaims(grant))
+    const granted = opts.tools as Partial<GrantedToolCaller>
+    this.currentOf = granted.current ? (grant) => granted.current!(grant) : (grant) => grant
   }
 
   /** The `exp` claim, with a margin. A token with no `exp` or no JWT form is not live. */
@@ -313,9 +317,9 @@ export class WorkspaceManager {
     }
   }
 
-  /** Whether `grant` is a grant of a turn that can still make a call. */
+  /** Whether `grant`, as renewed, is a grant of a turn that can still make a call. The first call starts the renewal. */
   isLive(grant: string | undefined): grant is string {
-    return !!grant && this.grantLive(grant)
+    return !!grant && this.grantLive(this.currentOf(grant))
   }
 
   private recordFile(jobId: string, repoName: string): string {
@@ -363,22 +367,33 @@ export class WorkspaceManager {
     }
   }
 
+  /** The record of a repository, or `undefined` when none exists or it belongs to another project or ref. */
+  private async recordFor(jobId: string, repo: JobRepository): Promise<RepoRecord | undefined> {
+    const rec = await this.loadRecord(jobId, repo.name)
+    if (!rec) return undefined
+    return rec.project === repo.project && rec.ref === repo.baseBranch ? rec : undefined
+  }
+
   /**
    * One sparse repository for each repository of the job, on `job/<job_id>`.
    * `grant` is a grant of a turn of this job. Without one the workspace is made
    * empty and unread, and a later call with a turn grant reads the listing. A
-   * resumed job whose directory is gone gets a new workspace and a note that
-   * its earlier edits were lost.
+   * resumed job whose directory is gone, and a record that belongs to another
+   * project or ref, give a new workspace and a note that earlier edits were lost.
+   * The call also starts the renewal of the grant, so it stays live for the turn.
    */
   async prepare(jobId: string, repos: JobRepository[], grant: string | undefined, opts: { resumed: boolean }): Promise<Worktree[]> {
     assertNames(jobId, repos)
     const out: Worktree[] = []
+    // A job with no repository needs no grant, and opens no harness.
+    const live = repos.length > 0 && this.isLive(grant)
     for (const repo of repos) {
       assertGitArgument("base branch", repo.baseBranch)
       const path = worktreePath(this.opts.root, jobId, repo.name)
       const branch = jobBranch(jobId)
       const notes: string[] = []
-      let rec = await this.loadRecord(jobId, repo.name)
+      const held = await this.loadRecord(jobId, repo.name)
+      let rec = await this.recordFor(jobId, repo)
       let present = false
       try {
         present = (await stat(join(path, ".git"))).isDirectory()
@@ -386,12 +401,13 @@ export class WorkspaceManager {
         present = false
       }
       if (!present || !rec) {
-        if (opts.resumed) {
+        if (opts.resumed || held) {
           notes.push(
             "Your earlier edits to this repository were lost when the sandbox restarted. The worktree is new and holds none of them. Make the edits again. Never assume an earlier edit is on disk.",
           )
         }
-        // A directory with no record cannot be checked against a base. Start again.
+        // A directory with no record, or a record of another project or ref, cannot be checked against a base. Start again.
+        this.records.delete(`${jobId}/${repo.name}`)
         await rm(path, { recursive: true, force: true })
         await mkdir(path, { recursive: true })
         await git(["init", "--quiet", `--initial-branch=${branch}`], path)
@@ -399,13 +415,21 @@ export class WorkspaceManager {
         await this.saveRecord(jobId, repo.name, rec)
       }
       if (rec.listing === null) {
-        if (!grant || !this.grantLive(grant)) {
+        if (!live || !grant) {
           notes.push("The repository is not read yet: this turn has no live grant of the job. fetch_file refuses until a turn with a grant arrives. Do not edit repository files now.")
         } else {
           rec.listing = await this.readTree(grant, repo)
           await this.saveRecord(jobId, repo.name, rec)
+          // Every listed .gitignore, root and nested, is read first. The wrap-up needs them to tell a change from a build output.
+          const ignores = Object.values(rec.listing)
+            .filter((e) => e.type === "file" && (e.path === ".gitignore" || e.path.endsWith("/.gitignore")) && safeTreePath(e.path))
+            .map((e) => e.path)
           const named = [...new Set(repo.paths ?? [])]
-          this.log(`read ${repo.name}: ${Object.keys(rec.listing).length} listed, ${named.length} files named by the job`)
+          this.log(`read ${repo.name}: ${Object.keys(rec.listing).length} listed, ${ignores.length} .gitignore, ${named.length} files named by the job`)
+          await inPool(ignores, READ_CONCURRENCY, async (p) => {
+            const res = await this.fetchOne(jobId, repo, rec!, path, p, grant)
+            if (!res.ok) throw new DeliveryRefused(`The file ${p} cannot be read: ${res.text} Without it the workspace cannot tell a change from a build output, so no change is delivered.`)
+          })
           await inPool(named, READ_CONCURRENCY, async (p) => {
             const res = await this.fetchOne(jobId, repo, rec!, path, p, grant)
             if (!res.ok) notes.push(`The job names ${p}, and it was not fetched: ${res.text}`)
@@ -427,8 +451,8 @@ export class WorkspaceManager {
     assertNames(jobId, repos)
     const repo = repoName ? repos.find((r) => r.name === repoName) : repos.length === 1 ? repos[0] : undefined
     if (!repo) return { ok: false, text: `Name the repository. This job has: ${repos.map((r) => r.name).join(", ") || "none"}.` }
-    const rec = await this.loadRecord(jobId, repo.name)
-    if (!rec) return { ok: false, text: "The workspace is not prepared." }
+    const rec = await this.recordFor(jobId, repo)
+    if (!rec) return { ok: false, text: "The workspace is not prepared for this project and ref." }
     if (!this.isLive(grant)) return { ok: false, text: "This turn has no live grant of the job, so the file cannot be read. Wait for the next turn." }
     if (rec.listing === null) {
       try {
@@ -441,15 +465,36 @@ export class WorkspaceManager {
     return this.fetchOne(jobId, repo, rec, worktreePath(this.opts.root, jobId, repo.name), file, grant)
   }
 
+  /** Make the folders above `rel` inside `dir`. A symbolic link or a file on the way is refused, so no write leaves the work tree. */
+  private async safeParents(dir: string, rel: string): Promise<string | undefined> {
+    const root = await realpath(dir)
+    let at = dir
+    for (const part of rel.split("/").slice(0, -1)) {
+      at = join(at, part)
+      let st
+      try {
+        st = await lstat(at)
+      } catch {
+        await mkdir(at)
+        continue
+      }
+      if (st.isSymbolicLink()) return `${at.slice(dir.length + 1)} is a symbolic link`
+      if (!st.isDirectory()) return `${at.slice(dir.length + 1)} is a file, not a folder`
+    }
+    const parent = await realpath(dirname(join(dir, rel)))
+    if (parent !== root && !parent.startsWith(root + sep)) return "the folder is outside the worktree"
+    return undefined
+  }
+
   private async fetchOne(jobId: string, repo: JobRepository, rec: RepoRecord, dir: string, file: string, grant: string): Promise<{ ok: boolean; text: string }> {
     if (!safeTreePath(file)) return { ok: false, text: `${JSON.stringify(file)} is not a path inside the repository.` }
     const entry = rec.listing?.[file]
     if (!entry) return { ok: true, text: `${file} is not in the repository at ${rec.ref}. Create it by writing the file.` }
-    if (entry.type !== "file") return { ok: false, text: `${file} is a ${entry.type}, not a file. The merge request cannot change it.` }
+    if (entry.type !== "file") return { ok: false, text: `The path is not a regular file: ${file} is a ${entry.type}. The merge request cannot change it.` }
     if (rec.fetched[file]) return { ok: true, text: `${file} is already in the worktree. Edit the file.` }
     let res: ReadFileResult
     try {
-      res = ((await this.opts.tools(grant, repo.connectorRef, "read_file", { project: repo.project, ref: rec.ref, path: file })) ?? {}) as ReadFileResult
+      res = ((await this.opts.tools(grant, repo.connectorRef, "read_file", { project: repo.project, ref: repo.baseBranch, path: file })) ?? {}) as ReadFileResult
     } catch (e) {
       if (isRefusedFile(e)) return { ok: false, text: `${(e as Error).message} The file stays out of the worktree and out of the merge request.` }
       throw e
@@ -458,7 +503,13 @@ export class WorkspaceManager {
     if (entry.sha && res.sha !== entry.sha) return { ok: false, text: `The base branch moved: ${file} changed since the listing. Its sha was ${entry.sha} and is now ${res.sha ?? "unknown"}.` }
     const bytes = Buffer.from(res.content, "utf8")
     const target = join(dir, file)
-    await mkdir(dirname(target), { recursive: true })
+    const escape = await this.safeParents(dir, file)
+    if (escape) return { ok: false, text: `${file} was not written: ${escape}. Remove it and fetch the file again.` }
+    try {
+      if ((await lstat(target)).isSymbolicLink()) return { ok: false, text: `${file} was not written: it is a symbolic link in the worktree. Remove it and fetch the file again.` }
+    } catch {
+      // nothing at the target
+    }
     await writeFile(target, bytes)
     if (entry.mode === "100755") await chmod(target, 0o755)
     rec.fetched[file] = { sha: res.sha ?? entry.sha ?? "", hash: sha256(bytes), mode: entry.mode === "100755" ? "100755" : "100644" }
@@ -466,14 +517,18 @@ export class WorkspaceManager {
     return { ok: true, text: `${file} is in the worktree. Edit it there.` }
   }
 
-  /** The change of the work tree against the record, as the files of `open_merge_request`. */
+  /**
+   * The change of the work tree against the record, as the files of
+   * `open_merge_request`. The candidates are the fetched files and the files
+   * that git lists as not ignored, with the `.gitignore` files of the
+   * repository in force. A build output, a venv and a cache are ignored, and a
+   * nested repository is never entered.
+   */
   private async collect(jobId: string, repo: JobRepository): Promise<FileChange[]> {
     const dir = worktreePath(this.opts.root, jobId, repo.name)
-    const rec = await this.loadRecord(jobId, repo.name)
-    if (!rec) throw new DeliveryRefused(`The workspace of ${repo.name} has no record of its base. No change can be delivered.`)
+    const rec = await this.recordFor(jobId, repo)
+    if (!rec) throw new DeliveryRefused(`The workspace of ${repo.name} has no record of its base for ${repo.project} at ${repo.baseBranch}. No change can be delivered.`)
     const listing = rec.listing
-    const budget = { left: MAX_WALK_FILES }
-    const seen = new Set<string>()
     const changes: FileChange[] = []
     const unfetched: string[] = []
     const notRegular: string[] = []
@@ -485,27 +540,43 @@ export class WorkspaceManager {
     if (listing) for (const p of Object.keys(listing)) for (const a of ancestors(p)) dirs.add(a)
     let total = 0
 
-    for await (const rel of walk(dir, "", budget)) {
-      seen.add(rel)
+    const others = (await git(["ls-files", "--others", "--exclude-standard", "-z"], dir)).split("\0").filter(Boolean)
+    if (others.length > MAX_WALK_FILES) {
+      throw new DeliveryRefused(`The workspace holds ${others.length} files that no .gitignore excludes, which is not a change a merge request can carry. Remove the files you did not mean to add, or ignore them.`)
+    }
+    const candidates = new Set<string>(others)
+    for (const p of Object.keys(rec.fetched)) candidates.add(p)
+
+    const consider = async (rel: string, base: Fetched | undefined): Promise<void> => {
       const abs = join(dir, rel)
-      const st = await lstat(abs)
+      if (rel.endsWith("/")) {
+        notRegular.push(`${rel} (a nested git repository)`)
+        return
+      }
+      let st
+      try {
+        st = await lstat(abs)
+      } catch {
+        if (base) changes.push({ path: rel, delete: true })
+        return
+      }
       if (!st.isFile()) {
         notRegular.push(rel)
-        continue
+        return
       }
       const exec = (st.mode & 0o111) !== 0
-      const base = rec.fetched[rel]
+      const entry = listing?.[rel]
       if (base) {
         if (base.mode === "100755" && !exec) {
           modeChanged.push(`${rel} (100755 to 100644, and the tool would keep 100755)`)
-          continue
+          return
         }
         if (base.mode === "100644" && exec) {
           modeChanged.push(`${rel} (100644 to 100755, and the tool writes 100644)`)
-          continue
+          return
         }
         const buf = await readFile(abs)
-        if (sha256(buf) === base.hash) continue
+        if (sha256(buf) === base.hash) return
         const text = textOf(buf)
         if (text === undefined) notText.push(rel)
         else {
@@ -513,41 +584,41 @@ export class WorkspaceManager {
           total += buf.length
           changes.push({ path: rel, content: text })
         }
-        continue
+        return
       }
-      if (listing?.[rel]) {
-        unfetched.push(rel)
-        continue
+      if (entry && entry.type !== "file") {
+        notRegular.push(`${rel} (the path is not a regular file: it is a ${entry.type} in the repository)`)
+        return
       }
-      if (!listing) {
+      if (entry || !listing) {
         unfetched.push(rel)
-        continue
+        return
       }
       // A new path: nothing at it, nothing above it that is not a folder, nothing below it.
       const blocker = ancestors(rel).find((a) => listing[a] && listing[a]!.type !== "dir")
       if (blocker) {
         conflicts.push(`${rel} (below ${blocker}, which is a ${listing[blocker]!.type})`)
-        continue
+        return
       }
       if (dirs.has(rel)) {
         conflicts.push(`${rel} (the repository has a folder at that path)`)
-        continue
+        return
       }
       if (exec) {
         modeChanged.push(`${rel} (new executable file, and the tool writes 100644)`)
-        continue
+        return
       }
       const buf = await readFile(abs)
       const text = textOf(buf)
       if (text === undefined) {
         notText.push(rel)
-        continue
+        return
       }
       if (buf.length > MAX_FILE_BYTES) tooBig.push(`${rel} (${buf.length} bytes)`)
       total += buf.length
       changes.push({ path: rel, content: text })
     }
-    for (const p of Object.keys(rec.fetched)) if (!seen.has(p)) changes.push({ path: p, delete: true })
+    for (const rel of candidates) await consider(rel, rec.fetched[rel])
 
     const refusals: string[] = []
     if (unfetched.length > 0) refusals.push(`These files exist in the repository, or the repository was not read, and you never fetched them with fetch_file: ${listed(unfetched)}. Fetch a file before you change it.`)
@@ -566,13 +637,14 @@ export class WorkspaceManager {
 
   /** Read every changed path again. The base branch must be the one the work started from. */
   private async checkBase(jobId: string, repo: JobRepository, changes: FileChange[], grant: string): Promise<void> {
-    const rec = (await this.loadRecord(jobId, repo.name))!
+    const rec = await this.recordFor(jobId, repo)
+    if (!rec) throw new DeliveryRefused(`The workspace of ${repo.name} has no record of its base for ${repo.project} at ${repo.baseBranch}.`)
     const moved: string[] = []
     await inPool(changes, READ_CONCURRENCY, async (c) => {
       const base = rec.fetched[c.path]
       let res: ReadFileResult
       try {
-        res = ((await this.opts.tools(grant, repo.connectorRef, "read_file", { project: repo.project, ref: rec.ref, path: c.path })) ?? {}) as ReadFileResult
+        res = ((await this.opts.tools(grant, repo.connectorRef, "read_file", { project: repo.project, ref: repo.baseBranch, path: c.path })) ?? {}) as ReadFileResult
       } catch (e) {
         if (isRefusedFile(e)) {
           moved.push(c.path)
@@ -583,7 +655,7 @@ export class WorkspaceManager {
       if (base ? !res.found || res.sha !== base.sha : res.found) moved.push(c.path)
     })
     if (moved.length > 0) {
-      throw new DeliveryRefused(`The base branch moved: ${listed(moved.sort())} changed on ${rec.ref} since the work started. The merge request was not opened. Start the change again from the new base.`)
+      throw new DeliveryRefused(`The base branch moved: ${listed(moved.sort())} changed on ${repo.baseBranch} since the work started. The merge request was not opened. Start the change again from the new base.`)
     }
   }
 
@@ -612,7 +684,7 @@ export class WorkspaceManager {
 
     const grant = opts.grant
     if (!this.isLive(grant)) {
-      for (const { out } of active) Object.assign(out, { error: "No live grant of a turn of this job is held, so the merge request cannot be opened now. The workspace is kept. It opens when a turn of the job arrives with a fresh grant.", failed: true, retryable: true })
+      for (const { out } of active) Object.assign(out, { error: "No live grant of a turn of this job is held, so the merge request cannot be opened now.", failed: true, retryable: true })
       return outcomes
     }
 
@@ -631,7 +703,7 @@ export class WorkspaceManager {
         }
         plans.set(repo.name, files)
       } catch (e) {
-        Object.assign(out, { error: (e as Error).message, failed: true, retryable: !(e instanceof DeliveryRefused) })
+        Object.assign(out, { error: (e as Error).message, failed: true, retryable: isTransient(e) })
       }
     }
     if (active.some(({ out }) => out.failed)) {
@@ -666,7 +738,7 @@ export class WorkspaceManager {
         opened.push(`${repo.name}: ${result.merge_request} ${result.url}`)
       } catch (e) {
         out.failed = true
-        out.retryable = !(e instanceof DeliveryRefused)
+        out.retryable = isTransient(e)
         out.error = `${(e as Error).message}${opened.length > 0 ? ` The job failed after these merge requests were opened: ${opened.join("; ")}.` : ""}`
         // The rest of the repositories are not opened after a failure.
         for (const { out: rest } of active) {

@@ -343,30 +343,50 @@ test("a failed delivery reports the closed job as an error and keeps no merge re
   await run
 })
 
-test("an expired grant keeps the workspace and the job, and a later input with a fresh grant delivers", async () => {
+test("a transient failure is tried again inside the close, with backoff, and then delivers", async () => {
   const workspace = fakeWorkspace({
-    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "No live grant of a turn of this job is held.", failed: true, retryable: true }], [{}]],
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }], [{}]],
   })
   const lines: string[] = []
-  const { m, inbox, table, rec } = member({ workspace, onEvent: (_id: string, line: string) => lines.push(line) })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 5000, deliverBackoffMs: 5, onEvent: (_id: string, line: string) => lines.push(line) })
   inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
   const ac = new AbortController()
   const run = m.run(ac.signal)
   await settle()
   rec.finish[0]!()
   await settle()
-  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "expired-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
-  await settle()
-  assert.deepEqual(workspace.removed, [], "the work is never deleted on a failure a later try can mend")
-  assert.equal(table.has("job-1"), true)
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle(10)
+  assert.deepEqual(workspace.wrapGrants, ["scorer-grant", "scorer-grant"], "the second try is inside the same close")
   assert.ok(lines.some((l) => l.includes("delivery_waiting")))
-
-  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "fresh-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
-  await settle()
-  assert.deepEqual(workspace.wrapGrants, ["expired-grant", "fresh-grant"], "the second try runs under the grant it carries")
+  assert.equal(inbox.deliverables.at(-1)!.mergeRequest, "acme/api#1")
   assert.deepEqual(workspace.removed, ["job-1"])
   assert.equal(table.has("job-1"), false)
-  assert.equal(inbox.deliverables.at(-1)!.mergeRequest, "acme/api#1")
+  assert.ok(inbox.states.filter((s) => s.state === "closed").every((s) => !s.isError))
+  ac.abort()
+  await run
+})
+
+test("when the tries run out the job is failed with its reason, the workspace is removed and the record is dropped", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 60, deliverBackoffMs: 10 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle(15)
+  assert.ok(workspace.wrapped.length >= 2, "it was tried more than once")
+  assert.deepEqual(workspace.removed, ["job-1"], "nothing outlives the close")
+  assert.equal(table.has("job-1"), false)
+  const closed = inbox.states.filter((s) => s.state === "closed")
+  assert.ok(closed.length > 0 && closed.every((s) => s.isError))
+  assert.match(closed[0]!.detail, /the host is busy.*The tries ended after/)
+  assert.match(inbox.deliverables.at(-1)!.error, /The tries ended after/)
   ac.abort()
   await run
 })

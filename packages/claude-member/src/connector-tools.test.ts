@@ -7,7 +7,7 @@ import { connectorToolId, harnessToolCaller, ToolCallError, type ToolHarness } f
 
 function fakeHarness(grant: string, respond: (req: { name: string; inputJson: Uint8Array }) => unknown) {
   const requests: { name: string; body: { id: string; args: unknown } }[] = []
-  const state = { stopped: false }
+  const state = { stopped: false, token: grant }
   const harness = {
     context: { missionId: "m", taskId: "t", agentName: "a", missionRunId: "r", grant } as never,
     client: {
@@ -16,6 +16,7 @@ function fakeHarness(grant: string, respond: (req: { name: string; inputJson: Ui
         return respond(req)
       },
     },
+    token: () => state.token,
     stop: () => {
       state.stopped = true
     },
@@ -42,7 +43,7 @@ test("a refusal of the daemon or the tool throws with the tool name and the daem
   await assert.rejects(harnessToolCaller(() => f.harness)("g1", "connector/acme", "open_merge_request", {}), (e: Error) => e instanceof ToolCallError && /open_merge_request: not authorized to invoke tool/.test(e.message))
 })
 
-test("one harness serves one grant, and a new grant replaces and stops it", async () => {
+test("one harness serves one grant, and the oldest is stopped when the cap is reached", async () => {
   const opened: string[] = []
   const made: ReturnType<typeof fakeHarness>[] = []
   const call = harnessToolCaller((grant) => {
@@ -50,7 +51,7 @@ test("one harness serves one grant, and a new grant replaces and stops it", asyn
     const f = fakeHarness(grant, ok(grant))
     made.push(f)
     return f.harness
-  })
+  }, 1)
   assert.equal(await call("g1", "connector/acme", "x", {}), "g1")
   assert.equal(await call("g1", "connector/acme", "x", {}), "g1")
   assert.deepEqual(opened, ["g1"])
@@ -58,4 +59,32 @@ test("one harness serves one grant, and a new grant replaces and stops it", asyn
   assert.deepEqual(opened, ["g1", "g2"])
   assert.equal(made[0]!.state.stopped, true)
   assert.equal(made[1]!.state.stopped, false)
+})
+
+test("current(grant) opens the harness once and returns the grant it holds now, after a renewal", () => {
+  const made: ReturnType<typeof fakeHarness>[] = []
+  const call = harnessToolCaller((grant) => {
+    const f = fakeHarness(grant, ok(null))
+    made.push(f)
+    return f.harness
+  })
+  assert.equal(call.current("g1"), "g1")
+  made[0]!.state.token = "g1-renewed"
+  assert.equal(call.current("g1"), "g1-renewed", "the harness renews its grant, and current() reads it")
+  assert.equal(made.length, 1, "one harness, one renewal timer")
+})
+
+test("a transport failure, UNAVAILABLE and a call-again text are transient, and a refusal is not", async () => {
+  const transport = fakeHarness("g", () => {
+    throw Object.assign(new Error("[unavailable] connection reset"), { code: 14 })
+  })
+  await assert.rejects(harnessToolCaller(() => transport.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && e.transient)
+  const again = fakeHarness("g", () => ({ outputJson: new Uint8Array(), error: { message: "the host is busy, call the tool again" } }))
+  await assert.rejects(harnessToolCaller(() => again.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && e.transient)
+  const denied = fakeHarness("g", () => ({ outputJson: new Uint8Array(), error: { message: "not authorized to invoke tool" } }))
+  await assert.rejects(harnessToolCaller(() => denied.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && !e.transient)
+  const invalid = fakeHarness("g", () => {
+    throw Object.assign(new Error("[invalid_argument] bad"), { code: 3 })
+  })
+  await assert.rejects(harnessToolCaller(() => invalid.harness)("g", "connector/acme", "x", {}), (e: Error) => e instanceof ToolCallError && !e.transient)
 })

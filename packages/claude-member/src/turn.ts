@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { spawnClaude, type ClaudeHandle, type ClaudeRunOptions, type ClaudeRunResult } from "./claude-run.js"
 import { claudeChildEnv, type MemberEnv } from "./env.js"
 import type { ClaudeEvent } from "./events.js"
@@ -88,14 +90,32 @@ export async function startTurn(req: TurnRequest, deps: TurnDeps): Promise<TurnH
   await deps.mcp?.useGrant(jobId, req.grant)
   const endpoint = deps.workspaceMcp && req.fetchFile ? deps.workspaceMcp.register(req.fetchFile) : undefined
   const opts = turnOptions(req, deps, endpoint?.url)
-  if (deps.onEvent) {
-    const on = deps.onEvent
-    opts.onEvent = (line, event) => on(jobId, line, event)
-  }
-  const handle: ClaudeHandle = (deps.spawn ?? spawnClaude)(opts)
-  const done = handle.done.finally(async () => {
+  // The MCP config holds the per-turn endpoint. It goes in a 0600 file in a 0700
+  // folder of the job, and the argv carries only the path. The file is deleted
+  // when the turn ends, or at once when the process does not start.
+  const folder = join(deps.env.stateDir, "turns", jobId)
+  const cleanup = async (): Promise<void> => {
     endpoint?.dispose()
+    await rm(folder, { recursive: true, force: true })
     await deps.mcp?.release(jobId)
-  })
+  }
+  let handle: ClaudeHandle
+  try {
+    if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
+      await mkdir(folder, { recursive: true, mode: 0o700 })
+      const file = join(folder, "mcp.json")
+      await writeFile(file, JSON.stringify({ mcpServers: opts.mcpServers }), { encoding: "utf8", mode: 0o600 })
+      opts.mcpConfigFile = file
+    }
+    if (deps.onEvent) {
+      const on = deps.onEvent
+      opts.onEvent = (line, event) => on(jobId, line, event)
+    }
+    handle = (deps.spawn ?? spawnClaude)(opts)
+  } catch (e) {
+    await cleanup()
+    throw e
+  }
+  const done = handle.done.finally(cleanup)
   return { jobId, done, interrupt: () => handle.interrupt(), kill: () => handle.kill() }
 }

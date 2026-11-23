@@ -30,6 +30,8 @@ interface Call {
   env: NodeJS.ProcessEnv
   cwd: string
   stdin: string
+  mcpConfig?: string
+  mcpConfigMode?: number
 }
 
 async function calls(record: string): Promise<Call[]> {
@@ -256,7 +258,9 @@ test("end to end: the turn attaches the MCP server over localhost HTTP with the 
     await waitFor(async () => (await calls(h.record)).length === 1)
     const call = (await calls(h.record))[0]!
 
-    const config = JSON.parse(call.argv[call.argv.indexOf("--mcp-config") + 1]!) as { mcpServers: { gibson: { type: string; url: string } } }
+    const config = JSON.parse(call.mcpConfig!) as { mcpServers: { gibson: { type: string; url: string } } }
+    assert.equal(call.mcpConfigMode, 0o600, "the config file is private")
+    assert.ok(!call.argv.some((a: string) => a.includes("127.0.0.1")), "the argv carries a path, not a URL")
     assert.deepEqual(config.mcpServers.gibson, { type: "http", url: "http://127.0.0.1:7788/mcp" })
     assert.ok(call.argv.includes("--strict-mcp-config"), "only the server the driver names")
     assert.equal(call.argv[call.argv.indexOf("--permission-prompt-tool") + 1], "mcp__gibson__ask")

@@ -11,7 +11,7 @@ import { parseExpiryWarning, SignInError, type SignIn } from "./signin.js"
 import { archiveTranscript, restoreTranscript, transcriptOnDisk, type SessionStore } from "./transcript.js"
 import { startTurn, type TurnHandle } from "./turn.js"
 import type { WorkspaceMcp } from "./workspace-mcp.js"
-import { DeliveryRefused, type WorkspaceManager, type Worktree } from "./workspace.js"
+import { DeliveryRefused, type WorkspaceManager, type Worktree, type WrapUpOutcome } from "./workspace.js"
 
 /**
  * The job id of the daemon's sign-in control inputs. It names no job (gibson
@@ -69,6 +69,10 @@ export interface MemberDeps {
   signIn?: () => SignInAttempt
   /** Where transcripts are archived to and restored from (#107). */
   sessions?: SessionStore
+  /** How long a delivery that fails with a transient error is tried again inside the close, ms. Default 5 minutes. */
+  deliverRetryMs?: number
+  /** The first wait between two tries, ms. It doubles to 30 s. Default 1 s. */
+  deliverBackoffMs?: number
   /** Grace for a turn to end after SIGINT before the member stops, ms. Default 30s. */
   stopGraceMs?: number
   onEvent?: (jobId: string, line: string, event: ClaudeEvent | undefined) => void
@@ -100,8 +104,6 @@ export class Member {
   private readonly closing = new Map<string, { verdict: Verdict; score: number; note: string }>()
   /** The grant of a turn of each job, from its latest input. Every connector call runs under it, never under the base grant. */
   private readonly lastGrant = new Map<string, string>()
-  /** Closed jobs whose merge request is not opened yet. The workspace stays until a later try ends it. */
-  private readonly pending = new Map<string, { verdict: string }>()
   private readonly log: (line: string) => void
   private readonly timers: NonNullable<MemberDeps["timers"]>
   private wake: (() => void) | undefined
@@ -382,14 +384,6 @@ export class Member {
       const input = this.queue[i]!
       if (this.running.has(input.jobId)) continue
       if (signedOut && input.kind !== "close") continue
-      if (this.pending.has(input.jobId) && input.kind !== "answer") {
-        // A closed job still holds its work. Any later input is a new try, under the grant it carries.
-        this.queue.splice(i, 1)
-        const grant = this.deps.grants.turnGrant(input)
-        if (grant) this.lastGrant.set(input.jobId, grant)
-        await this.deliver(this.deps.table.get(input.jobId), this.pending.get(input.jobId)!.verdict)
-        return true
-      }
       if (input.kind === "close") {
         this.queue.splice(i, 1)
         await this.close(input)
@@ -550,25 +544,42 @@ export class Member {
 
   /**
    * Open the merge requests of a closed job, under a live grant of a turn of
-   * the job. A permanent refusal or a success ends the job: the workspace is
-   * removed and the job is dropped. Any other failure keeps the workspace, and
-   * the job waits for a later input with a fresh grant. The work is never
-   * deleted on a failure that a later try can mend.
+   * the job. The grant is renewed while it is live. A failure that a later try
+   * can mend (a network failure, UNAVAILABLE, "call the tool again") is tried
+   * again with backoff, inside the close, for a bounded time. Then, or on a
+   * permanent refusal, the job is failed with the reason, the workspace is
+   * removed and the job record is dropped. Nothing outlives the close.
    */
   private async deliver(job: JobRecord, verdict: string): Promise<void> {
     const push = verdict !== "abandoned"
-    const outcomes = await this.deps.workspace.wrapUp(job.jobId, job.spec.repositories, {
-      push,
-      title: `job ${job.jobId}: ${job.spec.goal.slice(0, 72)}`,
-      description: `${job.spec.goal}\n\nVerdict: ${verdict}. Turns: ${job.turns}. Cost: $${job.costUsd.toFixed(4)}.`,
-      grant: this.lastGrant.get(job.jobId),
-    })
+    const limitMs = this.deps.deliverRetryMs ?? 5 * 60_000
+    const started = Date.now()
+    let backoff = this.deps.deliverBackoffMs ?? 1000
+    let outcomes: WrapUpOutcome[]
+    for (;;) {
+      outcomes = await this.deps.workspace.wrapUp(job.jobId, job.spec.repositories, {
+        push,
+        title: `job ${job.jobId}: ${job.spec.goal.slice(0, 72)}`,
+        description: `${job.spec.goal}\n\nVerdict: ${verdict}. Turns: ${job.turns}. Cost: $${job.costUsd.toFixed(4)}.`,
+        grant: this.lastGrant.get(job.jobId),
+      })
+      if (!outcomes.some((o) => o.retryable)) break
+      if (this.stopping || Date.now() - started + backoff > limitMs) {
+        const spent = `The tries ended after ${Math.round((Date.now() - started) / 1000)} seconds.`
+        outcomes = outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${spent}`, retryable: false } : o))
+        break
+      }
+      for (const o of outcomes) {
+        if (o.retryable) this.console(job.jobId, { subtype: "delivery_waiting", repository: o.repository, message: o.error })
+      }
+      await new Promise<void>((resolve) => this.timers.setTimeout(resolve, backoff))
+      backoff = Math.min(backoff * 2, 30_000)
+    }
     const failed = outcomes.some((o) => o.failed)
-    const retry = outcomes.some((o) => o.retryable)
     for (const o of outcomes) {
       if (o.error) {
         this.log(`job ${job.jobId}: ${o.repository}: ${o.error}`)
-        this.console(job.jobId, { subtype: o.retryable ? "delivery_waiting" : "delivery_refused", repository: o.repository, message: o.error })
+        this.console(job.jobId, { subtype: "delivery_refused", repository: o.repository, message: o.error })
       }
       await this.deps.inbox
         .reportDeliverable({ jobId: job.jobId, repository: o.repository, deliverable: o.deliverable, branch: o.branch, files: o.files, mergeRequest: o.mergeRequest, mergeRequestUrl: o.mergeRequestUrl, error: o.error })
@@ -577,11 +588,6 @@ export class Member {
     const note = job.closure?.note ? `closed with verdict ${verdict}: ${job.closure.note.slice(0, 500)}` : `closed with verdict ${verdict}`
     // A refused or failed delivery is a failed job, whatever the verdict was.
     await this.report(job, failed ? `delivery failed: ${outcomes.find((o) => o.error && o.failed)?.error.slice(0, 500) ?? ""}` : note, failed)
-    if (retry) {
-      this.pending.set(job.jobId, { verdict })
-      return
-    }
-    this.pending.delete(job.jobId)
     this.lastGrant.delete(job.jobId)
     await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
     await this.deps.table.drop(job.jobId)

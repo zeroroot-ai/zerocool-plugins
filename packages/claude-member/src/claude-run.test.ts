@@ -13,7 +13,7 @@ const FAKE = fileURLToPath(new URL("../test/bin/fake-claude.mjs", import.meta.ur
 const fixture = (name: string): string => fileURLToPath(new URL(`../test/fixtures/claude-code-2.1.257/${name}`, import.meta.url))
 
 test("a one-shot run puts the goal on argv and keeps no session file", () => {
-  const args = claudeArgs({ goal: "find secrets", cwd: "/w", sandbox: "launcher", model: "claude-opus-4-6", maxTurns: 50, maxBudgetUsd: 5, sessionPersistence: false, allowedTools: ["mcp__gibson__*"], mcpServers: { gibson: { command: "node", args: ["/app/dist/server.js"] } } })
+  const args = claudeArgs({ goal: "find secrets", cwd: "/w", sandbox: "launcher", model: "claude-opus-4-6", maxTurns: 50, maxBudgetUsd: 5, sessionPersistence: false, allowedTools: ["mcp__gibson__*"], mcpServers: { gibson: { command: "node", args: ["/app/dist/server.js"] } }, mcpConfigFile: "/state/turns/j/mcp.json" })
   assert.deepEqual(args.slice(0, 2), ["-p", "find secrets"])
   assert.ok(args.includes("--no-session-persistence"))
   assert.ok(args.includes("--dangerously-skip-permissions"))
@@ -25,13 +25,17 @@ test("a one-shot run puts the goal on argv and keeps no session file", () => {
 })
 
 test("a turn reads stream-json on stdin, keeps its session, and resumes it", () => {
-  const args = claudeArgs({ input: "next step", cwd: "/w", sandbox: "launcher", resume: "sess-1", permissionPromptTool: "mcp__gibson__ask", mcpServers: { gibson: { type: "http", url: "http://127.0.0.1:7455/mcp" } } })
+  const args = claudeArgs({ input: "next step", cwd: "/w", sandbox: "launcher", resume: "sess-1", permissionPromptTool: "mcp__gibson__ask", mcpServers: { gibson: { type: "http", url: "http://127.0.0.1:7455/mcp" } }, mcpConfigFile: "/state/turns/j/mcp.json" })
   assert.equal(args[args.indexOf("--input-format") + 1], "stream-json")
   assert.equal(args[args.indexOf("--resume") + 1], "sess-1")
   assert.equal(args[args.indexOf("--permission-prompt-tool") + 1], "mcp__gibson__ask")
   assert.ok(!args.includes("--no-session-persistence"), "a turn must be resumable")
-  const mcp = JSON.parse(args[args.indexOf("--mcp-config") + 1]!) as { mcpServers: { gibson: { type: string; url: string } } }
-  assert.deepEqual(mcp.mcpServers.gibson, { type: "http", url: "http://127.0.0.1:7455/mcp" })
+  assert.equal(args[args.indexOf("--mcp-config") + 1], "/state/turns/j/mcp.json", "the argv carries the path of the config")
+  assert.ok(!args.some((a) => a.includes("127.0.0.1")), "and never the URL: /proc/<pid>/cmdline is readable")
+})
+
+test("an MCP server list with no config file is refused, so a URL never reaches argv", () => {
+  assert.throws(() => claudeArgs({ input: "x", cwd: "/w", sandbox: "launcher", mcpServers: { workspace: { type: "http", url: "http://127.0.0.1:1/t/abc/mcp" } } }), /needs mcpConfigFile/)
 })
 
 test("exactly one of goal and input is set", () => {

@@ -2,6 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -28,7 +29,7 @@ interface Call {
 const blobSha = (c: string) => createHash("sha1").update(`blob ${Buffer.byteLength(c)}\0${c}`).digest("hex")
 
 /** A fake forge. `files` can change during a test, to move the base branch. */
-function forge(files: Record<string, string | { content: string; mode: string }>, over: { pageSize?: number; truncated?: boolean; extra?: Entry[]; refuse?: Record<string, string>; failOpen?: (n: number) => boolean } = {}) {
+function forge(files: Record<string, string | { content: string; mode: string }>, over: { pageSize?: number; truncated?: boolean; extra?: Entry[]; refuse?: Record<string, string>; failOpen?: (n: number) => boolean; transient?: boolean; failRead?: (path: string) => boolean } = {}) {
   const calls: Call[] = []
   const content = (p: string) => (typeof files[p] === "string" ? (files[p] as string) : (files[p] as { content: string }).content)
   const modeOf = (p: string) => (typeof files[p] === "string" ? "100644" : (files[p] as { mode: string }).mode)
@@ -44,12 +45,13 @@ function forge(files: Record<string, string | { content: string; mode: string }>
     if (tool === "read_file") {
       const p = String(args.path)
       if (over.refuse?.[p]) throw new ToolCallError("read_file", over.refuse[p]!)
+      if (over.failRead?.(p)) throw new Error(`read_file broke on ${p}`)
       if (files[p] === undefined) return { found: false }
       return { found: true, content: content(p), sha: blobSha(content(p)), path: p }
     }
     if (tool === "open_merge_request") {
       opens++
-      if (over.failOpen?.(opens)) throw new ToolCallError("open_merge_request", "the host is busy")
+      if (over.failOpen?.(opens)) throw new ToolCallError("open_merge_request", "the host is busy", over.transient ?? true)
       return { merge_request: `acme/${args.project}#${opens}`, url: `https://git.example/${args.project}/pull/${opens}`, source_branch: args.branch, existing: false }
     }
     throw new Error(`unexpected tool ${tool}`)
@@ -278,7 +280,8 @@ test("a symbolic link, a submodule path and a listed symlink are refused", async
     const [out] = await s.ws.wrapUp("j1", [repo], wrap)
     assert.match(out!.error, /not regular files.*newlink/)
     assert.match(out!.error, /mod\/inner\/x\.txt \(below mod, which is a submodule\)/)
-    assert.match(out!.error, /never fetched them.*\bln\b/)
+    assert.doesNotMatch(out!.error, /never fetched them.*\b(ln|mod)\b/, "a symlink or submodule is not a regular file, and is not a fetch you forgot")
+    assert.match(out!.error, /ln \(the path is not a regular file: it is a symlink in the repository\)/)
     assert.equal(s.byTool("open_merge_request").length, 0)
   } finally {
     await s.cleanup()
@@ -480,7 +483,7 @@ test("an expired or missing grant at wrap-up keeps the work and says a later try
       const [out] = await s.ws.wrapUp("j1", [repo], { ...wrap, grant })
       assert.equal(out!.retryable, true)
       assert.equal(out!.failed, true)
-      assert.match(out!.error, /No live grant of a turn of this job.*workspace is kept/)
+      assert.match(out!.error, /No live grant of a turn of this job/)
     }
     assert.equal(s.byTool("open_merge_request").length, 0)
     assert.equal(await readFile(join(tree!.path, "b.txt"), "utf8"), "b\n", "the work is still there")
@@ -492,7 +495,20 @@ test("an expired or missing grant at wrap-up keeps the work and says a later try
   }
 })
 
-test("a failure of the tool is retryable and keeps the work, with the same branch name on the retry", async () => {
+test("a permanent refusal of the tool is not retryable", async () => {
+  const s = await setup({ "a.txt": "a\n" }, { failOpen: () => true, transient: false })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await writeFile(join(tree!.path, "b.txt"), "b\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.failed, true)
+    assert.equal(out!.retryable, false)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("a transient failure of the tool is retryable, with the same branch name on the retry", async () => {
   const s = await setup({ "a.txt": "a\n" }, { failOpen: (n) => n === 1 })
   try {
     const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
@@ -550,6 +566,184 @@ test("a job id, repository name or base branch git could read as an option or a 
     assert.equal(assertGitArgument("base branch", "release/2026.09"), "release/2026.09")
     assert.equal(assertGitArgument("job id", "job_1.a-b", { path: true }), "job_1.a-b")
     assert.equal(s.calls.length, 0, "a refused argument calls no tool")
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// ---- .gitignore (N1)
+
+const IGNORE = "dist/\nnode_modules/\ncoverage/\n__pycache__/\n.venv\n"
+
+test("every listed .gitignore, root and nested, is fetched, and build output, a venv and a cache stay out of the change", async () => {
+  const s = await setup({ ".gitignore": IGNORE, "pkg/.gitignore": "*.log\n", "src/a.go": "package a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    assert.deepEqual(s.byTool("read_file").map((c) => c.args.path).sort(), [".gitignore", "pkg/.gitignore"])
+    assert.equal(await readFile(join(tree!.path, "pkg/.gitignore"), "utf8"), "*.log\n")
+    const w = (p: string, body: string | Buffer) => mkdir(join(tree!.path, p, ".."), { recursive: true }).then(() => writeFile(join(tree!.path, p), body))
+    await w("dist/bundle.js", "x\n")
+    await w("node_modules/a/b.js", "x\n")
+    await w("coverage/lcov.info", "x\n")
+    await w("pkg/__pycache__/m.cpython-312.pyc", Buffer.from([0, 1, 2, 3]))
+    await w("pkg/debug.log", "log\n")
+    await symlink("/usr", join(tree!.path, ".venv"))
+    await w("src/new.go", "package n\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.error, "")
+    assert.deepEqual((s.byTool("open_merge_request")[0]!.args as { files: unknown[] }).files, [{ path: "src/new.go", content: "package n\n" }])
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("without the .gitignore the same files are refused, so the filter is what lets them pass", async () => {
+  const s = await setup({ "src/a.go": "package a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await symlink("/usr", join(tree!.path, ".venv"))
+    await mkdir(join(tree!.path, "pkg/__pycache__"), { recursive: true })
+    await writeFile(join(tree!.path, "pkg/__pycache__/m.pyc"), Buffer.from([0, 1]))
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.match(out!.error, /not regular files.*\.venv/)
+    assert.match(out!.error, /not UTF-8 text.*m\.pyc/)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("a nested git repository is never entered, and it is refused", async () => {
+  const s = await setup({ "src/a.go": "package a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await mkdir(join(tree!.path, "vendor/lib"), { recursive: true })
+    await execFileSync("git", ["init", "-q"], { cwd: join(tree!.path, "vendor/lib") })
+    await writeFile(join(tree!.path, "vendor/lib/x.go"), "package x\n")
+    const [out] = await s.ws.wrapUp("j1", [repo], wrap)
+    assert.match(out!.error, /vendor\/lib\/ \(a nested git repository\)/)
+    assert.equal(s.byTool("open_merge_request").length, 0)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("a .gitignore that cannot be read stops the workspace, because the filter would be wrong", async () => {
+  const s = await setup({ ".gitignore": IGNORE }, { refuse: { ".gitignore": "the file is not text" } })
+  try {
+    await assert.rejects(s.ws.prepare("j1", [repo], "g", { resumed: false }), (e: Error) => e instanceof DeliveryRefused && /\.gitignore cannot be read/.test(e.message))
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// ---- the grant is renewed (N2a)
+
+test("liveness is read from the renewed grant, and the calls keep the grant they were opened with", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "zerocool-ws-"))
+  try {
+    const f = forge({ "a.txt": "a\n" })
+    const used: string[] = []
+    const tools = Object.assign(
+      ((g, c, t, a) => {
+        used.push(g)
+        return f.tools(g, c, t, a)
+      }) as ToolCaller,
+      { current: (g: string) => (g === "old" ? "renewed" : g) },
+    )
+    const ws = new WorkspaceManager({ root: dir, stateDir: join(dir, "state"), tools, grantLive: (g) => g === "renewed" })
+    const [tree] = await ws.prepare("j1", [repo], "old", { resumed: false })
+    assert.deepEqual(tree!.notes, [], "the old string is expired, and the renewed grant is live")
+    await writeFile(join(tree!.path, "b.txt"), "b\n")
+    const [out] = await ws.wrapUp("j1", [repo], { ...wrap, grant: "old" })
+    assert.equal(out!.error, "")
+    assert.ok(used.every((g) => g === "old"), "the harness of the grant sends the renewed token itself")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- a record of another project or ref (N4)
+
+test("a record for another ref is refused on load: the workspace starts again and Claude is told the edits were lost", async () => {
+  const s = await setup({ "a.txt": "a\n" })
+  try {
+    const [first] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await s.fetch("j1", "a.txt")
+    await writeFile(join(first!.path, "a.txt"), "edited\n")
+    const file = join(s.dir, "state", "workspaces", "j1", "api.json")
+    const rec = JSON.parse(await readFile(file, "utf8"))
+    await writeFile(file, JSON.stringify({ ...rec, ref: "evil-branch" }))
+    const fresh = new WorkspaceManager({ root: s.dir, stateDir: join(s.dir, "state"), tools: s.tools, grantLive: () => true })
+    const [again] = await fresh.prepare("j1", [repo], "g", { resumed: false })
+    assert.match(again!.notes[0]!, /earlier edits to this repository were lost/)
+    assert.equal(await readFile(join(again!.path, "a.txt")).then(() => "present", () => "gone"), "gone")
+    const read = s.byTool("read_file").length
+    const [out] = await fresh.wrapUp("j1", [repo], wrap)
+    assert.equal(out!.files, 0)
+    assert.equal(s.byTool("read_file").length, read)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("a record for another project or ref gives no fetch and no delivery", async () => {
+  const s = await setup({ "a.txt": "a\n" })
+  try {
+    await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    const other = { ...repo, baseBranch: "develop" }
+    assert.match((await s.ws.fetchFile("j1", [other], undefined, "a.txt", "g")).text, /not prepared for this project and ref/)
+    const [out] = await s.ws.wrapUp("j1", [other], wrap)
+    assert.match(out!.error, /no record of its base for acme\/api at develop/)
+    assert.equal(out!.retryable, false)
+  } finally {
+    await s.cleanup()
+  }
+})
+
+test("the base is read again at the ref of the job spec", async () => {
+  const s = await setup({ "a.txt": "a\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await s.fetch("j1", "a.txt")
+    await writeFile(join(tree!.path, "a.txt"), "edited\n")
+    await s.ws.wrapUp("j1", [repo], wrap)
+    assert.ok(s.byTool("read_file").every((c) => c.args.ref === "main"))
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// ---- writes stay inside the worktree (N6)
+
+test("fetch_file never writes through a symbolic link, in a folder or at the file", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "zerocool-outside-"))
+  const s = await setup({ "src/a.go": "package a\n", "b.txt": "b\n" })
+  try {
+    const [tree] = await s.ws.prepare("j1", [repo], "g", { resumed: false })
+    await symlink(outside, join(tree!.path, "src"))
+    const folder = await s.fetch("j1", "src/a.go")
+    assert.equal(folder.ok, false)
+    assert.match(folder.text, /src is a symbolic link/)
+    await assert.rejects(stat(join(outside, "a.go")), /ENOENT/, "nothing was written outside")
+    await writeFile(join(outside, "victim.txt"), "keep\n")
+    await symlink(join(outside, "victim.txt"), join(tree!.path, "b.txt"))
+    const file = await s.fetch("j1", "b.txt")
+    assert.equal(file.ok, false)
+    assert.match(file.text, /is a symbolic link/)
+    assert.equal(await readFile(join(outside, "victim.txt"), "utf8"), "keep\n")
+  } finally {
+    await s.cleanup()
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test("the first failure of a read stops every runner of the pool", async () => {
+  const names = Array.from({ length: 60 }, (_, i) => `f${String(i).padStart(2, "0")}.txt`)
+  const files = Object.fromEntries(names.map((n) => [n, "x\n"]))
+  const s = await setup(files, { failRead: (p) => p === "f03.txt" })
+  try {
+    await assert.rejects(s.ws.prepare("j1", [{ ...repo, paths: names }], "g", { resumed: false }), /read_file broke on f03\.txt/)
+    assert.ok(s.byTool("read_file").length < 30, `${s.byTool("read_file").length} reads ran after the failure`)
   } finally {
     await s.cleanup()
   }

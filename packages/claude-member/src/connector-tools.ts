@@ -21,6 +21,8 @@ export class ToolCallError extends Error {
   constructor(
     readonly tool: string,
     message: string,
+    /** True when a later try can succeed: a network failure, UNAVAILABLE, or "call the tool again". */
+    readonly transient = false,
   ) {
     super(`${tool}: ${message}`)
     this.name = "ToolCallError"
@@ -42,33 +44,67 @@ export function connectorToolId(connectorRef: string, tool: string): string {
 export interface ToolHarness {
   context: TaskHarness["context"]
   client: Pick<TaskHarness["client"], "callToolProto">
+  /** The grant in use now. The harness renews its grant, so this changes. */
+  token(): string
   stop(): void
+}
+
+/** The texts of a refusal that a later try can mend. */
+const TRANSIENT_TEXT = /unavailable|timed? ?out|deadline|temporar|try again|call the tool again|connection (reset|refused|closed)|econn|network/i
+
+/** The connect codes that mean the call did not run to an answer: unavailable (14) and deadline exceeded (4). */
+const TRANSIENT_CODES = new Set([4, 14])
+
+/** A {@link ToolCaller} that also says which grant is in force. */
+export type GrantedToolCaller = ToolCaller & {
+  /**
+   * The grant in use now for `grant`. The harness of a grant renews it before it
+   * expires, so a turn that holds the harness keeps a live grant. The first call
+   * opens the harness and starts the renewal.
+   */
+  current(grant: string): string
 }
 
 /**
  * A {@link ToolCaller} over `CallToolProto`. `open` makes a harness that sends
- * `grant` on every call. The caller keeps the harness of the latest grant and
- * stops the one that it replaces, so a run of many calls under one grant uses
- * one connection.
+ * `grant` on every call and renews it while it is live (`RenewCapabilityGrant`).
+ * The caller keeps one harness for each recent grant, so a run of calls under
+ * one grant uses one connection and one renewal, and it stops the oldest.
  */
-export function harnessToolCaller(open: (grant: string) => ToolHarness): ToolCaller {
-  let current: { grant: string; harness: ToolHarness } | undefined
+export function harnessToolCaller(open: (grant: string) => ToolHarness, keep = 16): GrantedToolCaller {
+  const held = new Map<string, ToolHarness>()
   const harnessFor = (grant: string): ToolHarness => {
-    if (current?.grant === grant) return current.harness
-    current?.harness.stop()
-    current = { grant, harness: open(grant) }
-    return current.harness
+    const have = held.get(grant)
+    if (have) return have
+    if (held.size >= keep) {
+      const oldest = held.keys().next().value as string
+      held.get(oldest)?.stop()
+      held.delete(oldest)
+    }
+    const harness = open(grant)
+    held.set(grant, harness)
+    return harness
   }
-  return async (grant, connectorRef, tool, args) => {
+  const call: ToolCaller = async (grant, connectorRef, tool, args) => {
     const harness = harnessFor(grant)
-    const res = await harness.client.callToolProto({
-      context: harness.context,
-      name: "invoke_tool",
-      inputJson: new TextEncoder().encode(JSON.stringify({ id: connectorToolId(connectorRef, tool), args })),
-    })
-    if (res.error) throw new ToolCallError(tool, res.error.message || "the call was refused")
+    let res
+    try {
+      res = await harness.client.callToolProto({
+        context: harness.context,
+        name: "invoke_tool",
+        inputJson: new TextEncoder().encode(JSON.stringify({ id: connectorToolId(connectorRef, tool), args })),
+      })
+    } catch (e) {
+      const code = (e as { code?: unknown }).code
+      throw new ToolCallError(tool, (e as Error).message, typeof code === "number" && TRANSIENT_CODES.has(code))
+    }
+    if (res.error) {
+      const message = res.error.message || "the call was refused"
+      throw new ToolCallError(tool, message, TRANSIENT_TEXT.test(message))
+    }
     if (res.outputJson.length === 0) return undefined
     const body = JSON.parse(new TextDecoder().decode(res.outputJson)) as { result?: unknown }
     return body.result
   }
+  return Object.assign(call, { current: (grant: string) => harnessFor(grant).token() })
 }
