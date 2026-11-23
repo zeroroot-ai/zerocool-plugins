@@ -114,7 +114,7 @@ async function harness(cap: number, hangMs = "0") {
     inbox: daemon,
     grants: staticGrants("base-grant"),
     status: daemon,
-    workspace: new WorkspaceManager({ root: join(dir, "workspace"), stateDir: join(dir, "state"), capBytes: 1 << 30, credential: async () => "unused" }),
+    workspace: new WorkspaceManager({ root: join(dir, "workspace"), tools: async () => { throw new Error("no tool call in this test") } }),
     claudeCodeVersion: "2.1.257",
     idlePollMs: 25,
     onEvent: (_jobId: string, line: string) => events.push(line),

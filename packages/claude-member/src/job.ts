@@ -37,16 +37,13 @@ export type Verdict = "accomplished" | "failed" | "abandoned"
 export interface JobRepository {
   /** Short name, also the worktree directory name under the job. */
   name: string
-  /** Connector reference, e.g. `gitlab/acme`. The clone cache is keyed by it. */
+  /** Connector reference, `connector/<name>`. It names the connector whose tools the workspace calls. */
   connectorRef: string
-  cloneUrl: string
+  /** The project in the connector's own terms, for example `group/project` or `owner/repo`. */
+  project: string
   baseBranch: string
   /** What the driver does at wrap-up. */
   deliverable: Deliverable
-  /** The credential name `GetCredential` resolves the git token from. */
-  credentialName: string
-  /** The HTTP basic username the token pairs with. Default `oauth2`. */
-  gitUsername?: string
 }
 
 /** The outward side effect the driver performs for a repository at wrap-up. */
@@ -207,13 +204,6 @@ export class JobTable {
 
   get freeSlots(): number {
     return Math.max(0, this.cap - this.inFlight)
-  }
-
-  /** Repository connector refs some live job uses. Eviction must skip them. */
-  connectorRefsInUse(): Set<string> {
-    const refs = new Set<string>()
-    for (const r of this.live()) for (const repo of r.spec.repositories) refs.add(repo.connectorRef)
-    return refs
   }
 
   async open(spec: JobSpec): Promise<JobRecord> {

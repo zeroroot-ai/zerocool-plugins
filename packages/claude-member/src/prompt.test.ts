@@ -9,7 +9,7 @@ import { turnSystemPrompt } from "./prompt.js"
 const spec: JobSpec = {
   jobId: "job-42",
   goal: "close the unauthenticated admin route",
-  repositories: [{ name: "api", connectorRef: "gitlab/acme", cloneUrl: "https://git.example/acme/api.git", baseBranch: "main", deliverable: "MERGE_REQUEST", credentialName: "gitlab-token" }],
+  repositories: [{ name: "api", connectorRef: "gitlab/acme", project: "acme/api", baseBranch: "main", deliverable: "MERGE_REQUEST" }],
   credentialNames: ["gitlab-token", "sonar-token"],
   inputNodeIds: ["node-1"],
   acceptance: "the verifier finds no unauthenticated route",
@@ -26,10 +26,11 @@ test("the turn prompt names the job, the paths, the deliverable and the credenti
   assert.match(p, /node-1/)
 })
 
-test("the prompt states the one push rule, so the model never holds a token", () => {
+test("the prompt states the push rule and the delivery limits, so the model never holds a token", () => {
   const p = turnSystemPrompt(spec, [])
-  assert.match(p, /Commit on the job branch\. Never push\./)
-  assert.match(p, /The platform pushes and opens the merge request at wrap-up\./)
+  assert.match(p, /Commit on the job branch\. Never push/)
+  assert.match(p, /The platform opens one merge request from your changes at wrap-up\./)
+  assert.match(p, /at most 100 changed files, 1 MiB for one file and 8 MiB in all/)
 })
 
 test("the prompt tells the model a scorer closes the job", () => {

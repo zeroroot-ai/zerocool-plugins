@@ -47,8 +47,6 @@ export const MEMBER_ENV = {
   jobCap: "ZEROCOOL_JOB_CAP",
   /** The workspace root. Default `/workspace`. */
   workspace: "ZEROCOOL_WORKSPACE",
-  /** Clone cache cap in bytes. Default 20 GiB. */
-  workspaceCapBytes: "ZEROCOOL_WORKSPACE_CAP_BYTES",
   /** The driver's state directory. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. */
   stateDir: "ZEROCOOL_STATE_DIR",
   /** The `claude` bin. A `.js` path runs under node. Default `claude`. */
@@ -92,7 +90,6 @@ export interface MemberEnv {
   model: string
   jobCap: number
   workspace: string
-  workspaceCapBytes: number
   stateDir: string
   claudeBin: string
   maxTurns: number
@@ -184,7 +181,6 @@ export function readMemberEnv(env: NodeJS.ProcessEnv): MemberEnv {
     model: env[MEMBER_ENV.model] ?? "",
     jobCap: positiveInt(env, MEMBER_ENV.jobCap, 1),
     workspace: env[MEMBER_ENV.workspace] ?? "/workspace",
-    workspaceCapBytes: positiveInt(env, MEMBER_ENV.workspaceCapBytes, 20 * 1024 * 1024 * 1024),
     stateDir,
     claudeBin: env[MEMBER_ENV.claudeBin] ?? "claude",
     maxTurns: positiveInt(env, MEMBER_ENV.maxTurns, 200),

@@ -54,7 +54,6 @@ The daemon sets these when it launches a member sandbox.
 | `ZEROCOOL_CLAUDE_MODEL` | no | passed as `--model` |
 | `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1 |
 | `ZEROCOOL_WORKSPACE` | no | workspace root, default `/workspace` |
-| `ZEROCOOL_WORKSPACE_CAP_BYTES` | no | clone cache cap, default 20 GiB |
 | `ZEROCOOL_STATE_DIR` | no | driver state. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. See below. |
 | `ZEROCOOL_CLAUDE_BIN` | no | the `claude` bin, default `claude` |
 | `ZEROCOOL_CLAUDE_MAX_TURNS` | no | `--max-turns` per turn, default 200 |
@@ -121,8 +120,9 @@ credential passes only for its login shape: `AWS_*` for `bedrock`, `GOOGLE_*`
 and `CLOUD_ML_REGION` for `vertex`, `AZURE_*` for `foundry`. No
 `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the model's
 process. `NODE_EXTRA_CA_CERTS` passes, so the child trusts the platform CA.
-The connector token goes to `git` alone, through `GIT_ASKPASS`, and is never
-written to disk or placed on a command line.
+The member holds no forge credential, and `git` runs on local files only. The
+daemon refuses to give an untrusted sandboxed agent a tenant secret, so the
+workspace reads and delivers through governed connector tools.
 
 ## Two shapes, one path
 
@@ -135,7 +135,7 @@ the one-shot bin.
 
 A one-shot task says what it wants in the `Task` context, with the same keys
 the opencode dispatch uses: `repository.url`, `repository.branch`,
-`repository.name`, `repository.connector`, `repository.credential`,
+`repository.name`, `repository.connector`, `repository.project`,
 `repository.deliverable`, `credentials` (comma separated), `input.nodes` and
 `acceptance`.
 
@@ -147,7 +147,7 @@ the opencode dispatch uses: `repository.url`, `repository.branch`,
 | job queue | `HarnessCallbackService.PullJob` when a slot is free |
 | job state | `HarnessCallbackService.ReportJobState` on every turn boundary |
 | deliverables | `HarnessCallbackService.ReportDeliverable` at wrap-up |
-| connector token | `HarnessCallbackService.GetCredential` under the base grant |
+| repository read and delivery | `HarnessCallbackService.CallToolProto` with the `invoke_tool` meta-tool, under the grant of the turn |
 | member status | `ComponentService.Heartbeat`, with `gibson.bank.v1.MemberStatus` |
 
 An RPC the daemon refuses never ends the member. A refused heartbeat is
@@ -163,18 +163,47 @@ Each input carries the grant of its own dispatch. The driver puts that grant
 in force for the turn it runs and drops it after. A pulled job carries none,
 so its first turn runs on the member base grant.
 
-A `RepositorySpec` names a connector and a project, not a url and not a
-secret. The job spec's `context` map carries the rest:
-`connector.<ref>.credential` names the tenant secret, and
-`ZEROCOOL_CONNECTOR_BASE_URL` or `connector.<ref>.base_url` gives the host.
-Without them the driver falls back to `<connector name>-connector-cred` and
-`https://gitlab.com`.
+A `RepositorySpec` names a connector (`connector/<name>`) and a project in the
+connector's own terms. It names no url and no secret.
+
+## How a job reads and delivers a repository
+
+The workspace uses the git-host tools of the connector. It never clones, never
+pushes and holds no token. The daemon binds a fix to its job only when
+`open_merge_request` opened the merge request, so a pushed branch would never
+link.
+
+1. At the first turn, `list_tree` pages the tree of the base branch (input
+   `project`, `ref`, `cursor`). `read_file` reads each file. The driver writes
+   the files under `jobs/<job id>/<repo name>`, runs a local `git init` on the
+   branch `job/<job id>` and commits the base. There is no remote.
+2. Claude edits and commits in that repository.
+3. At wrap-up, the driver computes the diff against the base commit. It calls
+   `open_merge_request` once, with `project`, `base_branch`, the branch
+   `job/<job id>`, a title, a description and the changed `files` (a `path`
+   with `content`, or `delete: true`).
+4. The driver reports the `merge_request` key and the `url` of the tool result
+   with `ReportDeliverable`.
+
+All calls carry the grant of the turn, and each call is checked and recorded
+by the daemon. The tools are named by `mcp:<connector>:<tool>` in
+`invoke_tool`.
+
+The tool limits are 100 files, 1 MiB for one file and 8 MiB in all, as UTF-8
+text. A symbolic link, a submodule or a new executable file is not a change
+that the tool can take. When a change is over a limit, the driver opens
+nothing, and the refusal is the result of the job: a console line of type
+`zerocool` and subtype `delivery_refused`, the log, and the `error` of the
+deliverable report. A truncated tree is refused before the first turn. The job
+closes as `failed`, the console shows subtype `workspace_refused`, and nothing
+is delivered. The deliverable `PUSH_BRANCH` is refused at wrap-up, because no
+tool pushes a branch.
 
 ## Teardown and resume
 
 A `wrap_up` input is the scorer's `CloseJob` reaching the member. The driver
 runs one last turn with the wrap-up prompt (commit on the job branch, write a
-summary of what was done and what remains), then performs the deliverables,
+summary of what was done and what remains), then opens the merge request,
 archives the transcript, reports the close, removes the worktrees and drops
 the job. A `close` input does the same without the final turn, and the stale
 limit does it with verdict `abandoned`.
@@ -185,8 +214,8 @@ included. It goes to the session store under the job id, in chunks under
 1 MiB behind one manifest. A member relaunched after a sandbox death gets the
 job back from the daemon with its session id, restores the transcript from
 the store, and its first turn passes `--resume`, so the conversation
-continues. The worktree comes back from the pushed `job/<job id>` branch when
-one exists.
+continues. The workspace is built again from the base branch. Work that no
+merge request carried is gone with the sandbox.
 
 On SIGTERM the driver interrupts the turns in flight with SIGINT, waits up to
 the grace period (`stopGraceMs`, default 30 s), archives every live job and

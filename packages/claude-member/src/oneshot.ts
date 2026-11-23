@@ -5,6 +5,7 @@ import { readSandboxDispatch, type SandboxDispatch } from "@zeroroot-ai/sdk"
 import type { MemberEnv } from "./env.js"
 import type { DeliverableReport, GrantSource, Inbox, JobInput, JobStateReport, MemberStatus, StatusReporter } from "./inbox.js"
 import type { Deliverable, JobRepository, JobSpec } from "./job.js"
+import { trimLeadingSlashes } from "./text.js"
 
 /**
  * The one-shot dispatch, run through the member driver (zerocool-plugins#111,
@@ -95,6 +96,16 @@ function deliverableFrom(value: string | undefined): Deliverable {
   return "NONE"
 }
 
+/** `group/project` from `https://host/group/project.git`. A value with no scheme is the project already. */
+function projectOfUrl(url: string): string {
+  const bare = url.replace(/\.git$/, "")
+  try {
+    return trimLeadingSlashes(new URL(bare).pathname)
+  } catch {
+    return bare
+  }
+}
+
 /**
  * The job a dispatch asks for.
  *
@@ -102,7 +113,7 @@ function deliverableFrom(value: string | undefined): Deliverable {
  * (zeroroot-ai/sdk#546). Until that field is published, a dispatch says the
  * same thing in the Task context, with the keys the opencode dispatch already
  * uses: `repository.url`, `repository.branch`, `repository.name`,
- * `repository.credential`, `repository.connector`, `repository.deliverable`,
+ * `repository.project`, `repository.connector`, `repository.deliverable`,
  * `credentials` (a comma-separated list) and `acceptance`.
  */
 export function jobSpecFromDispatch(d: SandboxDispatch, env: MemberEnv): JobSpec {
@@ -112,18 +123,16 @@ export function jobSpecFromDispatch(d: SandboxDispatch, env: MemberEnv): JobSpec
   if (url) {
     repositories.push({
       name: ctx["repository.name"] || url.replace(/\.git$/, "").split("/").pop() || "repo",
-      connectorRef: ctx["repository.connector"] || "gitlab/default",
-      cloneUrl: url,
+      connectorRef: ctx["repository.connector"] || "connector/default",
+      project: ctx["repository.project"] || projectOfUrl(url),
       baseBranch: ctx["repository.branch"] || "main",
       deliverable: deliverableFrom(ctx["repository.deliverable"]),
-      credentialName: ctx["repository.credential"] || ctx["gitlab.credential"] || "gitlab-token",
     })
   }
   const credentialNames = (ctx.credentials ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
-  for (const r of repositories) if (!credentialNames.includes(r.credentialName)) credentialNames.push(r.credentialName)
 
   const constraints: JobSpec["constraints"] = {}
   const taskMaxTurns = (d.task as unknown as { constraints?: { maxTurns?: number } }).constraints?.maxTurns ?? 0

@@ -70,8 +70,10 @@ export interface DeliverableReport {
   repository: string
   deliverable: Deliverable
   branch: string
-  /** Commits pushed, when the deliverable pushed. */
-  commits: number
+  /** Files of the change, when a merge request was opened. */
+  files: number
+  /** The `merge_request` key of the `open_merge_request` result, when one was opened. */
+  mergeRequest: string
   /** The merge request URL, when one was opened. */
   mergeRequestUrl: string
   /** Set when the deliverable was not performed. */

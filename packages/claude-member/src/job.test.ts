@@ -12,7 +12,7 @@ function spec(jobId: string): JobSpec {
   return {
     jobId,
     goal: `do ${jobId}`,
-    repositories: [{ name: "api", connectorRef: "gitlab/acme", cloneUrl: "https://git.example/acme/api.git", baseBranch: "main", deliverable: "MERGE_REQUEST", credentialName: "gitlab-token" }],
+    repositories: [{ name: "api", connectorRef: "gitlab/acme", project: "acme/api", baseBranch: "main", deliverable: "MERGE_REQUEST" }],
     credentialNames: ["gitlab-token"],
     inputNodeIds: [],
     acceptance: "tests pass",
@@ -172,14 +172,12 @@ test("an unknown job id is refused rather than invented", async () => {
   await assert.rejects(t.startTurn("nope"), (e: JobError) => e.code === "not_found")
 })
 
-test("only a closed job is dropped, and the connector refs it held are released", async () => {
+test("only a closed job is dropped", async () => {
   const { t } = table()
   await t.open(spec("j1"))
-  assert.deepEqual([...t.connectorRefsInUse()], ["gitlab/acme"])
   await assert.rejects(t.drop("j1"), (e: JobError) => e.code === "bad_state")
   await t.close("j1", "accomplished", 100)
   await t.drop("j1")
-  assert.deepEqual([...t.connectorRefsInUse()], [])
   assert.equal(t.has("j1"), false)
 })
 

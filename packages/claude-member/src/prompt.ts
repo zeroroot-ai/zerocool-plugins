@@ -8,8 +8,9 @@ import type { Worktree } from "./workspace.js"
  * The system prompt block appended to every turn (zerocool-plugins#106).
  * It tells Claude the job id, the goal, the worktree paths, the deliverable
  * declared for each repository, the credential names the turn may fetch, and
- * the one rule about pushing. The platform pushes at wrap-up under the base
- * grant, so Claude never holds a token (glossary, Permission posture).
+ * the limits of the delivery. The platform opens the merge request at wrap-up
+ * through the connector tool, so Claude never holds a token (glossary,
+ * Permission posture).
  */
 export function turnSystemPrompt(spec: JobSpec, worktrees: Worktree[]): string {
   const lines: string[] = []
@@ -24,7 +25,8 @@ export function turnSystemPrompt(spec: JobSpec, worktrees: Worktree[]): string {
   if (spec.credentialNames.length > 0) {
     lines.push(`Credentials you may fetch through the get_credential tool: ${spec.credentialNames.join(", ")}. No other name is granted.`)
   }
-  lines.push("Commit on the job branch. Never push. The platform pushes and opens the merge request at wrap-up.")
+  lines.push("Commit on the job branch. Never push: the worktree has no remote and no token. The platform opens one merge request from your changes at wrap-up.")
+  lines.push("The merge request takes at most 100 changed files, 1 MiB for one file and 8 MiB in all, as UTF-8 text with no executable files. Keep the change inside these limits.")
   lines.push("Record every real security finding with submit_finding. Ask a person through the ask tool when you are blocked.")
   lines.push("A scorer closes this job. Do not stop early because you think it is done: state the outcome and wait for the next input.")
   return lines.join("\n")

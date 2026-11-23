@@ -75,20 +75,30 @@ class FakeStatus implements StatusReporter {
   }
 }
 
-function fakeWorkspace(): WorkspaceManager & { wrapped: string[] } {
+function fakeWorkspace(prepareError?: Error): WorkspaceManager & { wrapped: string[]; wrapGrants: string[]; prepareGrants: string[]; removed: string[] } {
   const wrapped: string[] = []
+  const wrapGrants: string[] = []
+  const prepareGrants: string[] = []
+  const removed: string[] = []
   return {
     wrapped,
-    prepare: async (jobId: string) => [{ repository: "api", path: `/workspace/jobs/${jobId}/api`, branch: `job/${jobId}`, deliverable: "MERGE_REQUEST" as const }],
-    wrapUp: async (jobId: string): Promise<WrapUpOutcome[]> => {
-      wrapped.push(jobId)
-      return [{ repository: "api", branch: `job/${jobId}`, deliverable: "MERGE_REQUEST", commits: 1, pushed: true, mergeRequestUrl: "https://git.example/mr/1", error: "" }]
+    wrapGrants,
+    prepareGrants,
+    removed,
+    prepare: async (jobId: string, _repos: unknown, grant: string) => {
+      prepareGrants.push(grant)
+      if (prepareError) throw prepareError
+      return [{ repository: "api", path: `/workspace/jobs/${jobId}/api`, branch: `job/${jobId}`, deliverable: "MERGE_REQUEST" as const }]
     },
-    remove: async () => {},
-    evict: async () => [],
-    ensureClone: async () => "/clone",
-    cached: () => [],
-  } as unknown as WorkspaceManager & { wrapped: string[] }
+    wrapUp: async (jobId: string, _repos: unknown, opts: { grant: string }): Promise<WrapUpOutcome[]> => {
+      wrapped.push(jobId)
+      wrapGrants.push(opts.grant)
+      return [{ repository: "api", branch: `job/${jobId}`, deliverable: "MERGE_REQUEST", files: 1, mergeRequest: "acme/api#1", mergeRequestUrl: "https://git.example/mr/1", error: "" }]
+    },
+    remove: async (jobId: string) => {
+      removed.push(jobId)
+    },
+  } as unknown as WorkspaceManager & { wrapped: string[]; wrapGrants: string[]; prepareGrants: string[]; removed: string[] }
 }
 
 /** A spawn seam that records the run options and settles when the test says so. */
@@ -220,6 +230,47 @@ test("a close input wraps up, reports the deliverable and drops the job", async 
   assert.equal(inbox.deliverables.length, 1)
   assert.equal(inbox.deliverables[0]!.mergeRequestUrl, "https://git.example/mr/1")
   assert.equal(table.has("job-1"), false, "a closed job leaves the table after cleanup")
+  ac.abort()
+  await run
+})
+
+test("the wrap-up calls the connector tools under the grant of the latest input", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "verified", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.deepEqual(workspace.prepareGrants, ["grant-job-1"], "the base tree is read under the grant of the opening turn")
+  assert.deepEqual(workspace.wrapGrants, ["scorer-grant"])
+  assert.equal(inbox.deliverables[0]!.mergeRequest, "acme/api#1")
+  ac.abort()
+  await run
+})
+
+test("a refused workspace, such as a truncated tree, closes the job as failed and delivers nothing", async () => {
+  const { DeliveryRefused } = await import("./workspace.js")
+  const workspace = fakeWorkspace(new DeliveryRefused("The host cut the tree of acme/api at main."))
+  const lines: string[] = []
+  const { m, inbox, table, rec } = member({ workspace, onEvent: (_id: string, line: string) => lines.push(line) })
+  const repo = { name: "api", connectorRef: "connector/acme", project: "acme/api", baseBranch: "main", deliverable: "MERGE_REQUEST" as const }
+  inbox.queued.push(input("job-1", { spec: { ...spec("job-1"), repositories: [repo] } }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  assert.equal(rec.calls.length, 0, "no turn runs on a refused workspace")
+  assert.equal(workspace.wrapped.length, 0, "no merge request is opened")
+  assert.equal(table.has("job-1"), false)
+  assert.equal(inbox.deliverables.length, 1)
+  assert.equal(inbox.deliverables[0]!.mergeRequestUrl, "")
+  assert.match(inbox.deliverables[0]!.error, /cut the tree/)
+  assert.ok(inbox.states.some((s) => s.state === "closed" && s.isError && /cut the tree/.test(s.detail)))
+  assert.ok(lines.some((l) => l.includes("workspace_refused") && l.includes("cut the tree")), "the console shows the refusal")
+  assert.deepEqual(workspace.removed, ["job-1"])
   ac.abort()
   await run
 })

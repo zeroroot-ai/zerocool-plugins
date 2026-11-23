@@ -3,16 +3,13 @@
 // Copyright 2026 Zero Root AI
 
 import { callbackBaseUrl, openTaskHarness, type TaskHarness } from "@zeroroot-ai/sdk"
-import type { JobSpec as WireJobSpec } from "@zeroroot-ai/sdk/gen/gibson/job/v1/job_pb.js"
-import type { Credential } from "@zeroroot-ai/sdk/gen/gibson/harness/v1/harness_callback_pb.js"
 import { ensureStateDir, readMemberEnv, type MemberEnv } from "./env.js"
-import type { GitCredential } from "./git.js"
+import { harnessToolCaller } from "./connector-tools.js"
 import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
-import { HarnessInbox, harnessGrants, type SpecOptions } from "./harness-inbox.js"
+import { HarnessInbox, harnessGrants } from "./harness-inbox.js"
 import { assertTurnRequiresToken, mcpGateway, startMcpServer, TURN_TOKEN_ENV, type McpServer } from "./mcp.js"
 import { FileJobStore, JobTable } from "./job.js"
 import { Member } from "./member.js"
-import { typedValueString } from "./oneshot.js"
 import { childEnv, platformTransport, platformTrust, type PlatformTrust } from "./platform-ca.js"
 import { assertSubscriptionOnly, consoleRelay, readAuthStatus, SignIn } from "./signin.js"
 import { harnessSessionStore } from "./transcript.js"
@@ -34,74 +31,20 @@ import { join } from "node:path"
 export const PLATFORM_URL_ENV = "GIBSON_PLATFORM_URL"
 
 /**
- * Where a repository's connector token and base url come from.
- *
- * `RepositorySpec` names a connector and a project, not a url and not a
- * secret. The job spec's `context` map carries the rest, so a bank can serve
- * more than one connector without a rebuild:
- *
- *   `connector.<ref>.base_url`     e.g. `https://gitlab.com`
- *   `connector.<ref>.credential`   the tenant secret name
- *
- * Without an entry the driver falls back to the platform convention: the
- * credential is `<connector name>-connector-cred`, and the base url is
- * GitLab's public host.
- */
-export const DEFAULT_CONNECTOR_BASE_URL = "https://gitlab.com"
-
-export function specOptionsFor(defaults: { baseUrl?: string } = {}): SpecOptions {
-  const read = (spec: WireJobSpec, key: string): string => typedValueString((spec.context ?? {})[key]) ?? ""
-  const connectorName = (ref: string) => ref.split("/").pop() ?? ref
-  return {
-    credentialFor: (connectorRef, spec) => read(spec, `connector.${connectorRef}.credential`) || `${connectorName(connectorRef)}-connector-cred`,
-    baseUrlFor: (connectorRef, spec) => read(spec, `connector.${connectorRef}.base_url`) || defaults.baseUrl || DEFAULT_CONNECTOR_BASE_URL,
-  }
-}
-
-/**
- * Read a tenant secret out of `GetCredential`.
- *
- * `Credential.secret_data` is a oneof. A git token is stored as an api key, a
- * bearer token, a single-valued custom secret, or basic auth, and basic auth
- * carries the username the token pairs with. Anything else (an OAuth grant)
- * is not a git credential and is refused rather than guessed at.
- *
- * The value is returned to the caller and never logged: the console stream a
- * member writes is shown in a browser.
- */
-export function readGitSecret(name: string, credential: Credential | undefined): GitCredential {
-  const secret = credential?.secretData
-  if (secret?.case === "apiKey" || secret?.case === "bearerToken" || secret?.case === "customSecret") {
-    if (secret.value) return { username: "oauth2", token: secret.value }
-  }
-  if (secret?.case === "basic" && secret.value.password) {
-    return { username: secret.value.username || "oauth2", token: secret.value.password }
-  }
-  throw new Error(
-    `GetCredential(${name}) returned no usable git secret. A connector token is stored as an api key, ` +
-      "a bearer token, a single-valued custom secret, or basic auth.",
-  )
-}
-
-/** `GetCredential` under the member base grant. */
-export function credentialResolver(harness: TaskHarness): (name: string) => Promise<GitCredential> {
-  return async (name: string) => {
-    const res = await harness.client.getCredential({ context: harness.context, name })
-    if (res.error) throw new Error(`GetCredential(${name}) refused: ${res.error.message}`)
-    return readGitSecret(name, res.credential)
-  }
-}
-
-/**
  * The harness on the member base grant. The transport is built here rather
  * than in the SDK, so the platform CA reaches it. The grant interceptor reads
  * the harness's current token, so a renewal takes effect on the next call.
  */
-export function openHarness(env: MemberEnv, trust: PlatformTrust | undefined): TaskHarness {
+export function openHarness(env: MemberEnv, trust: PlatformTrust | undefined, grant: string = env.baseGrant): TaskHarness {
   let harness: TaskHarness | undefined
-  const transport = platformTransport(callbackBaseUrl(env.callbackEndpoint, env.callbackInsecure), () => harness?.token() ?? env.baseGrant, trust)
-  harness = openTaskHarness({ endpoint: env.callbackEndpoint, token: env.baseGrant, insecure: env.callbackInsecure, transport })
+  const transport = platformTransport(callbackBaseUrl(env.callbackEndpoint, env.callbackInsecure), () => harness?.token() ?? grant, trust)
+  harness = openTaskHarness({ endpoint: env.callbackEndpoint, token: grant, insecure: env.callbackInsecure, transport })
   return harness
+}
+
+/** The connector tool caller. Each call carries the grant of its turn, never a forge credential. */
+export function toolCallerFor(env: MemberEnv, trust: PlatformTrust | undefined): ReturnType<typeof harnessToolCaller> {
+  return harnessToolCaller((grant) => openHarness(env, trust, grant))
 }
 
 export interface MemberMainOptions {
@@ -126,15 +69,8 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
 
   const harness = opts.harness ?? openHarness(env, trust)
 
-  const spec = specOptionsFor({ baseUrl: opts.env.ZEROCOOL_CONNECTOR_BASE_URL ?? "" })
-  const inbox = new HarnessInbox({ harness, memberId: env.memberId, spec, log })
-  const workspace = new WorkspaceManager({
-    root: env.workspace,
-    stateDir: env.stateDir,
-    capBytes: env.workspaceCapBytes,
-    credential: credentialResolver(harness),
-    log,
-  })
+  const inbox = new HarnessInbox({ harness, memberId: env.memberId, log })
+  const workspace = new WorkspaceManager({ root: env.workspace, tools: toolCallerFor(env, trust), log })
   const table = new JobTable({ cap: env.jobCap, store: new FileJobStore(join(env.stateDir, "jobs.json")) })
 
   const platformURL = opts.env[PLATFORM_URL_ENV] ?? ""

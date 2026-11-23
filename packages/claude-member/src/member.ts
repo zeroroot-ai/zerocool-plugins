@@ -10,7 +10,7 @@ import { JobError, JobTable, type JobRecord, type Verdict } from "./job.js"
 import { parseExpiryWarning, SignInError, type SignIn } from "./signin.js"
 import { archiveTranscript, restoreTranscript, transcriptOnDisk, type SessionStore } from "./transcript.js"
 import { startTurn, type TurnHandle } from "./turn.js"
-import type { WorkspaceManager, Worktree } from "./workspace.js"
+import { DeliveryRefused, type WorkspaceManager, type Worktree } from "./workspace.js"
 
 /**
  * The job id of the daemon's sign-in control inputs. It names no job (gibson
@@ -83,7 +83,7 @@ export interface MemberDeps {
 export function wrapUpPrompt(note: string): string {
   const lines = [
     "This job is being closed. This is your last turn.",
-    "Commit your work on the job branch with a clear message. Do not push: the platform pushes at wrap-up.",
+    "Commit your work on the job branch with a clear message. Do not push: the platform opens the merge request at wrap-up.",
     "Then write a short summary of what you did, what you verified, and what remains.",
   ]
   if (note.trim()) lines.unshift(`From the scorer: ${note.trim()}`)
@@ -95,6 +95,8 @@ export class Member {
   private readonly running = new Map<string, TurnHandle>()
   /** Jobs whose next turn is the wrap-up: after it, the close runs. */
   private readonly closing = new Map<string, { verdict: Verdict; score: number; note: string }>()
+  /** The grant of the latest input of each job. The wrap-up calls the connector tools under it. */
+  private readonly lastGrant = new Map<string, string>()
   private readonly log: (line: string) => void
   private readonly timers: NonNullable<MemberDeps["timers"]>
   private wake: (() => void) | undefined
@@ -426,11 +428,17 @@ export class Member {
       this.log(`job ${input.jobId}: ${(e as Error).message}`)
       return
     }
+    const grant = this.deps.grants.grantFor(input)
+    this.lastGrant.set(job.jobId, grant)
     let worktrees: Worktree[]
     try {
-      worktrees = await this.deps.workspace.prepare(job.jobId, job.spec.repositories)
+      worktrees = await this.deps.workspace.prepare(job.jobId, job.spec.repositories, grant)
       await table.setWorktrees(job.jobId, Object.fromEntries(worktrees.map((w) => [w.repository, w.path])))
     } catch (e) {
+      if (e instanceof DeliveryRefused) {
+        await this.refuse(job, e.message)
+        return
+      }
       this.log(`job ${job.jobId}: workspace: ${(e as Error).message}`)
       await this.report(job, `workspace failed: ${(e as Error).message}`, true)
       return
@@ -440,7 +448,7 @@ export class Member {
     const cwd = worktrees[0]?.path ?? this.deps.env.workspace
     const text = input.kind === "open" ? job.spec.goal + (input.text ? `\n\n${input.text}` : "") : input.kind === "wrap_up" ? wrapUpPrompt(input.text) : input.text
     const handle = await startTurn(
-      { job, text, grant: this.deps.grants.grantFor(input), worktrees, cwd },
+      { job, text, grant, worktrees, cwd },
       { env: this.deps.env, processEnv: this.deps.processEnv, mcp: this.deps.mcp, ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {}), ...(this.deps.spawn ? { spawn: this.deps.spawn } : {}) },
     )
     this.running.set(job.jobId, handle)
@@ -475,6 +483,31 @@ export class Member {
     }
   }
 
+  /** One console line, for a result that no wire field carries. The console shows it as it stands. */
+  private console(jobId: string, record: Record<string, string>): void {
+    this.deps.onEvent?.(jobId, JSON.stringify({ type: "zerocool", job_id: jobId, ...record }), undefined)
+  }
+
+  /**
+   * The workspace refused the job, for example a truncated tree. No turn runs.
+   * The job closes as failed with the refusal as its note, and the console
+   * shows the refusal. Nothing is delivered.
+   */
+  private async refuse(job: JobRecord, message: string): Promise<void> {
+    this.log(`job ${job.jobId}: refused: ${message}`)
+    this.console(job.jobId, { subtype: "workspace_refused", message })
+    const closed = await this.deps.table.close(job.jobId, "failed", 0, message)
+    await this.report(closed, `refused: ${message.slice(0, 500)}`, true)
+    for (const repo of job.spec.repositories) {
+      await this.deps.inbox
+        .reportDeliverable({ jobId: job.jobId, repository: repo.name, deliverable: repo.deliverable, branch: `job/${job.jobId}`, files: 0, mergeRequest: "", mergeRequestUrl: "", error: message })
+        .catch((e: Error) => this.log(`job ${job.jobId}: reportDeliverable: ${e.message}`))
+    }
+    await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
+    this.lastGrant.delete(job.jobId)
+    await this.deps.table.drop(job.jobId)
+  }
+
   private async close(input: JobInput): Promise<void> {
     const table = this.deps.table
     if (!table.has(input.jobId)) {
@@ -482,6 +515,7 @@ export class Member {
       return
     }
     const verdict = input.verdict ?? "accomplished"
+    this.lastGrant.set(input.jobId, this.deps.grants.grantFor(input))
     const job = await table.close(input.jobId, verdict, input.score ?? 0, input.text)
     await this.cleanupClosed(job, verdict)
   }
@@ -493,14 +527,19 @@ export class Member {
       push,
       title: `job ${job.jobId}: ${job.spec.goal.slice(0, 72)}`,
       description: `${job.spec.goal}\n\nVerdict: ${verdict}. Turns: ${job.turns}. Cost: $${job.costUsd.toFixed(4)}.`,
+      grant: this.lastGrant.get(job.jobId) ?? this.deps.grants.baseGrant(),
     })
+    this.lastGrant.delete(job.jobId)
     for (const o of outcomes) {
+      if (o.error) {
+        this.log(`job ${job.jobId}: ${o.repository}: ${o.error}`)
+        this.console(job.jobId, { subtype: "delivery_refused", repository: o.repository, message: o.error })
+      }
       await this.deps.inbox
-        .reportDeliverable({ jobId: job.jobId, repository: o.repository, deliverable: o.deliverable, branch: o.branch, commits: o.pushed ? o.commits : 0, mergeRequestUrl: o.mergeRequestUrl, error: o.error })
+        .reportDeliverable({ jobId: job.jobId, repository: o.repository, deliverable: o.deliverable, branch: o.branch, files: o.files, mergeRequest: o.mergeRequest, mergeRequestUrl: o.mergeRequestUrl, error: o.error })
         .catch((e: Error) => this.log(`job ${job.jobId}: reportDeliverable: ${e.message}`))
     }
     await this.report(job, job.closure?.note ? `closed with verdict ${verdict}: ${job.closure.note.slice(0, 500)}` : `closed with verdict ${verdict}`)
     await this.deps.table.drop(job.jobId)
-    await this.deps.workspace.evict(this.deps.table.connectorRefsInUse())
   }
 }
