@@ -64,6 +64,10 @@ RUN cd /opt/opencode \
 # semgrep lives in its own venv: the hash-pinned set must not fight the
 # modules Debian's own python3 packages install (pip refuses to replace a
 # Debian-owned `packaging`). The venv's pip is removed once it has installed.
+# --no-deps: every package is pinned by hash in the file, so pip installs exactly that set. semgrep pins
+# mcp==1.29.0 (CVE-2026-115563, fixed in 1.30.0), and the file pins mcp==1.30.0, which pip's resolver
+# would refuse. mcp 1.30.0 has the same dependencies as 1.29.0. Remove --no-deps and the mcp pin
+# when a semgrep release requires mcp 1.30.0 or newer.
 COPY packages/opencode-gibson/image/requirements.txt /tmp/semgrep-requirements.txt
 # APT_CACHE_BUST + `apt-get upgrade` — why the base packages were stale.
 #
@@ -83,7 +87,7 @@ RUN echo "apt refresh ${APT_CACHE_BUST}" >/dev/null \
  && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates \
  && python3 -m venv /opt/semgrep \
- && /opt/semgrep/bin/pip install --no-cache-dir --require-hashes -r /tmp/semgrep-requirements.txt \
+ && /opt/semgrep/bin/pip install --no-cache-dir --no-deps --require-hashes -r /tmp/semgrep-requirements.txt \
  && /opt/semgrep/bin/pip uninstall -y pip \
  && rm /tmp/semgrep-requirements.txt \
  && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
