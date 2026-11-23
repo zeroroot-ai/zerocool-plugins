@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.7.0...claude-member-v0.7.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **claude-member:** drop a replayed inbox input ([#205](https://github.com/zeroroot-ai/zerocool-plugins/issues/205)) ([56203b2](https://github.com/zeroroot-ai/zerocool-plugins/commit/56203b2dbbd2646b1934731a840c5fe27dea666f))
+
 ## [0.7.0](https://github.com/zeroroot-ai/zerocool-plugins/compare/claude-member-v0.6.5...claude-member-v0.7.0) (2026-11-23)
 
 
