@@ -8,11 +8,6 @@ import { DeliverableKind, InputKind, JobState as WireJobState } from "@zeroroot-
 import { Principal_Kind } from "@zeroroot-ai/sdk/gen/gibson/common/v1/gibson_common_pb.js"
 import { HarnessInbox, harnessGrants, inputKindOf, jobInputOf, nextBackoff, openInputOf, repositoryOf, senderOf, wireJobState, MAX_BACKOFF_MS, MIN_BACKOFF_MS } from "./harness-inbox.js"
 
-const spec = {
-  credentialFor: (ref: string) => `${ref.split("/").pop()}-connector-cred`,
-  baseUrlFor: () => "https://git.example",
-}
-
 function wireInput() {
   return {
     $typeName: "gibson.job.v1.Input",
@@ -77,44 +72,54 @@ test("an input carries its own grant, which is the whole point of the per-turn r
   assert.equal(input.sender, "component:verifier")
 })
 
-test("a repository named by project gets its clone url from the connector base url", () => {
-  const repo = repositoryOf(
-    { $typeName: "gibson.job.v1.RepositorySpec", name: "", connectorRef: "gitlab/acme", project: "acme/api", baseBranch: "", deliverable: DeliverableKind.PUSH_BRANCH } as never,
-    "acme-connector-cred",
-    "https://git.example/",
-  )
-  assert.equal(repo.cloneUrl, "https://git.example/acme/api.git")
-  assert.equal(repo.name, "api", "an unnamed repository takes the project's last element")
-  assert.equal(repo.baseBranch, "main", "an unset base branch is main")
-  assert.equal(repo.deliverable, "PUSH_BRANCH")
-  assert.equal(repo.credentialName, "acme-connector-cred")
+test("a repository keeps its connector and project and has no clone url", () => {
+  const repo = repositoryOf({ $typeName: "gibson.job.v1.RepositorySpec", name: "", connectorRef: "connector/acme", project: "/acme/api", baseBranch: "", deliverable: DeliverableKind.PUSH_BRANCH } as never)
+  assert.deepEqual(repo, { name: "api", connectorRef: "connector/acme", project: "acme/api", baseBranch: "main", deliverable: "PUSH_BRANCH" })
+  assert.equal("cloneUrl" in repo, false)
+  assert.equal("credentialName" in repo, false)
 })
 
-test("a repository named by url keeps it", () => {
-  const repo = repositoryOf(
-    { $typeName: "gibson.job.v1.RepositorySpec", name: "api", connectorRef: "gitlab/acme", project: "https://git.example/acme/api.git", baseBranch: "main", deliverable: DeliverableKind.NONE } as never,
-    "cred",
-    "https://ignored",
-  )
-  assert.equal(repo.cloneUrl, "https://git.example/acme/api.git")
-})
-
-test("a pulled job becomes the open input that starts it, under the base grant", () => {
-  const input = openInputOf(wireJob(), "base-grant", spec)
+test("a pulled job becomes the open input that starts it, with no turn grant", () => {
+  const input = openInputOf(wireJob())
   assert.equal(input.kind, "open")
   assert.equal(input.jobId, "job-9")
-  assert.equal(input.grant, "base-grant", "a queued job carries no per-input grant")
+  assert.equal(input.grant, "", "a queued job carries no grant of a turn")
   assert.equal(input.sender, "user:ana")
   assert.equal(input.spec?.goal, "close the unauthenticated route")
-  assert.equal(input.spec?.repositories[0]?.cloneUrl, "https://git.example/acme/api.git")
-  assert.equal(input.spec?.repositories[0]?.credentialName, "acme-connector-cred")
+  assert.equal(input.spec?.repositories[0]?.project, "acme/api")
   assert.deepEqual(input.spec?.credentialNames, ["sonar-token"])
   assert.deepEqual(input.spec?.inputNodeIds, ["node-1"])
   assert.match(input.spec?.acceptance ?? "", /component:agent:verifier must score at least 80/)
 })
 
+test("the grant of PullJobResponse is the turn grant of the first turn, and an empty grant leaves the wait path", async () => {
+  const withGrant = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "first-turn-grant" } }), memberId: "mem-1" })
+  const input = await withGrant.pull()
+  assert.equal(input?.grant, "first-turn-grant", "the first turn runs under a grant whose task is the job")
+  const grants = harnessGrants({ ...fakeHarness(), token: () => "member-base" })
+  assert.equal(grants.turnGrant(input!), "first-turn-grant", "the workspace may read and fetch under it")
+  assert.equal(grants.grantFor(input!), "first-turn-grant", "and the MCP server uses it, not the base grant")
+
+  const none = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "" } }), memberId: "mem-1" })
+  const waiting = await none.pull()
+  assert.equal(waiting?.grant, "")
+  assert.equal(grants.turnGrant(waiting!), undefined, "no grant: the workspace waits, and the base grant is never a turn grant")
+
+  const old = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob() } }), memberId: "mem-1" })
+  assert.equal((await old.pull())?.grant, "", "a daemon that sends no grant is the wait path")
+})
+
+test("the grant of a pulled job never reaches a log line", async () => {
+  const lines: string[] = []
+  const inbox = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob(), grant: "SECRET-TURN-GRANT" } }), memberId: "mem-1", log: (l) => lines.push(l) })
+  const input = await inbox.pull()
+  assert.equal(input?.grant, "SECRET-TURN-GRANT")
+  assert.ok(!lines.join("\n").includes("SECRET-TURN-GRANT"))
+  assert.ok(!JSON.stringify(Object.fromEntries(Object.entries(input!).filter(([k]) => k !== "grant"))).includes("SECRET-TURN-GRANT"), "no other field of the input holds it")
+})
+
 test("a job with no spec is still a job, not a crash", () => {
-  const input = openInputOf(wireJob({ spec: undefined }), "g", spec)
+  const input = openInputOf(wireJob({ spec: undefined }))
   assert.equal(input.spec?.goal, "")
   assert.deepEqual(input.spec?.repositories, [])
 })
@@ -169,7 +174,7 @@ test("the subscription forwards every input, in order", async () => {
       yield { input: { ...(wireInput() as object), jobId: "job-2", kind: InputKind.ANSWER } }
     },
   })
-  const inbox = new HarnessInbox({ harness, memberId: "mem-1", spec, sleep: async () => {} })
+  const inbox = new HarnessInbox({ harness, memberId: "mem-1", sleep: async () => {} })
   const seen: string[] = []
   const ac = new AbortController()
   const run = inbox.subscribe(async (i) => {
@@ -193,7 +198,7 @@ test("a dropped subscription reconnects with backoff instead of killing the memb
     },
   })
   const delays: number[] = []
-  const inbox = new HarnessInbox({ harness, memberId: "mem-1", spec, sleep: async (ms) => void delays.push(ms) })
+  const inbox = new HarnessInbox({ harness, memberId: "mem-1", sleep: async (ms) => void delays.push(ms) })
   await inbox.subscribe(async () => {}, ac.signal)
   assert.equal(attempts, 3)
   assert.deepEqual(delays, [MIN_BACKOFF_MS, MIN_BACKOFF_MS * 2])
@@ -206,15 +211,15 @@ test("the backoff doubles to a cap", () => {
 })
 
 test("pull returns nothing on an empty queue and raises a refusal", async () => {
-  const empty = new HarnessInbox({ harness: fakeHarness(), memberId: "mem-1", spec })
+  const empty = new HarnessInbox({ harness: fakeHarness(), memberId: "mem-1" })
   assert.equal(await empty.pull(), undefined)
 
-  const refused = new HarnessInbox({ harness: fakeHarness({ pullJob: { error: { message: "not a member of that bank" } } }), memberId: "mem-1", spec })
+  const refused = new HarnessInbox({ harness: fakeHarness({ pullJob: { error: { message: "not a member of that bank" } } }), memberId: "mem-1" })
   await assert.rejects(refused.pull(), /PullJob refused: not a member of that bank/)
 })
 
 test("pull maps the queued job into the open input", async () => {
-  const inbox = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob() } }), memberId: "mem-1", spec })
+  const inbox = new HarnessInbox({ harness: fakeHarness({ pullJob: { job: wireJob() } }), memberId: "mem-1" })
   const input = await inbox.pull()
   assert.equal(input?.jobId, "job-9")
   assert.equal(input?.kind, "open")
@@ -222,7 +227,7 @@ test("pull maps the queued job into the open input", async () => {
 
 test("a state report names the job, the wire state and the Claude session", async () => {
   const harness = fakeHarness()
-  const inbox = new HarnessInbox({ harness, memberId: "mem-1", spec })
+  const inbox = new HarnessInbox({ harness, memberId: "mem-1" })
   await inbox.reportState({ jobId: "job-1", state: "waiting", claudeSessionId: "sess-1", turns: 2, costUsd: 1, isError: false, detail: "done" })
   const req = harness.calls[0]!.req as { jobId: string; state: number; claudeSessionId: string }
   assert.equal(req.jobId, "job-1")
@@ -230,18 +235,18 @@ test("a state report names the job, the wire state and the Claude session", asyn
   assert.equal(req.claudeSessionId, "sess-1")
 })
 
-test("a deliverable report carries the kind, the branch and the merge request url", async () => {
+test("a deliverable report carries the kind, the merge request key and the url", async () => {
   const harness = fakeHarness()
-  const inbox = new HarnessInbox({ harness, memberId: "mem-1", spec })
-  await inbox.reportDeliverable({ jobId: "job-1", repository: "api", deliverable: "MERGE_REQUEST", branch: "job/job-1", commits: 2, mergeRequestUrl: "https://git.example/mr/1", error: "" })
+  const inbox = new HarnessInbox({ harness, memberId: "mem-1" })
+  await inbox.reportDeliverable({ jobId: "job-1", repository: "api", deliverable: "MERGE_REQUEST", branch: "job/job-1", files: 2, mergeRequest: "acme/api#12", mergeRequestUrl: "https://git.example/mr/1", error: "" })
   const req = harness.calls[0]!.req as { deliverable: { kind: number; ref: string; url: string } }
   assert.equal(req.deliverable.kind, DeliverableKind.MERGE_REQUEST)
-  assert.equal(req.deliverable.ref, "job/job-1")
+  assert.equal(req.deliverable.ref, "acme/api#12", "the ref is the merge request key that open_merge_request returned")
   assert.equal(req.deliverable.url, "https://git.example/mr/1")
 })
 
 test("a refused report is raised, never swallowed", async () => {
-  const inbox = new HarnessInbox({ harness: fakeHarness({ reportJobState: { error: { message: "no such job" } } }), memberId: "mem-1", spec })
+  const inbox = new HarnessInbox({ harness: fakeHarness({ reportJobState: { error: { message: "no such job" } } }), memberId: "mem-1" })
   await assert.rejects(inbox.reportState({ jobId: "job-1", state: "working", claudeSessionId: "", turns: 0, costUsd: 0, isError: false, detail: "" }), /ReportJobState\(job-1\) refused: no such job/)
 })
 
@@ -254,4 +259,6 @@ test("the grants come from the harness, so a renewal takes effect on the next tu
   assert.equal(grants.baseGrant(), "grant-2", "a member runs for days; the harness renews under it")
   assert.equal(grants.grantFor({ jobId: "j", kind: "turn", text: "", grant: "turn-grant", sender: "user:ana" }), "turn-grant")
   assert.equal(grants.grantFor({ jobId: "j", kind: "open", text: "", grant: "", sender: "user:ana" }), "grant-2", "an input with no grant of its own runs on the base grant")
+  assert.equal(grants.turnGrant({ jobId: "j", kind: "turn", text: "", grant: "turn-grant", sender: "user:ana" }), "turn-grant")
+  assert.equal(grants.turnGrant({ jobId: "j", kind: "open", text: "", grant: "", sender: "user:ana" }), undefined, "the base grant is never a turn grant")
 })

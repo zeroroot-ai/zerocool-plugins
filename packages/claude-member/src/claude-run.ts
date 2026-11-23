@@ -41,6 +41,12 @@ export interface ClaudeRunOptions {
   appendSystemPrompt?: string
   /** MCP servers as `--mcp-config` JSON, with `--strict-mcp-config`. */
   mcpServers?: Record<string, McpServerSpec>
+  /**
+   * The path of a file that holds the MCP config (`{"mcpServers": ...}`), mode 0600.
+   * The argv carries the path and never the config, because `/proc/<pid>/cmdline`
+   * is readable by every process in the sandbox. The caller writes and deletes the file.
+   */
+  mcpConfigFile?: string
   /** Tool patterns that run without a prompt, e.g. "mcp__gibson__*". */
   allowedTools?: string[]
   /** The MCP tool that answers permission prompts, e.g. `mcp__gibson__ask`. */
@@ -109,9 +115,10 @@ export function claudeArgs(opts: ClaudeRunOptions): string[] {
   if (opts.maxTurns) args.push("--max-turns", String(opts.maxTurns))
   if (opts.maxBudgetUsd) args.push("--max-budget-usd", String(opts.maxBudgetUsd))
   if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt)
-  if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
-    args.push("--mcp-config", JSON.stringify({ mcpServers: opts.mcpServers }), "--strict-mcp-config")
+  if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0 && !opts.mcpConfigFile) {
+    throw new Error("claudeArgs: mcpServers needs mcpConfigFile. The MCP config goes in a file, and the argv carries only its path.")
   }
+  if (opts.mcpConfigFile) args.push("--mcp-config", opts.mcpConfigFile, "--strict-mcp-config")
   if (opts.allowedTools && opts.allowedTools.length > 0) args.push("--allowedTools", opts.allowedTools.join(","))
   if (opts.permissionPromptTool) args.push("--permission-prompt-tool", opts.permissionPromptTool)
   return args

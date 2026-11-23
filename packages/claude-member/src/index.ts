@@ -2,6 +2,7 @@
 // Copyright 2026 Zero Root AI
 
 export * from "./claude-run.js"
+export * from "./connector-tools.js"
 export * from "./env.js"
 export * from "./events.js"
 // `git.ts` stays internal: an exported "run any argv" helper is a
@@ -24,3 +25,4 @@ export * from "./transcript.js"
 export * from "./turn.js"
 export * from "./version.js"
 export * from "./workspace.js"
+export * from "./workspace-mcp.js"

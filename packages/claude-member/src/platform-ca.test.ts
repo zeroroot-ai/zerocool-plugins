@@ -15,7 +15,7 @@ import { claudeChildEnv } from "./env.js"
 import { HarnessInbox } from "./harness-inbox.js"
 import { ComponentHeartbeat, openComponentClient } from "./heartbeat.js"
 import type { JobInput, MemberStatus } from "./inbox.js"
-import { openHarness, specOptionsFor } from "./member-main.js"
+import { openHarness } from "./member-main.js"
 import { certificateBlocks, childEnv, EXTRA_CA_CERTS_ENV, pemBlocks, PLATFORM_CA_ENV, PLATFORM_CA_FILE, platformTrust, writePlatformCa } from "./platform-ca.js"
 
 /**
@@ -100,7 +100,6 @@ const memberEnv = (endpoint: string, stateDir: string) => ({
   model: "",
   jobCap: 1,
   workspace: "/workspace",
-  workspaceCapBytes: 1,
   stateDir,
   claudeBin: "claude",
   maxTurns: 1,
@@ -179,7 +178,7 @@ test("with the variable set the heartbeat and the inbox subscription verify a pr
 
     const harness = openHarness(memberEnv(edge.endpoint, dir), trust)
     try {
-      const inbox = new HarnessInbox({ harness, memberId: "mem-1", spec: specOptionsFor(), sleep: async () => {} })
+      const inbox = new HarnessInbox({ harness, memberId: "mem-1", sleep: async () => {} })
       const received: JobInput[] = []
       const controller = new AbortController()
       await inbox.subscribe(async (input) => {

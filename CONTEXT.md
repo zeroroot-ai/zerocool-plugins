@@ -254,16 +254,18 @@ unbuilt `dist` would land in the type and run paths of every check.
 - **Close** — the wrap-up signal. The worker never closes its own job. A
   scorer does (a verification agent, a person, or the mission node after its
   acceptance step): `CloseJob(job_id, verdict, score)`. The driver sends one
-  final wrap-up turn (commit, push, open the merge request, summarize), then
+  final wrap-up turn (commit, summarize), then opens the merge request through the connector tool, then
   removes the worktrees, archives the transcript to the session store,
   reports deliverables and verdict on the run, and drops the job. A job idle
   past the bank's stale limit closes with verdict `abandoned`. Nothing else
   deletes a worktree.
-- **Workspace manager** — the member-side part of the driver. One clone per
-  repository per member, kept warm; one `git worktree add` per job on a
-  branch named by the job id; clones evicted by disk cap, least recently
-  used. Prepares worktrees and credential names before the turn, tells
-  Claude the paths and the deliverable in the appended system prompt.
+- **Workspace manager** — the member-side part of the driver. No clone and no
+  forge credential. The workspace is sparse. It lists the base tree through the
+  connector tool `list_tree`, reads the files the job names and any file that
+  Claude asks for with `fetch_file` through `read_file`, and at wrap-up turns
+  the change into one `open_merge_request` call on the branch `job/<job id>`.
+  All calls run under a live grant of a turn of the job. Tells Claude the paths and the deliverable in the
+  appended system prompt.
 - **Member status** — what a member reports on every heartbeat: `jobs in
   flight`, `cap`, `busy` (in flight equals cap) or `idle`, and `needs
   sign-in`. The daemon holds a per-bank job queue. A member with a free slot
@@ -285,9 +287,9 @@ unbuilt `dist` would land in the type and run paths of every check.
   driver refuses to start without that marker, so the flag never runs
   outside the sandbox. Outward side
   effects are *deliverables* the driver performs at wrap-up under the job's
-  declared deliverable and the base-grant connector token: push, merge
-  request, finding status. Claude commits on the job branch and never holds
-  the token. Questions to a person go through one Gibson MCP tool, `ask`,
+  declared deliverable through governed connector tools under the grant of the turn: merge
+  request, finding status. Claude commits on the local job branch and never holds
+  a token. Questions to a person go through one Gibson MCP tool, `ask`,
   wired as `--permission-prompt-tool`: the job enters `waiting` and the next
   input is the answer.
 - **Bank exit test** — `exit-test-bank.yml` in gibson, on `main` and on

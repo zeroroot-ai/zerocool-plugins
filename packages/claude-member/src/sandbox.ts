@@ -20,7 +20,7 @@ async function main(): Promise<void> {
       onEvent: (line) => process.stdout.write(`${line}\n`),
       onOutcome: (o) => {
         for (const d of o.deliverables) {
-          log(`deliverable ${d.repository} ${d.deliverable} branch=${d.branch} commits=${d.commits} mr=${d.mergeRequestUrl || "-"} ${d.error ? `error=${d.error}` : ""}`.trim())
+          log(`deliverable ${d.repository} ${d.deliverable} branch=${d.branch} files=${d.files} mr=${d.mergeRequest || "-"} url=${d.mergeRequestUrl || "-"} ${d.error ? `error=${d.error}` : ""}`.trim())
         }
         log(`done job=${o.jobId} turns=${o.turns} cost_usd=${o.costUsd.toFixed(4)} session=${o.claudeSessionId || "-"} error=${o.isError}`)
       },

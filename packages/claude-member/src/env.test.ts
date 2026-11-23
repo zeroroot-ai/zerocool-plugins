@@ -25,7 +25,6 @@ test("readMemberEnv reads the launch contract and defaults the rest", () => {
   assert.equal(env.loginShape, "api-key")
   assert.equal(env.jobCap, 1)
   assert.equal(env.workspace, "/workspace")
-  assert.equal(env.workspaceCapBytes, 20 * 1024 * 1024 * 1024)
   assert.equal(env.maxTurns, 200)
   assert.equal(env.maxBudgetUsd, undefined)
   assert.equal(env.staleLimitMs, 24 * 60 * 60 * 1000)

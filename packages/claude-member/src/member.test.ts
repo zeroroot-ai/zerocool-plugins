@@ -17,7 +17,7 @@ import { Member, SIGN_IN_JOB_ID, SIGN_IN_START, type MemberDeps, type SignInAtte
 import type { WorkspaceManager, WrapUpOutcome } from "./workspace.js"
 
 /** A grant source with the base grant only. Inputs carry their own or fall back. */
-const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant })
+const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant, turnGrant: (input) => input.grant || undefined })
 
 let scratch = ""
 function memberEnv(over: Record<string, string> = {}): MemberEnv {
@@ -75,20 +75,51 @@ class FakeStatus implements StatusReporter {
   }
 }
 
-function fakeWorkspace(): WorkspaceManager & { wrapped: string[] } {
+type FakeWorkspace = WorkspaceManager & { wrapped: string[]; wrapGrants: string[]; prepareGrants: string[]; resumedFlags: boolean[]; removed: string[] }
+
+/** `outcomes` is one list of outcome overrides per wrap-up try. The last one repeats. */
+function fakeWorkspace(opts: { prepareError?: Error; outcomes?: Partial<WrapUpOutcome>[][]; wrapDelayMs?: number } = {}): FakeWorkspace {
   const wrapped: string[] = []
+  const wrapGrants: string[] = []
+  const prepareGrants: string[] = []
+  const resumedFlags: boolean[] = []
+  const removed: string[] = []
+  let tries = 0
   return {
     wrapped,
-    prepare: async (jobId: string) => [{ repository: "api", path: `/workspace/jobs/${jobId}/api`, branch: `job/${jobId}`, deliverable: "MERGE_REQUEST" as const }],
-    wrapUp: async (jobId: string): Promise<WrapUpOutcome[]> => {
-      wrapped.push(jobId)
-      return [{ repository: "api", branch: `job/${jobId}`, deliverable: "MERGE_REQUEST", commits: 1, pushed: true, mergeRequestUrl: "https://git.example/mr/1", error: "" }]
+    wrapGrants,
+    prepareGrants,
+    resumedFlags,
+    removed,
+    prepare: async (jobId: string, _repos: unknown, grant: string | undefined, o: { resumed: boolean }) => {
+      prepareGrants.push(grant ?? "none")
+      resumedFlags.push(o.resumed)
+      if (opts.prepareError) throw opts.prepareError
+      return [{ repository: "api", path: `/workspace/jobs/${jobId}/api`, branch: `job/${jobId}`, deliverable: "MERGE_REQUEST" as const, notes: [] }]
     },
-    remove: async () => {},
-    evict: async () => [],
-    ensureClone: async () => "/clone",
-    cached: () => [],
-  } as unknown as WorkspaceManager & { wrapped: string[] }
+    fetchFile: async () => ({ ok: true, text: "" }),
+    wrapUp: async (jobId: string, _repos: unknown, o: { grant: string | undefined }): Promise<WrapUpOutcome[]> => {
+      wrapped.push(jobId)
+      wrapGrants.push(o.grant ?? "none")
+      if (opts.wrapDelayMs) await new Promise((r) => setTimeout(r, opts.wrapDelayMs))
+      const over = (opts.outcomes ?? [[{}]])[Math.min(tries++, (opts.outcomes ?? [[{}]]).length - 1)]!
+      return over.map((x) => ({
+        repository: "api",
+        branch: `job/${jobId}`,
+        deliverable: "MERGE_REQUEST" as const,
+        files: 1,
+        mergeRequest: "acme/api#1",
+        mergeRequestUrl: "https://git.example/mr/1",
+        error: "",
+        failed: false,
+        retryable: false,
+        ...x,
+      }))
+    },
+    remove: async (jobId: string) => {
+      removed.push(jobId)
+    },
+  } as unknown as FakeWorkspace
 }
 
 /** A spawn seam that records the run options and settles when the test says so. */
@@ -222,6 +253,284 @@ test("a close input wraps up, reports the deliverable and drops the job", async 
   assert.equal(table.has("job-1"), false, "a closed job leaves the table after cleanup")
   ac.abort()
   await run
+})
+
+test("the wrap-up calls the connector tools under the grant of the latest input", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "verified", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.deepEqual(workspace.prepareGrants, ["grant-job-1"], "the base tree is read under the grant of the opening turn")
+  assert.deepEqual(workspace.wrapGrants, ["scorer-grant"])
+  assert.equal(inbox.deliverables[0]!.mergeRequest, "acme/api#1")
+  ac.abort()
+  await run
+})
+
+test("a refused workspace, such as a truncated tree, closes the job as failed and delivers nothing", async () => {
+  const { DeliveryRefused } = await import("./workspace.js")
+  const workspace = fakeWorkspace({ prepareError: new DeliveryRefused("The host cut the tree of acme/api at main.") })
+  const lines: string[] = []
+  const { m, inbox, table, rec } = member({ workspace, onEvent: (_id: string, line: string) => lines.push(line) })
+  const repo = { name: "api", connectorRef: "connector/acme", project: "acme/api", baseBranch: "main", deliverable: "MERGE_REQUEST" as const }
+  inbox.queued.push(input("job-1", { spec: { ...spec("job-1"), repositories: [repo] } }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  assert.equal(rec.calls.length, 0, "no turn runs on a refused workspace")
+  assert.equal(workspace.wrapped.length, 0, "no merge request is opened")
+  assert.equal(table.has("job-1"), false)
+  assert.equal(inbox.deliverables.length, 1)
+  assert.equal(inbox.deliverables[0]!.mergeRequestUrl, "")
+  assert.match(inbox.deliverables[0]!.error, /cut the tree/)
+  assert.ok(inbox.states.some((s) => s.state === "closed" && s.isError && /cut the tree/.test(s.detail)))
+  assert.ok(lines.some((l) => l.includes("workspace_refused") && l.includes("cut the tree")), "the console shows the refusal")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  ac.abort()
+  await run
+})
+
+const repoSpec = (jobId: string) => ({ ...spec(jobId), repositories: [{ name: "api", connectorRef: "connector/acme", project: "acme/api", baseBranch: "main", deliverable: "MERGE_REQUEST" as const }] })
+
+test("a pulled job with no grant of a turn prepares with no grant, and never with the base grant", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1", { grant: "", spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  assert.deepEqual(workspace.prepareGrants, ["none"])
+  assert.equal(rec.calls.length, 1, "the turn still runs")
+  ac.abort()
+  rec.finish[0]!()
+  await run
+})
+
+test("a job that came back after a restart tells prepare that it was resumed", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1", { claudeSessionId: "sess-old" }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  assert.deepEqual(workspace.resumedFlags, [true])
+  ac.abort()
+  rec.finish[0]!()
+  await run
+})
+
+test("a failed delivery reports the closed job as an error and keeps no merge request", async () => {
+  const workspace = fakeWorkspace({ outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "The change has 101 files.", failed: true }]] })
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  const closed = inbox.states.filter((s) => s.state === "closed")
+  assert.ok(closed.length > 0 && closed.every((s) => s.isError), "a refused delivery is a failed job, whatever the verdict was")
+  assert.match(closed[0]!.detail, /delivery failed: The change has 101 files/)
+  assert.deepEqual(workspace.removed, ["job-1"], "a permanent refusal ends the workspace")
+  ac.abort()
+  await run
+})
+
+test("a transient failure is tried again inside the close, with backoff, and then delivers", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }], [{}]],
+  })
+  const lines: string[] = []
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 5000, deliverBackoffMs: 5, onEvent: (_id: string, line: string) => lines.push(line) })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle(10)
+  assert.deepEqual(workspace.wrapGrants, ["scorer-grant", "scorer-grant"], "the second try is inside the same close")
+  assert.ok(lines.some((l) => l.includes("delivery_waiting")))
+  assert.equal(inbox.deliverables.at(-1)!.mergeRequest, "acme/api#1")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.equal(table.has("job-1"), false)
+  assert.ok(inbox.states.filter((s) => s.state === "closed").every((s) => !s.isError))
+  ac.abort()
+  await run
+})
+
+test("when the tries run out the job is failed with its reason, the workspace is removed and the record is dropped", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 60, deliverBackoffMs: 10 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle(15)
+  assert.ok(workspace.wrapped.length >= 2, "it was tried more than once")
+  assert.deepEqual(workspace.removed, ["job-1"], "nothing outlives the close")
+  assert.equal(table.has("job-1"), false)
+  const closed = inbox.states.filter((s) => s.state === "closed")
+  assert.ok(closed.length > 0 && closed.every((s) => s.isError))
+  assert.match(closed[0]!.detail, /the host is busy.*The tries ended after/)
+  assert.match(inbox.deliverables.at(-1)!.error, /The tries ended after/)
+  ac.abort()
+  await run
+})
+
+test("the Member itself refuses a cap above one when fetch_file is wired, and accepts a cap of one", () => {
+  const mcp = { register: () => ({ url: "http://127.0.0.1:1/t/x/mcp", dispose: () => {} }), stop: async () => {} }
+  assert.throws(() => member({ workspaceMcp: mcp }, 2), /ZEROCOOL_JOB_CAP is 2, and fetch_file is wired/)
+  assert.doesNotThrow(() => member({ workspaceMcp: mcp }, 1))
+})
+
+test("a close delivers off the pump: the slot stays counted, and a stop ends the wait and the tries within the stop deadline", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 150 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(workspace.wrapped.length, 1, "the first try ran, and the delivery now waits ten minutes")
+  assert.equal(m.status().jobsInFlight, 1, "the closed job keeps its slot while it delivers")
+  assert.deepEqual(m.status().jobs, ["job-1"])
+  inbox.queued.push(input("job-2"))
+  await settle()
+  assert.equal(table.has("job-2"), false, "the cap of one holds while the delivery waits")
+  assert.equal(rec.calls.length, 1)
+
+  const stopped = Date.now()
+  ac.abort()
+  await run
+  assert.ok(Date.now() - stopped < 3000, "the stop woke the wait, and the stop deadline ended the tries")
+  assert.ok(workspace.wrapped.length >= 2, "a stop does not fail the job at the first error: it tries again until the stop deadline")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.match(inbox.deliverables.at(-1)!.error, /The member is stopping, and the tries ended after/)
+  assert.equal(table.has("job-1"), false)
+})
+
+test("a stop during a transient failure tries again at once, and delivers when the retry succeeds", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "open_merge_request: the host is busy", failed: true, retryable: true }], [{}]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 5000 })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "scorer-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(workspace.wrapped.length, 1)
+  ac.abort()
+  await run
+  assert.equal(workspace.wrapped.length, 2, "the stop woke the wait and the second try ran")
+  assert.equal(inbox.deliverables.at(-1)!.mergeRequest, "acme/api#1", "the merge request opened during the stop")
+  assert.equal(inbox.deliverables.at(-1)!.error, "")
+  assert.ok(inbox.states.filter((s) => s.state === "closed").every((s) => !s.isError))
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.equal(table.has("job-1"), false)
+})
+
+test("a stop during the wrap-up turn waits for its finish and its delivery before the drain returns", async () => {
+  const workspace = fakeWorkspace({ wrapDelayMs: 120 })
+  const { m, inbox, table, rec } = member({ workspace })
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "wrap_up", text: "verified", grant: "wrap-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+  await settle()
+  assert.equal(rec.calls.length, 2, "the wrap-up turn is running")
+  ac.abort()
+  rec.finish[1]!()
+  await run
+  assert.deepEqual(workspace.wrapped, ["job-1"], "the delivery ran before the drain returned")
+  assert.deepEqual(workspace.removed, ["job-1"])
+  assert.equal(table.has("job-1"), false)
+  assert.equal(inbox.deliverables.length, 1)
+})
+
+test("a waiting delivery does not block the pump: another job runs on a free slot", async () => {
+  const workspace = fakeWorkspace({
+    outcomes: [[{ mergeRequest: "", mergeRequestUrl: "", error: "busy", failed: true, retryable: true }]],
+  })
+  const { m, inbox, table, rec } = member({ workspace, deliverRetryMs: 1_200_000, deliverBackoffMs: 600_000, deliverStopMs: 100 }, 2)
+  inbox.queued.push(input("job-1", { spec: repoSpec("job-1") }))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  await settle()
+  rec.finish[0]!()
+  await settle()
+  await inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "g", sender: "s", verdict: "accomplished", score: 95 })
+  await settle()
+  inbox.queued.push(input("job-2"))
+  await settle()
+  assert.equal(table.get("job-2").state, "working", "the second job started while the first waits to deliver")
+  assert.equal(m.status().jobsInFlight, 2)
+  ac.abort()
+  rec.finish[1]!()
+  await run
+})
+
+test("an input for a job the member does not hold is dropped: no workspace, no state, no turn, no leaked close", async () => {
+  const workspace = fakeWorkspace()
+  const logs: string[] = []
+  const { m, inbox, table, rec } = member({ workspace, log: (l: string) => logs.push(l) })
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle()
+    // The daemon closed ghost between Claim and ReleaseJob. PullJob never told this member, and the subscription still sends its inputs.
+    await inbox.deliver({ jobId: "ghost", kind: "wrap_up", text: "verified", grant: "wrap-grant", sender: "component:agent:verifier", verdict: "accomplished", score: 95 })
+    await inbox.deliver({ jobId: "ghost", kind: "close", text: "", grant: "g", sender: "s", verdict: "accomplished", score: 95 })
+    await inbox.deliver({ jobId: "ghost", kind: "turn", text: "hello", grant: "g", sender: "s" })
+    await inbox.deliver({ jobId: "ghost", kind: "answer", text: "yes", grant: "g", sender: "s" })
+    await settle()
+    assert.equal(rec.calls.length, 0, "no turn ran")
+    assert.deepEqual(workspace.prepareGrants, [], "no workspace was opened")
+    assert.deepEqual(workspace.wrapped, [], "nothing was delivered")
+    assert.deepEqual(workspace.removed, [])
+    assert.equal(inbox.states.length, 0, "no state was reported for the job")
+    assert.equal(inbox.deliverables.length, 0)
+    assert.equal(table.has("ghost"), false)
+    assert.equal(m.status().jobsInFlight, 0)
+
+    // The dropped wrap-up left no `closing` mark: a job that later takes the same id is a normal job.
+    inbox.queued.push(input("ghost"))
+    await settle()
+    rec.finish[0]!()
+    await settle()
+    assert.equal(table.get("ghost").state, "waiting", "the first turn of the new job is not turned into a close")
+    assert.deepEqual(workspace.wrapped, [])
+    assert.ok(logs.filter((l) => l.includes("dropped") && l.includes("ghost")).length >= 3, "each input is dropped with a log line")
+  } finally {
+    ac.abort()
+    await run
+  }
 })
 
 test("the heartbeat reports idle, then busy at the cap, with the job ids and the CLI version", async () => {

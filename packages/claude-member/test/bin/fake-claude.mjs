@@ -15,7 +15,7 @@
 //   CLAUDE_FAKE_HANG_MS   stay alive this long after the replay, so a test
 //                         can send SIGINT or SIGTERM mid-turn
 //   CLAUDE_FAKE_EXIT      exit code, default 0
-import { appendFileSync, readFileSync } from "node:fs"
+import { appendFileSync, existsSync, readFileSync, statSync } from "node:fs"
 
 const fixture = process.env.CLAUDE_FAKE_FIXTURE
 if (!fixture) {
@@ -33,9 +33,16 @@ process.stdin.on("data", (d) => {
 
 const record = () => {
   if (!process.env.CLAUDE_FAKE_RECORD) return
+  // The driver passes the MCP config as a file path. Record what the file held
+  // and its mode while the process runs, because the driver deletes it after.
+  const argv = process.argv.slice(2)
+  const at = argv.indexOf("--mcp-config")
+  const file = at >= 0 ? argv[at + 1] : undefined
+  const mcpConfig = file && existsSync(file) ? readFileSync(file, "utf8") : undefined
+  const mcpConfigMode = file && existsSync(file) ? statSync(file).mode & 0o777 : undefined
   appendFileSync(
     process.env.CLAUDE_FAKE_RECORD,
-    `${JSON.stringify({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd(), stdin })}\n`,
+    `${JSON.stringify({ argv, env: process.env, cwd: process.cwd(), stdin, mcpConfig, mcpConfigMode })}\n`,
   )
 }
 

@@ -14,7 +14,8 @@ import {
 import { Principal_Kind, type Principal } from "@zeroroot-ai/sdk/gen/gibson/common/v1/gibson_common_pb.js"
 import type { DeliverableReport, GrantSource, Inbox, JobInput, JobInputKind, JobStateReport } from "./inbox.js"
 import type { Deliverable, JobRepository, JobSpec, JobState } from "./job.js"
-import { trimLeadingSlashes, trimTrailingSlashes } from "./text.js"
+import { splitList, typedValueString } from "./oneshot.js"
+import { trimLeadingSlashes } from "./text.js"
 
 /**
  * The member inbox over the harness (zerocool-plugins#105, epic decision 6).
@@ -99,38 +100,30 @@ export function wireJobState(state: JobState): WireJobState {
  * `gibson.job.v1.RepositorySpec` to what the workspace manager needs.
  *
  * `project` is the connector's own project reference, for example
- * `group/project` on GitLab. The clone url is built from the connector's base
- * url, which the driver resolves through the connector credential name. When
- * the project is already a url, it is used as it stands.
+ * `group/project` on GitLab. The workspace calls the connector's tools with
+ * it. There is no clone url: the member holds no forge credential and runs no
+ * git transport.
  */
-export function repositoryOf(r: RepositorySpec, credentialName: string, connectorBaseUrl: string): JobRepository {
+export function repositoryOf(r: RepositorySpec): JobRepository {
   const project = trimLeadingSlashes(r.project)
-  const isUrl = project.startsWith("https://") || project.startsWith("http://")
-  const cloneUrl = isUrl ? project : `${trimTrailingSlashes(connectorBaseUrl)}/${project}.git`
   return {
     name: r.name || project.split("/").pop() || "repo",
     connectorRef: r.connectorRef,
-    cloneUrl,
+    project,
     baseBranch: r.baseBranch || "main",
     deliverable: deliverableKindOf(r.deliverable),
-    credentialName,
   }
 }
 
-export interface SpecOptions {
-  /** The credential name a repository's connector resolves to. */
-  credentialFor: (connectorRef: string, spec: WireJobSpec) => string
-  /** The connector's base url, for repositories named by project rather than url. */
-  baseUrlFor: (connectorRef: string, spec: WireJobSpec) => string
-}
-
 /** `gibson.job.v1.JobSpec` to the driver's spec. */
-export function jobSpecOf(jobId: string, spec: WireJobSpec | undefined, opts: SpecOptions): JobSpec {
+export function jobSpecOf(jobId: string, spec: WireJobSpec | undefined): JobSpec {
   const wire = spec ?? ({ goal: "", repositories: [], credentialNames: [], inputs: [], context: {} } as unknown as WireJobSpec)
+  // The files the job names, as a comma or line separated list in the context.
+  const paths = splitList(typedValueString((wire.context ?? {})["repository.paths"]) ?? "")
   return {
     jobId,
     goal: wire.goal,
-    repositories: (wire.repositories ?? []).map((r) => repositoryOf(r, opts.credentialFor(r.connectorRef, wire), opts.baseUrlFor(r.connectorRef, wire))),
+    repositories: (wire.repositories ?? []).map((r) => ({ ...repositoryOf(r), ...(paths.length > 0 ? { paths } : {}) })),
     credentialNames: [...(wire.credentialNames ?? [])],
     inputNodeIds: [...(wire.inputs ?? [])],
     acceptance: wire.acceptance ? `${wire.acceptance.verifierComponent} must score at least ${wire.acceptance.passingScore}` : "",
@@ -149,17 +142,23 @@ export function jobInputOf(input: WireInput): JobInput {
   }
 }
 
-/** A queued job the member pulled, as the `open` input that starts it. */
-export function openInputOf(job: WireJob, baseGrant: string, opts: SpecOptions): JobInput {
+/**
+ * A queued job the member pulled, as the `open` input that starts it.
+ *
+ * `grant` is `PullJobResponse.grant`: a turn grant whose task is the job id,
+ * for the tool calls of the first turn. It is a secret and is never logged. It
+ * is empty when the daemon could not mint one. Then the input carries no grant,
+ * the Gibson MCP server falls back to the member base grant, and no connector
+ * call runs: the workspace waits for an input that carries the grant of a turn.
+ */
+export function openInputOf(job: WireJob, grant = ""): JobInput {
   return {
     jobId: job.id,
     kind: "open",
     text: "",
-    // A pulled job carries no per-input grant: the first turn runs under the
-    // member base grant until an input of its own arrives.
-    grant: baseGrant,
+    grant,
     sender: senderOf(job.openedBy),
-    spec: jobSpecOf(job.id, job.spec, opts),
+    spec: jobSpecOf(job.id, job.spec),
     ...(job.claudeSessionId ? { claudeSessionId: job.claudeSessionId } : {}),
   }
 }
@@ -168,7 +167,6 @@ export interface HarnessInboxOptions {
   harness: TaskHarness
   /** The member this inbox serves. Reported on every call. */
   memberId: string
-  spec: SpecOptions
   log?: (line: string) => void
   /** Test seam for the reconnect delay. */
   sleep?: (ms: number) => Promise<void>
@@ -218,7 +216,7 @@ export class HarnessInbox implements Inbox {
     const res = await this.client.pullJob({ context: this.context })
     if (res.error) throw new Error(`PullJob refused: ${res.error.message}`)
     if (!res.job) return undefined
-    return openInputOf(res.job, this.opts.harness.token(), this.opts.spec)
+    return openInputOf(res.job, res.grant)
   }
 
   async reportState(report: JobStateReport): Promise<void> {
@@ -238,7 +236,9 @@ export class HarnessInbox implements Inbox {
       deliverable: {
         $typeName: "gibson.job.v1.Deliverable",
         kind: wireDeliverableKind(report.deliverable),
-        ref: report.branch,
+        // The ref is the merge request key. The daemon binds a fix to its job by the
+        // merge request that open_merge_request opened. Without one, the branch is the only ref.
+        ref: report.mergeRequest || report.branch,
         url: report.mergeRequestUrl,
       },
     })
@@ -256,5 +256,6 @@ export function harnessGrants(harness: TaskHarness): GrantSource {
   return {
     baseGrant: () => harness.token(),
     grantFor: (input) => input.grant || harness.token(),
+    turnGrant: (input) => input.grant || undefined,
   }
 }

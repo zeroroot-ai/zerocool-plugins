@@ -10,7 +10,8 @@ import { JobError, JobTable, type JobRecord, type Verdict } from "./job.js"
 import { parseExpiryWarning, SignInError, type SignIn } from "./signin.js"
 import { archiveTranscript, restoreTranscript, transcriptOnDisk, type SessionStore } from "./transcript.js"
 import { startTurn, type TurnHandle } from "./turn.js"
-import type { WorkspaceManager, Worktree } from "./workspace.js"
+import type { WorkspaceMcp } from "./workspace-mcp.js"
+import { DeliveryRefused, type WorkspaceManager, type Worktree, type WrapUpOutcome } from "./workspace.js"
 
 /**
  * The job id of the daemon's sign-in control inputs. It names no job (gibson
@@ -20,6 +21,21 @@ export const SIGN_IN_JOB_ID = "sign-in"
 
 /** The turn text that starts a sign-in (gibson `SignInStart`). */
 export const SIGN_IN_START = "start"
+
+/**
+ * The member refuses more than one job at a time while `fetch_file` is wired.
+ * Every job's Claude runs as the same user in this sandbox, so one job could
+ * read the worktree of another or call the fetch endpoint of its turn. A cap
+ * above one waits for a user for each job.
+ */
+export function assertSingleJob(jobCap: number): void {
+  if (jobCap > 1) {
+    throw new Error(
+      `ZEROCOOL_JOB_CAP is ${jobCap}, and fetch_file is wired. Every job's Claude runs as the same user in this sandbox, so one job could ` +
+        "read the files or call the fetch endpoint of another. Set ZEROCOOL_JOB_CAP to 1 until each job's Claude runs under its own user.",
+    )
+  }
+}
 
 /** What the member needs of one sign-in attempt. */
 export type SignInAttempt = Pick<SignIn, "start" | "submitCode" | "cancel" | "done">
@@ -54,6 +70,8 @@ export interface MemberDeps {
   grants: GrantSource
   status: StatusReporter
   workspace: WorkspaceManager
+  /** The `fetch_file` endpoint of Claude. Absent in a test that needs none. */
+  workspaceMcp?: WorkspaceMcp
   mcp?: McpGateway
   claudeCodeVersion: string
   /** True when the login shape is `subscription` and no login is present. */
@@ -66,6 +84,12 @@ export interface MemberDeps {
   signIn?: () => SignInAttempt
   /** Where transcripts are archived to and restored from (#107). */
   sessions?: SessionStore
+  /** How long a delivery that fails with a transient error is tried again inside the close, ms. Default 5 minutes. */
+  deliverRetryMs?: number
+  /** After a stop, how long a delivery with a transient error keeps trying, ms. Default 30 s. */
+  deliverStopMs?: number
+  /** The first wait between two tries, ms. It doubles to 30 s. Default 1 s. */
+  deliverBackoffMs?: number
   /** Grace for a turn to end after SIGINT before the member stops, ms. Default 30s. */
   stopGraceMs?: number
   onEvent?: (jobId: string, line: string, event: ClaudeEvent | undefined) => void
@@ -83,7 +107,7 @@ export interface MemberDeps {
 export function wrapUpPrompt(note: string): string {
   const lines = [
     "This job is being closed. This is your last turn.",
-    "Commit your work on the job branch with a clear message. Do not push: the platform pushes at wrap-up.",
+    "Leave your edits in the worktree files. Do not push: the platform opens the merge request from those files at wrap-up.",
     "Then write a short summary of what you did, what you verified, and what remains.",
   ]
   if (note.trim()) lines.unshift(`From the scorer: ${note.trim()}`)
@@ -95,6 +119,17 @@ export class Member {
   private readonly running = new Map<string, TurnHandle>()
   /** Jobs whose next turn is the wrap-up: after it, the close runs. */
   private readonly closing = new Map<string, { verdict: Verdict; score: number; note: string }>()
+  /** Closed jobs whose delivery is running off the pump. Each keeps its slot counted until it ends. */
+  private readonly delivering = new Set<string>()
+  private readonly deliveries = new Set<Promise<void>>()
+  /** The wrap-up chains: a turn that ended, its `finish`, and the close that follows. The drain waits for each. */
+  private readonly finishes = new Set<Promise<void>>()
+  /** When the stop began, ms. A delivery that fails with a transient error keeps trying for a short while after it. */
+  private stopAt: number | undefined
+  /** Aborts on stop. A delivery that waits between two tries wakes at once. */
+  private readonly stopSignal = new AbortController()
+  /** The grant of a turn of each job, from its latest input. Every connector call runs under it, never under the base grant. */
+  private readonly lastGrant = new Map<string, string>()
   private readonly log: (line: string) => void
   private readonly timers: NonNullable<MemberDeps["timers"]>
   private wake: (() => void) | undefined
@@ -115,6 +150,12 @@ export class Member {
   constructor(private readonly deps: MemberDeps) {
     this.log = deps.log ?? (() => {})
     this.timers = deps.timers ?? globalThis
+    if (deps.workspaceMcp) assertSingleJob(deps.env.jobCap)
+  }
+
+  /** Slots in use: the jobs of the table and the closed jobs that are still delivering. */
+  private get busySlots(): number {
+    return this.deps.table.inFlight + this.delivering.size
   }
 
   /** The heartbeat body. */
@@ -124,15 +165,15 @@ export class Member {
       memberId: this.deps.env.memberId,
       bankId: this.deps.env.bankId,
       state: memberState({
-        inFlight: t.inFlight,
+        inFlight: this.busySlots,
         cap: t.cap,
         needsSignIn: this.deps.needsSignIn?.() ?? false,
         launching: this.launching,
         draining: this.stopping,
       }),
-      jobsInFlight: t.inFlight,
+      jobsInFlight: this.busySlots,
       cap: t.cap,
-      jobs: t.live().map((j) => j.jobId),
+      jobs: [...t.live().map((j) => j.jobId), ...this.delivering],
       claudeCodeVersion: this.deps.claudeCodeVersion,
       signInExpiresInDays: this.signInExpiresInDays,
       lastError: this.lastError,
@@ -182,6 +223,8 @@ export class Member {
 
     const onAbort = () => {
       this.stopping = true
+      this.stopAt = Date.now()
+      this.stopSignal.abort()
       this.signInAttempt?.cancel()
       for (const h of this.running.values()) h.interrupt()
       this.wake?.()
@@ -227,6 +270,9 @@ export class Member {
       for (const h of this.running.values()) h.kill()
       await Promise.allSettled(pending)
     }
+    // A turn that ended runs its `finish`, which can start a delivery. A delivery in a wait wakes on the stop
+    // and tries again until the stop deadline. Loop until both sets stay empty.
+    while (this.finishes.size > 0 || this.deliveries.size > 0) await Promise.allSettled([...this.finishes, ...this.deliveries])
     for (const job of this.deps.table.live()) {
       await this.archive(job)
       await this.report(job, "member stopping")
@@ -373,7 +419,19 @@ export class Member {
     // Inputs on held jobs first, oldest first, skipping jobs mid-turn.
     for (let i = 0; i < this.queue.length; i++) {
       const input = this.queue[i]!
-      if (this.running.has(input.jobId)) continue
+      // An input for a job this member does not hold is dropped. The race: the daemon closes a job between
+      // Claim and ReleaseJob, the member never learns the job from PullJob, and the subscription still sends
+      // its wrap-up. Nothing opens a workspace, reports a state, or leaves a `closing` mark for it. The queue
+      // loop runs before the pull in a step. This is safe because turn(pulled) finishes table.open before
+      // schedule() returns, so an input that arrives during the pull is first seen in the next step, after the
+      // job is in the table.
+      if (input.kind !== "open" && !table.has(input.jobId)) {
+        this.queue.splice(i, 1)
+        i--
+        this.log(`job ${input.jobId}: dropped a ${input.kind} input, this member does not hold the job`)
+        continue
+      }
+      if (this.running.has(input.jobId) || this.delivering.has(input.jobId)) continue
       if (signedOut && input.kind !== "close") continue
       if (input.kind === "close") {
         this.queue.splice(i, 1)
@@ -383,12 +441,12 @@ export class Member {
       if (input.kind === "wrap_up") {
         this.closing.set(input.jobId, { verdict: input.verdict ?? "accomplished", score: input.score ?? 0, note: input.text })
       }
-      if (table.freeSlots === 0) return false
+      if (table.cap - this.busySlots <= 0) return false
       this.queue.splice(i, 1)
       await this.turn(input)
       return true
     }
-    if (table.freeSlots === 0 || signedOut) return false
+    if (table.cap - this.busySlots <= 0 || signedOut) return false
     let pulled: JobInput | undefined
     const ok = await this.survive("pull", async () => {
       pulled = await this.deps.inbox.pull()
@@ -426,11 +484,19 @@ export class Member {
       this.log(`job ${input.jobId}: ${(e as Error).message}`)
       return
     }
+    const mcpGrant = this.deps.grants.grantFor(input)
+    const turnGrant = this.deps.grants.turnGrant(input)
+    if (turnGrant) this.lastGrant.set(job.jobId, turnGrant)
     let worktrees: Worktree[]
     try {
-      worktrees = await this.deps.workspace.prepare(job.jobId, job.spec.repositories)
+      const resumed = job.turns > 0 || !!input.claudeSessionId
+      worktrees = await this.deps.workspace.prepare(job.jobId, job.spec.repositories, turnGrant, { resumed })
       await table.setWorktrees(job.jobId, Object.fromEntries(worktrees.map((w) => [w.repository, w.path])))
     } catch (e) {
+      if (e instanceof DeliveryRefused) {
+        await this.refuse(job, e.message)
+        return
+      }
       this.log(`job ${job.jobId}: workspace: ${(e as Error).message}`)
       await this.report(job, `workspace failed: ${(e as Error).message}`, true)
       return
@@ -440,17 +506,26 @@ export class Member {
     const cwd = worktrees[0]?.path ?? this.deps.env.workspace
     const text = input.kind === "open" ? job.spec.goal + (input.text ? `\n\n${input.text}` : "") : input.kind === "wrap_up" ? wrapUpPrompt(input.text) : input.text
     const handle = await startTurn(
-      { job, text, grant: this.deps.grants.grantFor(input), worktrees, cwd },
-      { env: this.deps.env, processEnv: this.deps.processEnv, mcp: this.deps.mcp, ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {}), ...(this.deps.spawn ? { spawn: this.deps.spawn } : {}) },
+      {
+        job,
+        text,
+        grant: mcpGrant,
+        worktrees,
+        cwd,
+        ...(this.deps.workspaceMcp ? { fetchFile: (repository: string | undefined, path: string) => this.deps.workspace.fetchFile(job.jobId, job.spec.repositories, repository, path, turnGrant) } : {}),
+      },
+      { env: this.deps.env, processEnv: this.deps.processEnv, mcp: this.deps.mcp, ...(this.deps.workspaceMcp ? { workspaceMcp: this.deps.workspaceMcp } : {}), ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {}), ...(this.deps.spawn ? { spawn: this.deps.spawn } : {}) },
     )
     this.running.set(job.jobId, handle)
-    void handle.done
+    const chain = handle.done
       .then((r) => this.finish(job.jobId, r))
       .catch((e: Error) => this.finish(job.jobId, { text: e.message, sessionId: "", isError: true, resultSubtype: "spawn_failed", numTurns: 0, costUsd: 0, mcpServerErrors: [], toolCalls: [], events: 0, sawResult: false, stderr: "", exitCode: null, signal: null }))
       .finally(() => {
         this.running.delete(job.jobId)
         this.wake?.()
       })
+    this.finishes.add(chain)
+    void chain.finally(() => this.finishes.delete(chain))
   }
 
   /** Claude Code warns on stderr when a subscription login is close to expiry. The heartbeat carries it. */
@@ -475,6 +550,31 @@ export class Member {
     }
   }
 
+  /** One console line, for a result that no wire field carries. The console shows it as it stands. */
+  private console(jobId: string, record: Record<string, string>): void {
+    this.deps.onEvent?.(jobId, JSON.stringify({ type: "zerocool", job_id: jobId, ...record }), undefined)
+  }
+
+  /**
+   * The workspace refused the job, for example a truncated tree. No turn runs.
+   * The job closes as failed with the refusal as its note, and the console
+   * shows the refusal. Nothing is delivered.
+   */
+  private async refuse(job: JobRecord, message: string): Promise<void> {
+    this.log(`job ${job.jobId}: refused: ${message}`)
+    this.console(job.jobId, { subtype: "workspace_refused", message })
+    const closed = await this.deps.table.close(job.jobId, "failed", 0, message)
+    await this.report(closed, `refused: ${message.slice(0, 500)}`, true)
+    for (const repo of job.spec.repositories) {
+      await this.deps.inbox
+        .reportDeliverable({ jobId: job.jobId, repository: repo.name, deliverable: repo.deliverable, branch: `job/${job.jobId}`, files: 0, mergeRequest: "", mergeRequestUrl: "", error: message })
+        .catch((e: Error) => this.log(`job ${job.jobId}: reportDeliverable: ${e.message}`))
+    }
+    await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
+    this.lastGrant.delete(job.jobId)
+    await this.deps.table.drop(job.jobId)
+  }
+
   private async close(input: JobInput): Promise<void> {
     const table = this.deps.table
     if (!table.has(input.jobId)) {
@@ -482,25 +582,105 @@ export class Member {
       return
     }
     const verdict = input.verdict ?? "accomplished"
+    const closeGrant = this.deps.grants.turnGrant(input)
+    if (closeGrant) this.lastGrant.set(input.jobId, closeGrant)
     const job = await table.close(input.jobId, verdict, input.score ?? 0, input.text)
     await this.cleanupClosed(job, verdict)
   }
 
-  private async cleanupClosed(job: JobRecord, verdict: string): Promise<void> {
-    await this.archive(job)
-    const push = verdict !== "abandoned"
-    const outcomes = await this.deps.workspace.wrapUp(job.jobId, job.spec.repositories, {
-      push,
-      title: `job ${job.jobId}: ${job.spec.goal.slice(0, 72)}`,
-      description: `${job.spec.goal}\n\nVerdict: ${verdict}. Turns: ${job.turns}. Cost: $${job.costUsd.toFixed(4)}.`,
+  /**
+   * Start the cleanup of a closed job off the pump: archive, then deliver. The
+   * delivery can wait through retries, and the pump must keep serving the other
+   * jobs. The job keeps its slot counted until the delivery ends.
+   */
+  private cleanupClosed(job: JobRecord, verdict: string): Promise<void> {
+    this.delivering.add(job.jobId)
+    const work = (async () => {
+      try {
+        await this.archive(job)
+        await this.deliver(job, verdict)
+      } catch (e) {
+        this.log(`job ${job.jobId}: cleanup: ${(e as Error).message}`)
+      } finally {
+        this.delivering.delete(job.jobId)
+        this.wake?.()
+      }
+    })()
+    this.deliveries.add(work)
+    void work.finally(() => this.deliveries.delete(work))
+    return Promise.resolve()
+  }
+
+  /**
+   * Wait `ms`. A wait that began before the stop wakes at the stop, so the next
+   * try runs at once. A wait that begins after the stop is a plain wait.
+   */
+  private waitOrStop(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        this.timers.clearTimeout(timer)
+        this.stopSignal.signal.removeEventListener("abort", done)
+        resolve()
+      }
+      const timer = this.timers.setTimeout(done, ms)
+      if (!this.stopSignal.signal.aborted) this.stopSignal.signal.addEventListener("abort", done, { once: true })
     })
+  }
+
+  /**
+   * Open the merge requests of a closed job, under a live grant of a turn of
+   * the job. The grant is renewed while it is live. A failure that a later try
+   * can mend (a network failure, UNAVAILABLE, "call the tool again") is tried
+   * again with backoff, inside the close, for a bounded time. Then, or on a
+   * permanent refusal, the job is failed with the reason, the workspace is
+   * removed and the job record is dropped. Nothing outlives the close.
+   */
+  private async deliver(job: JobRecord, verdict: string): Promise<void> {
+    const push = verdict !== "abandoned"
+    const limitMs = this.deps.deliverRetryMs ?? 5 * 60_000
+    const stopMs = this.deps.deliverStopMs ?? 30_000
+    const started = Date.now()
+    let backoff = this.deps.deliverBackoffMs ?? 1000
+    // The tries end at the limit, or, once a stop began, a short while after the stop: whichever is first.
+    const deadline = (): number => Math.min(started + limitMs, this.stopAt === undefined ? Infinity : this.stopAt + stopMs)
+    let outcomes: WrapUpOutcome[]
+    for (;;) {
+      outcomes = await this.deps.workspace.wrapUp(job.jobId, job.spec.repositories, {
+        push,
+        title: `job ${job.jobId}: ${job.spec.goal.slice(0, 72)}`,
+        description: `${job.spec.goal}\n\nVerdict: ${verdict}. Turns: ${job.turns}. Cost: $${job.costUsd.toFixed(4)}.`,
+        grant: this.lastGrant.get(job.jobId),
+      })
+      if (!outcomes.some((o) => o.retryable)) break
+      // After a stop the waits are short, so the tries fit in the stop deadline.
+      const wait = this.stopAt === undefined ? backoff : Math.min(backoff, 2000)
+      if (Date.now() + wait > deadline()) {
+        const spent = `after ${Math.round((Date.now() - started) / 1000)} seconds`
+        const why = this.stopAt === undefined ? `The tries ended ${spent}.` : `The member is stopping, and the tries ended ${spent}.`
+        outcomes = outcomes.map((o) => (o.retryable ? { ...o, error: `${o.error} ${why}`, retryable: false } : o))
+        break
+      }
+      for (const o of outcomes) {
+        if (o.retryable) this.console(job.jobId, { subtype: "delivery_waiting", repository: o.repository, message: o.error })
+      }
+      await this.waitOrStop(wait)
+      backoff = Math.min(backoff * 2, 30_000)
+    }
+    const failed = outcomes.some((o) => o.failed)
     for (const o of outcomes) {
+      if (o.error) {
+        this.log(`job ${job.jobId}: ${o.repository}: ${o.error}`)
+        this.console(job.jobId, { subtype: "delivery_refused", repository: o.repository, message: o.error })
+      }
       await this.deps.inbox
-        .reportDeliverable({ jobId: job.jobId, repository: o.repository, deliverable: o.deliverable, branch: o.branch, commits: o.pushed ? o.commits : 0, mergeRequestUrl: o.mergeRequestUrl, error: o.error })
+        .reportDeliverable({ jobId: job.jobId, repository: o.repository, deliverable: o.deliverable, branch: o.branch, files: o.files, mergeRequest: o.mergeRequest, mergeRequestUrl: o.mergeRequestUrl, error: o.error })
         .catch((e: Error) => this.log(`job ${job.jobId}: reportDeliverable: ${e.message}`))
     }
-    await this.report(job, job.closure?.note ? `closed with verdict ${verdict}: ${job.closure.note.slice(0, 500)}` : `closed with verdict ${verdict}`)
+    const note = job.closure?.note ? `closed with verdict ${verdict}: ${job.closure.note.slice(0, 500)}` : `closed with verdict ${verdict}`
+    // A refused or failed delivery is a failed job, whatever the verdict was.
+    await this.report(job, failed ? `delivery failed: ${outcomes.find((o) => o.error && o.failed)?.error.slice(0, 500) ?? ""}` : note, failed)
+    this.lastGrant.delete(job.jobId)
+    await this.deps.workspace.remove(job.jobId, job.spec.repositories).catch((e: Error) => this.log(`job ${job.jobId}: remove: ${e.message}`))
     await this.deps.table.drop(job.jobId)
-    await this.deps.workspace.evict(this.deps.table.connectorRefsInUse())
   }
 }

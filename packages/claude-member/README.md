@@ -52,9 +52,8 @@ The daemon sets these when it launches a member sandbox.
 | `GIBSON_MISSION_ID` | no | the mission the member runs under |
 | `ZEROCOOL_LOGIN_SHAPE` | no | `api-key` (default), `subscription`, `bedrock`, `vertex`, `foundry` |
 | `ZEROCOOL_CLAUDE_MODEL` | no | passed as `--model` |
-| `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1 |
+| `ZEROCOOL_JOB_CAP` | no | jobs in flight, default 1. The member refuses to start with a value above 1, see below |
 | `ZEROCOOL_WORKSPACE` | no | workspace root, default `/workspace` |
-| `ZEROCOOL_WORKSPACE_CAP_BYTES` | no | clone cache cap, default 20 GiB |
 | `ZEROCOOL_STATE_DIR` | no | driver state. Default `/tmp/zerocool` under the sandbox marker, `~/.zerocool` elsewhere. See below. |
 | `ZEROCOOL_CLAUDE_BIN` | no | the `claude` bin, default `claude` |
 | `ZEROCOOL_CLAUDE_MAX_TURNS` | no | `--max-turns` per turn, default 200 |
@@ -121,8 +120,9 @@ credential passes only for its login shape: `AWS_*` for `bedrock`, `GOOGLE_*`
 and `CLOUD_ML_REGION` for `vertex`, `AZURE_*` for `foundry`. No
 `GIBSON_*` grant, no `ZEROCOOL_*` knob and no git token reaches the model's
 process. `NODE_EXTRA_CA_CERTS` passes, so the child trusts the platform CA.
-The connector token goes to `git` alone, through `GIT_ASKPASS`, and is never
-written to disk or placed on a command line.
+The member holds no forge credential, and `git` runs on local files only. The
+daemon refuses to give an untrusted sandboxed agent a tenant secret, so the
+workspace reads and delivers through governed connector tools.
 
 ## Two shapes, one path
 
@@ -135,7 +135,7 @@ the one-shot bin.
 
 A one-shot task says what it wants in the `Task` context, with the same keys
 the opencode dispatch uses: `repository.url`, `repository.branch`,
-`repository.name`, `repository.connector`, `repository.credential`,
+`repository.name`, `repository.connector`, `repository.project`, `repository.paths`,
 `repository.deliverable`, `credentials` (comma separated), `input.nodes` and
 `acceptance`.
 
@@ -147,7 +147,7 @@ the opencode dispatch uses: `repository.url`, `repository.branch`,
 | job queue | `HarnessCallbackService.PullJob` when a slot is free |
 | job state | `HarnessCallbackService.ReportJobState` on every turn boundary |
 | deliverables | `HarnessCallbackService.ReportDeliverable` at wrap-up |
-| connector token | `HarnessCallbackService.GetCredential` under the base grant |
+| repository read and delivery | `HarnessCallbackService.CallToolProto` with the `invoke_tool` meta-tool, under the grant of the turn |
 | member status | `ComponentService.Heartbeat`, with `gibson.bank.v1.MemberStatus` |
 
 An RPC the daemon refuses never ends the member. A refused heartbeat is
@@ -163,18 +163,88 @@ Each input carries the grant of its own dispatch. The driver puts that grant
 in force for the turn it runs and drops it after. A pulled job carries none,
 so its first turn runs on the member base grant.
 
-A `RepositorySpec` names a connector and a project, not a url and not a
-secret. The job spec's `context` map carries the rest:
-`connector.<ref>.credential` names the tenant secret, and
-`ZEROCOOL_CONNECTOR_BASE_URL` or `connector.<ref>.base_url` gives the host.
-Without them the driver falls back to `<connector name>-connector-cred` and
-`https://gitlab.com`.
+A `RepositorySpec` names a connector (`connector/<name>`) and a project in the
+connector's own terms. It names no url and no secret.
+
+## One job at a time
+
+The member refuses to start with `ZEROCOOL_JOB_CAP` above 1, because `fetch_file`
+is wired. Every job's Claude runs as the same user in the sandbox. One job could
+read the worktree of another, or call the `fetch_file` endpoint of the other
+job's turn. The cap rises only when each job's Claude runs under its own user.
+A closed job that is still delivering keeps its slot until the delivery ends.
+
+## How a job reads and delivers a repository
+
+The workspace uses the git-host tools of the connector. It never clones, never
+pushes and holds no token. The daemon binds a fix to its job only when
+`open_merge_request` opened the merge request, so a pushed branch would never
+link. The workspace is sparse and read on demand.
+
+1. At the first turn that carries a grant, `list_tree` pages the whole tree of
+   the base branch. The driver keeps the listing (path, type, sha, mode) in a
+   record under the state dir, not in a git ref. `read_file` reads only the
+   files the job names (the context key `repository.paths`). The driver writes
+   them under `jobs/<job id>/<repo name>`.
+2. Claude has one member tool, `mcp__workspace__fetch_file(path)`. It calls
+   `read_file` under the grant of the current turn, writes the file and records
+   its sha as the base of that path. A file that `read_file` refuses (not text,
+   too large, encoding none) is never written, and the refusal goes back to
+   Claude. If the sha differs from the listing, the base branch moved and the
+   fetch is refused.
+3. At wrap-up the driver lists the files that git does not ignore, with the
+   `.gitignore` files of the repository in force, and adds the fetched files.
+   The listing runs against an empty index that the driver owns under the state
+   dir, so a file that Claude staged or committed is still in the change.
+   The driver fetches every listed `.gitignore`, root and nested, in `prepare`.
+   `dist/`, `node_modules/`, a venv and a cache are ignored, and a nested git
+   repository is never entered. The driver compares each file with the record by
+   content hash. A change is an edit or a delete of a fetched path, or an add of
+   a path that the listing does not hold, with no file above it and no folder
+   at it. A listed path that was never fetched, a symbolic link, a submodule, a
+   path below a file, a mode change or a new executable file is refused.
+4. The driver reads each changed path again. If a sha differs, or an added path
+   now exists, the base branch moved and nothing is opened.
+5. The driver checks every repository first and opens none if one is refused.
+   It then calls `open_merge_request` once for each repository, with `project`,
+   `base_branch`, the branch `job/<job id>`, a title (at most 256 bytes), a
+   description (at most 20,000 bytes) and the changed `files`.
+6. The driver reports the `merge_request` key and the `url` with
+   `ReportDeliverable`. If an open fails after another opened, the job is
+   reported as failed and the error names the opened merge requests.
+
+Every call runs under a live grant of a turn of the job, never the member base
+grant, so the daemon binds each call to the job. The driver keeps that grant
+alive: the harness of the grant calls `RenewCapabilityGrant` before it expires,
+for the whole turn and before the wrap-up open. A pulled job carries no turn
+grant, so its workspace stays unread until an input with a grant arrives.
+
+A failure that carries a retryable code (TIMEOUT, UNAVAILABLE or
+RESOURCE_EXHAUSTED, or a transport failure with the matching gRPC code) is tried
+again with backoff inside the close, for at most five minutes. The code is the
+only classification: the text of an error is never read, and a failure with no
+retryable code is permanent. After a stop begins, a delivery keeps trying for at
+most 30 seconds, and the drain waits for it. A newer turn grant of a job
+releases the earlier grants of the job. After that, or on a permanent refusal, the job is failed with its
+reason, the workspace is removed and the job record is dropped. Nothing
+outlives the close.
+
+The tool limits are 100 files, 1 MiB for one file and 8 MiB in all, as UTF-8
+text with the byte order mark kept. An over-limit or refused delivery opens
+nothing and fails the job (`isError`). The refusal is the result of the job: a
+console line of type `zerocool` and subtype `delivery_refused` (or
+`delivery_waiting` when a later try can succeed), the log, and the `error` of
+the deliverable report. A truncated tree is refused before the first turn. The
+job closes as `failed` and the console shows subtype `workspace_refused`. If a
+job is resumed and its directory is gone, the first turn tells Claude that its
+earlier edits were lost. `PUSH_BRANCH` is refused at wrap-up, because no tool
+pushes a branch.
 
 ## Teardown and resume
 
 A `wrap_up` input is the scorer's `CloseJob` reaching the member. The driver
 runs one last turn with the wrap-up prompt (commit on the job branch, write a
-summary of what was done and what remains), then performs the deliverables,
+summary of what was done and what remains), then opens the merge request,
 archives the transcript, reports the close, removes the worktrees and drops
 the job. A `close` input does the same without the final turn, and the stale
 limit does it with verdict `abandoned`.
@@ -185,8 +255,8 @@ included. It goes to the session store under the job id, in chunks under
 1 MiB behind one manifest. A member relaunched after a sandbox death gets the
 job back from the daemon with its session id, restores the transcript from
 the store, and its first turn passes `--resume`, so the conversation
-continues. The worktree comes back from the pushed `job/<job id>` branch when
-one exists.
+continues. The workspace is built again from the base branch. Work that no
+merge request carried is gone with the sandbox.
 
 On SIGTERM the driver interrupts the turns in flight with SIGINT, waits up to
 the grace period (`stopGraceMs`, default 30 s), archives every live job and
@@ -196,9 +266,11 @@ reports `member stopping`, then exits.
 
 The tools reach Claude Code from `@zeroroot-ai/gibson-mcp`, run as its own
 process on a loopback port inside the sandbox. The driver starts it, waits
-for `/healthz`, and gives Claude Code `--mcp-config` with
-`{"type":"http","url":"http://127.0.0.1:<port>/mcp"}`, `--strict-mcp-config`
-and `--permission-prompt-tool mcp__gibson__ask`.
+for `/healthz`, and gives Claude Code `--mcp-config <path>`, `--strict-mcp-config`
+and `--permission-prompt-tool mcp__gibson__ask`. The file holds
+`{"type":"http","url":"http://127.0.0.1:<port>/mcp"}` and the per-turn
+`fetch_file` endpoint. It has mode 0600 in a 0700 folder of the job under the
+state dir, and it is deleted when the turn ends. The argv never carries a URL.
 
 Before each turn the driver puts that dispatch's grant in force with
 `POST /turn {job_id, grant, callback_endpoint, insecure}`, and ends it with

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright 2026 Zero Root AI
 
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { spawnClaude, type ClaudeHandle, type ClaudeRunOptions, type ClaudeRunResult } from "./claude-run.js"
 import { claudeChildEnv, type MemberEnv } from "./env.js"
 import type { ClaudeEvent } from "./events.js"
@@ -8,6 +10,7 @@ import type { McpGateway } from "./inbox.js"
 import type { JobRecord } from "./job.js"
 import { turnSystemPrompt } from "./prompt.js"
 import type { Worktree } from "./workspace.js"
+import { FETCH_FILE_TOOL, WORKSPACE_SERVER_NAME, type FetchHandler, type WorkspaceMcp } from "./workspace-mcp.js"
 
 /**
  * One turn of one job (zerocool-plugins#105).
@@ -27,12 +30,16 @@ export interface TurnRequest {
   worktrees: Worktree[]
   /** The cwd of the process. The first worktree, or the job dir when there is none. */
   cwd: string
+  /** The `fetch_file` tool of this turn. It reads under the grant of the turn. */
+  fetchFile?: FetchHandler
 }
 
 export interface TurnDeps {
   env: MemberEnv
   processEnv: NodeJS.ProcessEnv
   mcp: McpGateway | undefined
+  /** The endpoint of `fetch_file`. Absent in a test that needs none. */
+  workspaceMcp?: WorkspaceMcp
   onEvent?: (jobId: string, line: string, event: ClaudeEvent | undefined) => void
   spawn?: typeof spawnClaude
 }
@@ -45,7 +52,7 @@ export interface TurnHandle {
 }
 
 /** Build the run options for one turn. Pure, so the argv is testable. */
-export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions {
+export function turnOptions(req: TurnRequest, deps: TurnDeps, workspaceUrl?: string): ClaudeRunOptions {
   const { env } = deps
   const spec = req.job.spec
   const opts: ClaudeRunOptions = {
@@ -67,6 +74,10 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
     opts.allowedTools = ["mcp__gibson__*"]
     opts.permissionPromptTool = "mcp__gibson__ask"
   }
+  if (workspaceUrl) {
+    opts.mcpServers = { ...opts.mcpServers, [WORKSPACE_SERVER_NAME]: { type: "http", url: workspaceUrl } }
+    opts.allowedTools = [...(opts.allowedTools ?? []), `mcp__${WORKSPACE_SERVER_NAME}__${FETCH_FILE_TOOL}`]
+  }
   return opts
 }
 
@@ -77,14 +88,34 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
 export async function startTurn(req: TurnRequest, deps: TurnDeps): Promise<TurnHandle> {
   const jobId = req.job.jobId
   await deps.mcp?.useGrant(jobId, req.grant)
-  const opts = turnOptions(req, deps)
-  if (deps.onEvent) {
-    const on = deps.onEvent
-    opts.onEvent = (line, event) => on(jobId, line, event)
-  }
-  const handle: ClaudeHandle = (deps.spawn ?? spawnClaude)(opts)
-  const done = handle.done.finally(async () => {
+  const endpoint = deps.workspaceMcp && req.fetchFile ? deps.workspaceMcp.register(req.fetchFile) : undefined
+  const opts = turnOptions(req, deps, endpoint?.url)
+  // The MCP config holds the per-turn endpoint. It goes in a 0600 file in a 0700
+  // folder of the job, and the argv carries only the path. The file is deleted
+  // when the turn ends, or at once when the process does not start.
+  const folder = join(deps.env.stateDir, "turns", jobId)
+  const cleanup = async (): Promise<void> => {
+    endpoint?.dispose()
+    await rm(folder, { recursive: true, force: true })
     await deps.mcp?.release(jobId)
-  })
+  }
+  let handle: ClaudeHandle
+  try {
+    if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
+      await mkdir(folder, { recursive: true, mode: 0o700 })
+      const file = join(folder, "mcp.json")
+      await writeFile(file, JSON.stringify({ mcpServers: opts.mcpServers }), { encoding: "utf8", mode: 0o600 })
+      opts.mcpConfigFile = file
+    }
+    if (deps.onEvent) {
+      const on = deps.onEvent
+      opts.onEvent = (line, event) => on(jobId, line, event)
+    }
+    handle = (deps.spawn ?? spawnClaude)(opts)
+  } catch (e) {
+    await cleanup()
+    throw e
+  }
+  const done = handle.done.finally(cleanup)
   return { jobId, done, interrupt: () => handle.interrupt(), kill: () => handle.kill() }
 }

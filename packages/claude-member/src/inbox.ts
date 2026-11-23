@@ -70,8 +70,10 @@ export interface DeliverableReport {
   repository: string
   deliverable: Deliverable
   branch: string
-  /** Commits pushed, when the deliverable pushed. */
-  commits: number
+  /** Files of the change, when a merge request was opened. */
+  files: number
+  /** The `merge_request` key of the `open_merge_request` result, when one was opened. */
+  mergeRequest: string
   /** The merge request URL, when one was opened. */
   mergeRequestUrl: string
   /** Set when the deliverable was not performed. */
@@ -93,10 +95,16 @@ export interface Inbox {
 
 /** Where a turn's grant comes from. */
 export interface GrantSource {
-  /** The member base grant. Clone, fetch, push, heartbeat, `GetCredential`. */
+  /** The member base grant. Heartbeat, inbox, pull and reports. Never a connector call. */
   baseGrant(): string
-  /** The grant a turn runs under. The input's own, and the base grant when it carries none. */
+  /** The grant the Gibson MCP server uses for a turn. The input's own, and the base grant when it carries none. */
   grantFor(input: JobInput): string
+  /**
+   * The grant of a turn of the job, or `undefined` when the input carries none.
+   * Connector calls (read and delivery) run under it and never under the base
+   * grant, so the daemon binds each call to the job.
+   */
+  turnGrant(input: JobInput): string | undefined
 }
 
 /**

@@ -65,8 +65,7 @@ test("a dispatch that names a repository becomes a job with one worktree and a d
     dispatch({
       "repository.url": { stringValue: "https://git.example/acme/api.git" },
       "repository.branch": { stringValue: "develop" },
-      "repository.connector": { stringValue: "gitlab/acme" },
-      "repository.credential": { stringValue: "acme-token" },
+      "repository.connector": { stringValue: "connector/acme" },
       "repository.deliverable": { stringValue: "MERGE_REQUEST" },
       credentials: { stringValue: "sonar-token" },
       acceptance: { stringValue: "the scanner is clean" },
@@ -76,13 +75,12 @@ test("a dispatch that names a repository becomes a job with one worktree and a d
   assert.equal(spec.repositories.length, 1)
   assert.deepEqual(spec.repositories[0], {
     name: "api",
-    connectorRef: "gitlab/acme",
-    cloneUrl: "https://git.example/acme/api.git",
+    connectorRef: "connector/acme",
+    project: "acme/api",
     baseBranch: "develop",
     deliverable: "MERGE_REQUEST",
-    credentialName: "acme-token",
   })
-  assert.deepEqual(spec.credentialNames, ["sonar-token", "acme-token"])
+  assert.deepEqual(spec.credentialNames, ["sonar-token"])
   assert.equal(spec.acceptance, "the scanner is clean")
 })
 
@@ -162,17 +160,4 @@ test("a failed turn closes the job with a failing verdict and a non-zero outcome
 
 test("a launch with no grant or no task is refused, never run with a made-up task", async () => {
   await assert.rejects(runOneShot({ env: { GIBSON_AGENT_TASK_B64: "e30=" }, claudeCodeVersion: "2.1.257" }), /GIBSON_CALLBACK_ENDPOINT is not set|GIBSON_CG_JWT is not set/)
-})
-
-test("a task that names a repository needs a credential resolver, and says so", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "zerocool-oneshot-"))
-  const env = launch({
-    GIBSON_AGENT_TASK_B64: Buffer.from(JSON.stringify({ id: "t-1", goal: "fix it", context: { "repository.url": { stringValue: "https://git.example/a/b.git" } } })).toString("base64"),
-    ZEROCOOL_STATE_DIR: join(dir, "state"),
-  })
-  try {
-    await assert.rejects(runOneShot({ env, claudeCodeVersion: "2.1.257" }), /no credential resolver was supplied/)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
 })
