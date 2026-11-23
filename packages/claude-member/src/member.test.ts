@@ -236,6 +236,84 @@ test("a later input on a held job resumes the same Claude Code session", async (
   await run
 })
 
+test("a replayed turn input runs one turn, and a new id runs", async () => {
+  const logs: string[] = []
+  const { m, inbox, rec } = member({ log: (l: string) => logs.push(l) })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle()
+    rec.finish[0]!()
+    await settle()
+    const turn = (id: string) => inbox.deliver(input("job-1", { kind: "turn", text: "again", spec: undefined, id }))
+    await turn("in-1")
+    await settle()
+    rec.finish[1]!()
+    await settle()
+    await turn("in-1")
+    await settle()
+    assert.equal(rec.calls.length, 2, "the replayed id ran no third turn")
+    assert.ok(logs.some((l) => l === "job job-1: dropped a replayed input in-1"), "the drop logs the job id and the input id only")
+    await turn("in-2")
+    await settle()
+    assert.equal(rec.calls.length, 3, "a new id runs")
+    rec.finish[2]!()
+  } finally {
+    ac.abort()
+    await run
+  }
+})
+
+test("a replayed wrap_up input delivers once, and the seen set is cleared when the job ends", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, table, rec } = member({ workspace })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle()
+    rec.finish[0]!()
+    await settle()
+    const wrapUp = () => inbox.deliver({ jobId: "job-1", kind: "wrap_up", text: "verified", grant: "g", sender: "s", verdict: "accomplished", score: 95, id: "wu-1" })
+    await wrapUp()
+    await wrapUp()
+    await settle()
+    assert.equal(rec.calls.length, 2, "one wrap-up turn")
+    assert.equal(m["seenInputs"].get("job-1")?.has("wu-1"), true)
+    rec.finish[1]!()
+    await settle(10)
+    assert.deepEqual(workspace.wrapped, ["job-1"], "delivered once")
+    assert.equal(inbox.deliverables.length, 1)
+    assert.equal(table.has("job-1"), false)
+    assert.equal(m["seenInputs"].has("job-1"), false, "the set is dropped with the job")
+  } finally {
+    ac.abort()
+    await run
+  }
+})
+
+test("a close input replay delivers once", async () => {
+  const workspace = fakeWorkspace()
+  const { m, inbox, rec } = member({ workspace })
+  inbox.queued.push(input("job-1"))
+  const ac = new AbortController()
+  const run = m.run(ac.signal)
+  try {
+    await settle()
+    rec.finish[0]!()
+    await settle()
+    const close = () => inbox.deliver({ jobId: "job-1", kind: "close", text: "", grant: "g", sender: "s", verdict: "accomplished", score: 95, id: "c-1" })
+    await close()
+    await close()
+    await settle(10)
+    assert.deepEqual(workspace.wrapped, ["job-1"])
+  } finally {
+    ac.abort()
+    await run
+  }
+})
+
 test("a close input wraps up, reports the deliverable and drops the job", async () => {
   const { m, inbox, table, workspace, rec } = member()
   inbox.queued.push(input("job-1"))
