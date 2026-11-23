@@ -264,7 +264,7 @@ export class Member {
       await Promise.allSettled(pending)
     }
     // A delivery in a wait wakes on the stop and ends its tries. Wait for each to finish its cleanup.
-    await Promise.allSettled([...this.deliveries])
+    await Promise.allSettled(this.deliveries)
     for (const job of this.deps.table.live()) {
       await this.archive(job)
       await this.report(job, "member stopping")
