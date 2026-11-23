@@ -15,6 +15,7 @@ import { assertSubscriptionOnly, consoleRelay, readAuthStatus, SignIn } from "./
 import { harnessSessionStore } from "./transcript.js"
 import { readClaudeVersion } from "./version.js"
 import { WorkspaceManager } from "./workspace.js"
+import { startWorkspaceMcp } from "./workspace-mcp.js"
 import { join } from "node:path"
 
 /**
@@ -70,7 +71,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
   const harness = opts.harness ?? openHarness(env, trust)
 
   const inbox = new HarnessInbox({ harness, memberId: env.memberId, log })
-  const workspace = new WorkspaceManager({ root: env.workspace, tools: toolCallerFor(env, trust), log })
+  const workspace = new WorkspaceManager({ root: env.workspace, stateDir: env.stateDir, tools: toolCallerFor(env, trust), log })
   const table = new JobTable({ cap: env.jobCap, store: new FileJobStore(join(env.stateDir, "jobs.json")) })
 
   const platformURL = opts.env[PLATFORM_URL_ENV] ?? ""
@@ -117,6 +118,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
       })
   const gateway = mcp ?? mcpGateway(running.replace(/\/mcp$/, ""), { token: opts.env[TURN_TOKEN_ENV]!, callbackEndpoint: env.callbackEndpoint, insecure: env.callbackInsecure, log })
 
+  const workspaceMcp = await startWorkspaceMcp()
   const member = new Member({
     env,
     processEnv,
@@ -125,6 +127,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
     grants: harnessGrants(harness),
     status,
     workspace,
+    workspaceMcp,
     claudeCodeVersion,
     mcp: gateway,
     sessions: harnessSessionStore(harness),
@@ -155,6 +158,7 @@ export async function runMember(opts: MemberMainOptions, signal: AbortSignal): P
     await member.run(signal)
   } finally {
     await mcp?.stop()
+    await workspaceMcp.stop()
     harness.stop()
   }
 }

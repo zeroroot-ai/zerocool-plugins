@@ -79,11 +79,11 @@ test("a repository keeps its connector and project and has no clone url", () => 
   assert.equal("credentialName" in repo, false)
 })
 
-test("a pulled job becomes the open input that starts it, under the base grant", () => {
-  const input = openInputOf(wireJob(), "base-grant")
+test("a pulled job becomes the open input that starts it, with no turn grant", () => {
+  const input = openInputOf(wireJob())
   assert.equal(input.kind, "open")
   assert.equal(input.jobId, "job-9")
-  assert.equal(input.grant, "base-grant", "a queued job carries no per-input grant")
+  assert.equal(input.grant, "", "a queued job carries no grant of a turn")
   assert.equal(input.sender, "user:ana")
   assert.equal(input.spec?.goal, "close the unauthenticated route")
   assert.equal(input.spec?.repositories[0]?.project, "acme/api")
@@ -93,7 +93,7 @@ test("a pulled job becomes the open input that starts it, under the base grant",
 })
 
 test("a job with no spec is still a job, not a crash", () => {
-  const input = openInputOf(wireJob({ spec: undefined }), "g")
+  const input = openInputOf(wireJob({ spec: undefined }))
   assert.equal(input.spec?.goal, "")
   assert.deepEqual(input.spec?.repositories, [])
 })
@@ -233,4 +233,6 @@ test("the grants come from the harness, so a renewal takes effect on the next tu
   assert.equal(grants.baseGrant(), "grant-2", "a member runs for days; the harness renews under it")
   assert.equal(grants.grantFor({ jobId: "j", kind: "turn", text: "", grant: "turn-grant", sender: "user:ana" }), "turn-grant")
   assert.equal(grants.grantFor({ jobId: "j", kind: "open", text: "", grant: "", sender: "user:ana" }), "grant-2", "an input with no grant of its own runs on the base grant")
+  assert.equal(grants.turnGrant({ jobId: "j", kind: "turn", text: "", grant: "turn-grant", sender: "user:ana" }), "turn-grant")
+  assert.equal(grants.turnGrant({ jobId: "j", kind: "open", text: "", grant: "", sender: "user:ana" }), undefined, "the base grant is never a turn grant")
 })

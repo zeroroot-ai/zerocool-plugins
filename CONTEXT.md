@@ -260,10 +260,11 @@ unbuilt `dist` would land in the type and run paths of every check.
   past the bank's stale limit closes with verdict `abandoned`. Nothing else
   deletes a worktree.
 - **Workspace manager** — the member-side part of the driver. No clone and no
-  forge credential. It reads the base tree through the connector tools
-  `list_tree` and `read_file`, commits it locally as the base, and at
-  wrap-up turns the diff into one `open_merge_request` call on the branch
-  `job/<job id>`. Tells Claude the paths and the deliverable in the
+  forge credential. The workspace is sparse. It lists the base tree through the
+  connector tool `list_tree`, reads the files the job names and any file that
+  Claude asks for with `fetch_file` through `read_file`, and at wrap-up turns
+  the change into one `open_merge_request` call on the branch `job/<job id>`.
+  All calls run under a live grant of a turn of the job. Tells Claude the paths and the deliverable in the
   appended system prompt.
 - **Member status** — what a member reports on every heartbeat: `jobs in
   flight`, `cap`, `busy` (in flight equals cap) or `idle`, and `needs

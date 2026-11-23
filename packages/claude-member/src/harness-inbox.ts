@@ -14,6 +14,7 @@ import {
 import { Principal_Kind, type Principal } from "@zeroroot-ai/sdk/gen/gibson/common/v1/gibson_common_pb.js"
 import type { DeliverableReport, GrantSource, Inbox, JobInput, JobInputKind, JobStateReport } from "./inbox.js"
 import type { Deliverable, JobRepository, JobSpec, JobState } from "./job.js"
+import { splitList, typedValueString } from "./oneshot.js"
 import { trimLeadingSlashes } from "./text.js"
 
 /**
@@ -117,10 +118,12 @@ export function repositoryOf(r: RepositorySpec): JobRepository {
 /** `gibson.job.v1.JobSpec` to the driver's spec. */
 export function jobSpecOf(jobId: string, spec: WireJobSpec | undefined): JobSpec {
   const wire = spec ?? ({ goal: "", repositories: [], credentialNames: [], inputs: [], context: {} } as unknown as WireJobSpec)
+  // The files the job names, as a comma or line separated list in the context.
+  const paths = splitList(typedValueString((wire.context ?? {})["repository.paths"]) ?? "")
   return {
     jobId,
     goal: wire.goal,
-    repositories: (wire.repositories ?? []).map(repositoryOf),
+    repositories: (wire.repositories ?? []).map((r) => ({ ...repositoryOf(r), ...(paths.length > 0 ? { paths } : {}) })),
     credentialNames: [...(wire.credentialNames ?? [])],
     inputNodeIds: [...(wire.inputs ?? [])],
     acceptance: wire.acceptance ? `${wire.acceptance.verifierComponent} must score at least ${wire.acceptance.passingScore}` : "",
@@ -140,14 +143,15 @@ export function jobInputOf(input: WireInput): JobInput {
 }
 
 /** A queued job the member pulled, as the `open` input that starts it. */
-export function openInputOf(job: WireJob, baseGrant: string): JobInput {
+export function openInputOf(job: WireJob): JobInput {
   return {
     jobId: job.id,
     kind: "open",
     text: "",
-    // A pulled job carries no per-input grant: the first turn runs under the
-    // member base grant until an input of its own arrives.
-    grant: baseGrant,
+    // A pulled job carries no per-input grant. The Gibson MCP server falls back
+    // to the member base grant for the first turn. No connector call runs under
+    // it: the workspace waits for an input that carries the grant of a turn.
+    grant: "",
     sender: senderOf(job.openedBy),
     spec: jobSpecOf(job.id, job.spec),
     ...(job.claudeSessionId ? { claudeSessionId: job.claudeSessionId } : {}),
@@ -207,7 +211,7 @@ export class HarnessInbox implements Inbox {
     const res = await this.client.pullJob({ context: this.context })
     if (res.error) throw new Error(`PullJob refused: ${res.error.message}`)
     if (!res.job) return undefined
-    return openInputOf(res.job, this.opts.harness.token())
+    return openInputOf(res.job)
   }
 
   async reportState(report: JobStateReport): Promise<void> {
@@ -247,5 +251,6 @@ export function harnessGrants(harness: TaskHarness): GrantSource {
   return {
     baseGrant: () => harness.token(),
     grantFor: (input) => input.grant || harness.token(),
+    turnGrant: (input) => input.grant || undefined,
   }
 }

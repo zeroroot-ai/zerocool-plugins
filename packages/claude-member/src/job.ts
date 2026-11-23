@@ -42,6 +42,8 @@ export interface JobRepository {
   /** The project in the connector's own terms, for example `group/project` or `owner/repo`. */
   project: string
   baseBranch: string
+  /** Files the job names. `prepare` reads them. Claude reads any other file with `fetch_file`. */
+  paths?: string[]
   /** What the driver does at wrap-up. */
   deliverable: Deliverable
 }

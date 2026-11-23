@@ -14,7 +14,7 @@ import { Member } from "./member.js"
 import { WorkspaceManager } from "./workspace.js"
 
 /** A grant source with the base grant only. Inputs carry their own or fall back. */
-const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant })
+const staticGrants = (baseGrant: string): GrantSource => ({ baseGrant: () => baseGrant, grantFor: (input) => input.grant || baseGrant, turnGrant: (input) => input.grant || undefined })
 
 /**
  * The driver end to end: the real `spawnClaude`, the real argv, a fake
@@ -114,7 +114,7 @@ async function harness(cap: number, hangMs = "0") {
     inbox: daemon,
     grants: staticGrants("base-grant"),
     status: daemon,
-    workspace: new WorkspaceManager({ root: join(dir, "workspace"), tools: async () => { throw new Error("no tool call in this test") } }),
+    workspace: new WorkspaceManager({ root: join(dir, "workspace"), stateDir: join(dir, "state"), tools: async () => { throw new Error("no tool call in this test") } }),
     claudeCodeVersion: "2.1.257",
     idlePollMs: 25,
     onEvent: (_jobId: string, line: string) => events.push(line),

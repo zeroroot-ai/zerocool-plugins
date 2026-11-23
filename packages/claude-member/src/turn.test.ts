@@ -46,8 +46,17 @@ const gateway = (): McpGateway & { grants: [string, string][]; released: string[
   }
 }
 
+test("a turn with a workspace endpoint attaches the workspace server and allows only fetch_file of it", () => {
+  const worktrees = [{ repository: "api", path: "/w/api", branch: "job/job-42", deliverable: "MERGE_REQUEST" as const, notes: [] }]
+  const o = turnOptions({ job: job(), text: "start", grant: "turn-grant", worktrees, cwd: "/w/api" }, { env, processEnv: {}, mcp: gateway() }, "http://127.0.0.1:1/t/abc/mcp")
+  assert.deepEqual(o.mcpServers?.workspace, { type: "http", url: "http://127.0.0.1:1/t/abc/mcp" })
+  assert.ok(o.mcpServers?.gibson)
+  assert.ok(o.allowedTools?.includes("mcp__workspace__fetch_file"))
+  assert.ok(!o.allowedTools?.includes("mcp__workspace__*"))
+})
+
 test("the first turn omits --resume; the next turn resumes the recorded session", () => {
-  const worktrees = [{ repository: "api", path: "/workspace/jobs/job-42/api", branch: "job/job-42", deliverable: "MERGE_REQUEST" as const }]
+  const worktrees = [{ repository: "api", path: "/workspace/jobs/job-42/api", branch: "job/job-42", deliverable: "MERGE_REQUEST" as const, notes: [] }]
   const first = turnOptions({ job: job(), text: "start", grant: "turn-grant", worktrees, cwd: worktrees[0]!.path }, { env, processEnv: {}, mcp: gateway() })
   assert.equal(first.resume, undefined)
   const second = turnOptions({ job: job({ claudeSessionId: "sess-7", state: "waiting" }), text: "again", grant: "turn-grant", worktrees, cwd: worktrees[0]!.path }, { env, processEnv: {}, mcp: gateway() })

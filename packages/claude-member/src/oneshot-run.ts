@@ -13,6 +13,7 @@ import { dispatchGrants, jobSpecFromDispatch, OneShotInbox, OneShotStatus, oneSh
 import { childEnv, platformTrust } from "./platform-ca.js"
 import { readClaudeVersion } from "./version.js"
 import { WorkspaceManager } from "./workspace.js"
+import { startWorkspaceMcp } from "./workspace-mcp.js"
 
 /**
  * Run one dispatched Task as a single auto-closed job (zerocool-plugins#111).
@@ -47,13 +48,15 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
   // member shape hands out. The PEM itself stays in the driver.
   const trust = await platformTrust(opts.env, env.stateDir)
   const processEnv = childEnv(opts.env, trust)
-  const workspace = new WorkspaceManager({ root: env.workspace, tools: opts.tools ?? toolCallerFor(env, trust), log })
+  const workspace = new WorkspaceManager({ root: env.workspace, stateDir: env.stateDir, tools: opts.tools ?? toolCallerFor(env, trust), log })
 
   // A one-shot sandbox is torn down after the run and nothing resumes it, so
   // the table lives in memory. A member persists its table; this shape has
   // nothing to come back to.
   const table = new JobTable({ cap: 1, store: new MemoryJobStore() })
 
+  const claudeCodeVersion = opts.claudeCodeVersion ?? (await readClaudeVersion(env.claudeBin, processEnv, env.workspace))
+  const workspaceMcp = await startWorkspaceMcp()
   const member = new Member({
     env,
     processEnv,
@@ -62,7 +65,8 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
     grants,
     status: new OneShotStatus(),
     workspace,
-    claudeCodeVersion: opts.claudeCodeVersion ?? (await readClaudeVersion(env.claudeBin, processEnv, env.workspace)),
+    workspaceMcp,
+    claudeCodeVersion,
     ...(opts.mcp ? { mcp: opts.mcp } : {}),
     ...(opts.onEvent ? { onEvent: (_jobId: string, line: string, event: ClaudeEvent | undefined) => opts.onEvent!(line, event) } : {}),
     ...(opts.spawn ? { spawn: opts.spawn } : {}),
@@ -71,11 +75,15 @@ export async function runOneShot(opts: OneShotOptions): Promise<OneShotOutcome> 
   })
 
   const controller = new AbortController()
-  const run = member.run(controller.signal)
-  const outcome = await inbox.done
-  controller.abort()
-  await run
-  return outcome
+  try {
+    const run = member.run(controller.signal)
+    const outcome = await inbox.done
+    controller.abort()
+    await run
+    return outcome
+  } finally {
+    await workspaceMcp.stop()
+  }
 }
 
 /** Seams of {@link runForkable}. */

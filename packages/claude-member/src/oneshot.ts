@@ -113,7 +113,7 @@ function projectOfUrl(url: string): string {
  * (zeroroot-ai/sdk#546). Until that field is published, a dispatch says the
  * same thing in the Task context, with the keys the opencode dispatch already
  * uses: `repository.url`, `repository.branch`, `repository.name`,
- * `repository.project`, `repository.connector`, `repository.deliverable`,
+ * `repository.project`, `repository.paths`, `repository.connector`, `repository.deliverable`,
  * `credentials` (a comma-separated list) and `acceptance`.
  */
 export function jobSpecFromDispatch(d: SandboxDispatch, env: MemberEnv): JobSpec {
@@ -127,6 +127,7 @@ export function jobSpecFromDispatch(d: SandboxDispatch, env: MemberEnv): JobSpec
       project: ctx["repository.project"] || projectOfUrl(url),
       baseBranch: ctx["repository.branch"] || "main",
       deliverable: deliverableFrom(ctx["repository.deliverable"]),
+      ...(splitList(ctx["repository.paths"] ?? "").length > 0 ? { paths: splitList(ctx["repository.paths"] ?? "") } : {}),
     })
   }
   const credentialNames = (ctx.credentials ?? "")
@@ -207,7 +208,8 @@ export class OneShotInbox implements Inbox {
     if (report.state === "closed") {
       this.resolveDone({
         jobId: report.jobId,
-        isError: this.states.some((s) => s.state === "waiting" && s.isError),
+        // A delivery that failed is a failed run, whatever the model said.
+        isError: this.states.some((s) => s.state === "waiting" && s.isError) || this.states.some((s) => s.state === "closed" && s.isError) || this.deliverables.some((d) => d.error !== "" && !d.error.startsWith("abandoned")),
         text: this.states.find((s) => s.state === "waiting")?.detail ?? "",
         claudeSessionId: report.claudeSessionId,
         costUsd: report.costUsd,
@@ -242,7 +244,15 @@ export class OneShotStatus implements StatusReporter {
 
 /** The dispatch grant is both the member base grant and the turn grant. */
 export function dispatchGrants(grant: string): GrantSource {
-  return { baseGrant: () => grant, grantFor: () => grant }
+  return { baseGrant: () => grant, grantFor: () => grant, turnGrant: () => grant }
+}
+
+/** A comma or line separated list, without blanks. */
+export function splitList(s: string): string[] {
+  return s
+    .split(/[,\n]/)
+    .map((x) => x.trim())
+    .filter(Boolean)
 }
 
 /** The member environment a one-shot launch implies. */

@@ -135,7 +135,7 @@ the one-shot bin.
 
 A one-shot task says what it wants in the `Task` context, with the same keys
 the opencode dispatch uses: `repository.url`, `repository.branch`,
-`repository.name`, `repository.connector`, `repository.project`,
+`repository.name`, `repository.connector`, `repository.project`, `repository.paths`,
 `repository.deliverable`, `credentials` (comma separated), `input.nodes` and
 `acceptance`.
 
@@ -171,33 +171,52 @@ connector's own terms. It names no url and no secret.
 The workspace uses the git-host tools of the connector. It never clones, never
 pushes and holds no token. The daemon binds a fix to its job only when
 `open_merge_request` opened the merge request, so a pushed branch would never
-link.
+link. The workspace is sparse and read on demand.
 
-1. At the first turn, `list_tree` pages the tree of the base branch (input
-   `project`, `ref`, `cursor`). `read_file` reads each file. The driver writes
-   the files under `jobs/<job id>/<repo name>`, runs a local `git init` on the
-   branch `job/<job id>` and commits the base. There is no remote.
-2. Claude edits and commits in that repository.
-3. At wrap-up, the driver computes the diff against the base commit. It calls
-   `open_merge_request` once, with `project`, `base_branch`, the branch
-   `job/<job id>`, a title, a description and the changed `files` (a `path`
-   with `content`, or `delete: true`).
-4. The driver reports the `merge_request` key and the `url` of the tool result
-   with `ReportDeliverable`.
+1. At the first turn that carries a grant, `list_tree` pages the whole tree of
+   the base branch. The driver keeps the listing (path, type, sha, mode) in a
+   record under the state dir, not in a git ref. `read_file` reads only the
+   files the job names (the context key `repository.paths`). The driver writes
+   them under `jobs/<job id>/<repo name>`.
+2. Claude has one member tool, `mcp__workspace__fetch_file(path)`. It calls
+   `read_file` under the grant of the current turn, writes the file and records
+   its sha as the base of that path. A file that `read_file` refuses (not text,
+   too large, encoding none) is never written, and the refusal goes back to
+   Claude. If the sha differs from the listing, the base branch moved and the
+   fetch is refused.
+3. At wrap-up the driver walks the files and compares each with the record by
+   content hash. A change is an edit or a delete of a fetched path, or an add of
+   a path that the listing does not hold, with no file above it and no folder
+   at it. A listed path that was never fetched, a symbolic link, a submodule, a
+   path below a file, a mode change or a new executable file is refused.
+4. The driver reads each changed path again. If a sha differs, or an added path
+   now exists, the base branch moved and nothing is opened.
+5. The driver checks every repository first and opens none if one is refused.
+   It then calls `open_merge_request` once for each repository, with `project`,
+   `base_branch`, the branch `job/<job id>`, a title (at most 256 bytes), a
+   description (at most 20,000 bytes) and the changed `files`.
+6. The driver reports the `merge_request` key and the `url` with
+   `ReportDeliverable`. If an open fails after another opened, the job is
+   reported as failed and the error names the opened merge requests.
 
-All calls carry the grant of the turn, and each call is checked and recorded
-by the daemon. The tools are named by `mcp:<connector>:<tool>` in
-`invoke_tool`.
+Every call runs under a live grant of a turn of the job, never the member base
+grant, so the daemon binds each call to the job. A pulled job carries no turn
+grant. Its workspace stays unread until an input with a grant arrives. If the
+grant has expired at wrap-up, the driver keeps the workspace and the closed job,
+and it tries again when a later input for the job carries a fresh grant. Any
+failure that a later try can mend keeps the work. Only a success or a permanent
+refusal removes it.
 
 The tool limits are 100 files, 1 MiB for one file and 8 MiB in all, as UTF-8
-text. A symbolic link, a submodule or a new executable file is not a change
-that the tool can take. When a change is over a limit, the driver opens
-nothing, and the refusal is the result of the job: a console line of type
-`zerocool` and subtype `delivery_refused`, the log, and the `error` of the
-deliverable report. A truncated tree is refused before the first turn. The job
-closes as `failed`, the console shows subtype `workspace_refused`, and nothing
-is delivered. The deliverable `PUSH_BRANCH` is refused at wrap-up, because no
-tool pushes a branch.
+text with the byte order mark kept. An over-limit or refused delivery opens
+nothing and fails the job (`isError`). The refusal is the result of the job: a
+console line of type `zerocool` and subtype `delivery_refused` (or
+`delivery_waiting` when a later try can succeed), the log, and the `error` of
+the deliverable report. A truncated tree is refused before the first turn. The
+job closes as `failed` and the console shows subtype `workspace_refused`. If a
+job is resumed and its directory is gone, the first turn tells Claude that its
+earlier edits were lost. `PUSH_BRANCH` is refused at wrap-up, because no tool
+pushes a branch.
 
 ## Teardown and resume
 

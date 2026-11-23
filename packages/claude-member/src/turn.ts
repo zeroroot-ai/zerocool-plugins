@@ -8,6 +8,7 @@ import type { McpGateway } from "./inbox.js"
 import type { JobRecord } from "./job.js"
 import { turnSystemPrompt } from "./prompt.js"
 import type { Worktree } from "./workspace.js"
+import { FETCH_FILE_TOOL, WORKSPACE_SERVER_NAME, type FetchHandler, type WorkspaceMcp } from "./workspace-mcp.js"
 
 /**
  * One turn of one job (zerocool-plugins#105).
@@ -27,12 +28,16 @@ export interface TurnRequest {
   worktrees: Worktree[]
   /** The cwd of the process. The first worktree, or the job dir when there is none. */
   cwd: string
+  /** The `fetch_file` tool of this turn. It reads under the grant of the turn. */
+  fetchFile?: FetchHandler
 }
 
 export interface TurnDeps {
   env: MemberEnv
   processEnv: NodeJS.ProcessEnv
   mcp: McpGateway | undefined
+  /** The endpoint of `fetch_file`. Absent in a test that needs none. */
+  workspaceMcp?: WorkspaceMcp
   onEvent?: (jobId: string, line: string, event: ClaudeEvent | undefined) => void
   spawn?: typeof spawnClaude
 }
@@ -45,7 +50,7 @@ export interface TurnHandle {
 }
 
 /** Build the run options for one turn. Pure, so the argv is testable. */
-export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions {
+export function turnOptions(req: TurnRequest, deps: TurnDeps, workspaceUrl?: string): ClaudeRunOptions {
   const { env } = deps
   const spec = req.job.spec
   const opts: ClaudeRunOptions = {
@@ -67,6 +72,10 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
     opts.allowedTools = ["mcp__gibson__*"]
     opts.permissionPromptTool = "mcp__gibson__ask"
   }
+  if (workspaceUrl) {
+    opts.mcpServers = { ...opts.mcpServers, [WORKSPACE_SERVER_NAME]: { type: "http", url: workspaceUrl } }
+    opts.allowedTools = [...(opts.allowedTools ?? []), `mcp__${WORKSPACE_SERVER_NAME}__${FETCH_FILE_TOOL}`]
+  }
   return opts
 }
 
@@ -77,13 +86,15 @@ export function turnOptions(req: TurnRequest, deps: TurnDeps): ClaudeRunOptions 
 export async function startTurn(req: TurnRequest, deps: TurnDeps): Promise<TurnHandle> {
   const jobId = req.job.jobId
   await deps.mcp?.useGrant(jobId, req.grant)
-  const opts = turnOptions(req, deps)
+  const endpoint = deps.workspaceMcp && req.fetchFile ? deps.workspaceMcp.register(req.fetchFile) : undefined
+  const opts = turnOptions(req, deps, endpoint?.url)
   if (deps.onEvent) {
     const on = deps.onEvent
     opts.onEvent = (line, event) => on(jobId, line, event)
   }
   const handle: ClaudeHandle = (deps.spawn ?? spawnClaude)(opts)
   const done = handle.done.finally(async () => {
+    endpoint?.dispose()
     await deps.mcp?.release(jobId)
   })
   return { jobId, done, interrupt: () => handle.interrupt(), kill: () => handle.kill() }
